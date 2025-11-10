@@ -60,8 +60,8 @@
         }
     },
     "ActionContainers": {
-        "create-input": "145342739029.dkr.ecr.us-east-1.amazonaws.com/aws-lambda-python:dev",
-        "test-arrow": "145342739029.dkr.ecr.us-east-1.amazonaws.com/aws-lambda-r:dev"
+        "create-input": "ghcr.io/faasr/github-actions-python:latest",
+        "test-arrow": "ghcr.io/faasr/github-actions-r:latest"
     },
     "FunctionInvoke": "create-input",
     "DefaultDataStore": "My_S3_Bucket",
@@ -75,6 +75,7 @@
     "WorkflowName": "test_arrow"
 
 }
+
 
 
 
