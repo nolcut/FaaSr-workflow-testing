@@ -1,0 +1,88 @@
+{
+    "ActionList": {
+        "create-input": {
+            "Arguments": {
+                "folder": "integration-tests",
+                "input1": "input1.txt",
+                "input2": "input2.txt",
+                "input3": "input3.txt",
+                "input4": "input4.txt"
+            },
+            "InvokeNext": [
+                "test-arrow"
+            ],
+            "FaaSServer": "GH",
+            "Type": "Python",
+            "FunctionName": "create_input"
+        },
+        "test-arrow": {
+            "Arguments": {
+                "folder": "integration-tests",
+                "input4": "input4.txt",
+                "input2": "input2.txt",
+                "input3": "input3.txt",
+                "output1": "output1-R.txt",
+                "output2": "output2-R.txt"
+            },
+            "InvokeNext": [],
+            "FaaSServer": "GH",
+            "Type": "R",
+            "FunctionName": "test_arrow"
+        }
+    },
+    "ComputeServers": {
+        "GH": {
+            "FaaSType": "GitHubActions",
+            "UserName": "renatof",
+            "UseSecretStore": true,
+            "ActionRepoName": "FaaSr-workflow-nolan",
+            "Branch": "main"
+        },
+        "AWS": {
+            "FaaSType": "Lambda",
+            "Region": "us-east-1",
+            "UseSecretStore": true
+        },
+        "OW": {
+            "UseSecretStore": false,
+            "FaaSType": "OpenWhisk",
+            "Namespace": "guest",
+            "Endpoint": "ow.faasr.io:31002",
+            "API.key": "filler for now"
+        }
+    },
+    "DataStores": {
+        "My_S3_Bucket": {
+            "Endpoint": "https://play.min.io",
+            "Bucket": "faasr-integration-tests",
+            "Region": "us-east-1",
+            "Writable": "TRUE"
+        }
+    },
+    "ActionContainers": {
+        "create-input": "145342739029.dkr.ecr.us-east-1.amazonaws.com/aws-lambda-python:dev",
+        "test-arrow": "145342739029.dkr.ecr.us-east-1.amazonaws.com/aws-lambda-r:dev"
+    },
+    "FunctionInvoke": "create-input",
+    "DefaultDataStore": "My_S3_Bucket",
+    "FunctionGitRepo": {
+        "create_input": "https://github.com/JStover95/FaaSr-Testing-Functions/blob/main/test-functions/01_create_input.py",
+        "test_arrow": "JStover95/FaaSr-Testing-Functions/arrow_test_functions"
+    },
+    "LoggingDataStore": "My_S3_Bucket",
+    "FaaSrLog": "FaaSrLog",
+    "InvocationID": "",
+    "WorkflowName": "test_arrow"
+
+}
+
+
+
+
+
+
+
+
+
+
+
