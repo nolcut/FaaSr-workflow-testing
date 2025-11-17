@@ -1,14 +1,14 @@
 {
   "ActionList": {
-    "cli_test": {
+    "cli-test": {
       "InvokeNext": [
-        "cli_test2"
+        "cli-test2"
       ],
       "FaaSServer": "GH",
       "Type": "R",
       "FunctionName": "cli_test"
     },
-    "cli_test2": {
+    "cli-test2": {
       "FunctionName": "cli_test",
       "FaaSServer": "GH",
       "InvokeNext": [],
@@ -34,7 +34,7 @@
     "cli_test": "ghcr.io/nolcut/github-actions-r-testing:func-path",
     "cli_test2": "ghcr.io/nolcut/github-actions-r-testing:func-path"
   },
-  "FunctionInvoke": "cli_test",
+  "FunctionInvoke": "cli-test",
   "DefaultDataStore": "S3",
   "FunctionGitRepo": {
     "cli_test": "https://github.com/nolcut/FaaSr-Functions/blob/main/cran-issue-testing/cli-test.R"
