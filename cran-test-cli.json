@@ -1,0 +1,41 @@
+{
+  "ActionList": {
+    "cli_test": {
+      "InvokeNext": [],
+      "FaaSServer": "GH",
+      "Type": "R",
+      "FunctionName": "cli_test"
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Writable": "TRUE",
+      "Bucket": "faasr"
+    }
+  },
+  "ActionContainers": {
+    "cli_test": "ghcr.io/nolcut/github-actions-r-testing:func-path"
+  },
+  "FunctionInvoke": "cli_test",
+  "DefaultDataStore": "S3",
+  "FunctionGitRepo": {
+    "cli_test": "https://github.com/nolcut/FaaSr-Functions/blob/main/cran-issue-testing/cli-test.R"
+  },
+  "FunctionCRANPackage": {
+    "cli_test": [
+      "cli"
+    ]
+  },
+  "FaaSrLog": "FaaSrLog",
+  "LoggingDataStore": "S3",
+  "WorkflowName": "cran-test-cli"
+}
