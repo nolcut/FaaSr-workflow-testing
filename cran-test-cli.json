@@ -27,7 +27,8 @@
   "DataStores": {
     "S3": {
       "Writable": "TRUE",
-      "Bucket": "faasr"
+      "Bucket": "faasr",
+      "Region": "us-east-1"
     }
   },
   "ActionContainers": {
