@@ -60,7 +60,7 @@
         }
     },
     "ActionContainers": {
-        "create-input": "ghcr.io/nolcut/github-actions-python-test:func-path",
+        "create-input": "ghcr.io/nolcut/github-actions-python-testing:func-path",
         "test-arrow": "ghcr.io/faasr/github-actions-r:latest"
     },
     "FunctionInvoke": "create-input",
@@ -75,6 +75,7 @@
     "WorkflowName": "test_arrow"
 
 }
+
 
 
 
