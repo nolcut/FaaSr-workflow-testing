@@ -29,9 +29,9 @@
     "ComputeServers": {
       "GH": {
         "FaaSType": "GitHubActions",
-        "UserName": "YOUR_USERNAME",
+        "UserName": "nolcut",
         "UseSecretStore": true,
-        "ActionRepoName": "FaaSr-workflow",
+        "ActionRepoName": "FaaSr-workflow-testing",
         "Branch": "main"
       }
     },
@@ -43,8 +43,8 @@
       }
     },
     "ActionContainers": {
-      "start": "ghcr.io/faasr/github-actions-r:latest",
-      "sum": "ghcr.io/faasr/github-actions-r:latest"
+      "start": "ghcr.io/nolcut/github-actions-r-testing:func-path",
+      "sum": "ghcr.io/nolcut/github-actions-r-testing:func-path"
     },
     "FunctionInvoke": "start",
     "DefaultDataStore": "S3",
