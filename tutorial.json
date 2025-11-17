@@ -49,8 +49,8 @@
     "FunctionInvoke": "start",
     "DefaultDataStore": "S3",
     "FunctionGitRepo": {
-      "create_sample_data": "FaaSr/FaaSr-Functions/main/tutorial",
-      "compute_sum": "FaaSr/FaaSr-Functions/main/tutorial"
+      "create_sample_data": "FaaSr/FaaSr-Functions/tutorial",
+      "compute_sum": "FaaSr/FaaSr-Functions/tutorial"
     },
     "LoggingDataStore": "S3",
     "FaaSrLog": "FaaSrLog",
