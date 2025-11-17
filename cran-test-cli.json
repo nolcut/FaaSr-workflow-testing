@@ -31,8 +31,8 @@
     }
   },
   "ActionContainers": {
-    "cli_test": "ghcr.io/nolcut/github-actions-r-testing:func-path",
-    "cli_test2": "ghcr.io/nolcut/github-actions-r-testing:func-path"
+    "cli_test": "ghcr.io/nolcut/github-actions-r-testing:r-load",
+    "cli_test2": "ghcr.io/nolcut/github-actions-r-testing:r-load"
   },
   "FunctionInvoke": "cli-test",
   "DefaultDataStore": "S3",
