@@ -54,6 +54,6 @@
     },
     "LoggingDataStore": "S3",
     "FaaSrLog": "FaaSrLog",
-    "InvocationID": "tutorial",
-    "WorkflowName": "tutorial"
+    "InvocationID": "tutorial-file",
+    "WorkflowName": "tutorial-file"
   }
