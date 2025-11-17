@@ -49,8 +49,8 @@
     "FunctionInvoke": "start",
     "DefaultDataStore": "S3",
     "FunctionGitRepo": {
-      "create_sample_data": "https://github.com/nolcut/FaaSr-Functions",
-      "compute_sum": "https://github.com/nolcut/FaaSr-Functions"
+      "create_sample_data": "https://github.com/nolcut/FaaSr-Functions.git",
+      "compute_sum": "https://github.com/nolcut/FaaSr-Functions.git"
     },
     "LoggingDataStore": "S3",
     "FaaSrLog": "FaaSrLog",
