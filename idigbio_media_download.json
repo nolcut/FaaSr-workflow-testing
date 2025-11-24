@@ -20,6 +20,7 @@
         "start": {
             "FunctionName": "idigbio_media_download",
             "FaaSServer": "My_GitHub_Account",
+            "Type": "R",
             "Arguments": {
                 "folder": "idigbio",
                 "genus": "acer"
@@ -28,6 +29,7 @@
         },
         "test": {
             "FunctionName": "cli_test",
+            "Type": "R",
             "FaaSServer": "My_GitHub_Account",
             "Arguments": {},
             "InvokeNext": []
