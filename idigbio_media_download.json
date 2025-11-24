@@ -4,7 +4,8 @@
             "FaaSType": "GitHubActions",
             "UserName": "nolcut",
             "ActionRepoName": "idigbio_media_download_action",
-            "Branch": "main"
+            "Branch": "main",
+            "UseSecretStore": true
         }
     },
     "DataStores": {
