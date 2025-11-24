@@ -33,7 +33,7 @@
         }
     },
     "FunctionGitRepo": {
-        "idigbio_media_download": "FaaSr/FaaSr-examples/idigbio_media_download/",
+        "idigbio_media_download": "https://github.com/FaaSr/FaaSr-examples-v1/blob/main/idigbio_media_download/idigbio_media_download.R",
         "cli_test": "https://github.com/nolcut/FaaSr-Functions/blob/main/cran-issue-testing/cli-test.R"
     },
     "FunctionCRANPackage": {
@@ -43,7 +43,7 @@
         "cli_test": []
     },
     "ActionContainers": {
-        "start": "gghcr.io/nolcut/github-actions-r-testing:func-path",
+        "start": "ghcr.io/nolcut/github-actions-r-testing:func-path",
         "test": "ghcr.io/nolcut/github-actions-r-testing:func-path"
     },
     "WorkflowName": "test-package",
