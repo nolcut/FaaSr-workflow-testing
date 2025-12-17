@@ -1,6 +1,6 @@
 {
     "ComputeServers": {
-        "My_OW_Account": {
+        "OW": {
             "FaaSType": "OpenWhisk",
             "Namespace": "_",
             "SSL": "False",
