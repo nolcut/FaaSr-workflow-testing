@@ -15,7 +15,7 @@
             "Writable": "TRUE"
         }
     },
-    "FunctionList": {
+    "ActionList": {
         "start": {
             "FunctionName": "tutorial_create_sample_data",
             "FaaSServer": "My_OW_Account",
