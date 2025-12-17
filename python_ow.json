@@ -4,7 +4,7 @@
             "FaaSType": "OpenWhisk",
             "Namespace": "_",
             "SSL": "False",
-            "Endpoint": "202.211.12.153:31002"
+            "Endpoint": "http://202.211.12.153:31002"
         }
     },
     "DataStores": {
