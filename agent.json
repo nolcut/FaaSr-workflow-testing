@@ -23,6 +23,14 @@
           "input1": "sample1.csv",
           "output": "sum.csv"
         },
+        "InvokeNext": ["test-agent"]
+      },
+      "test-agent": {
+        "FaaSServer": "GH",
+        "Type": "Agent",
+        "Arguments": {
+            "prompt": "Write a poem of your choice and save it as poem.txt to S3"
+        },
         "InvokeNext": []
       }
     },
@@ -44,7 +52,8 @@
     },
     "ActionContainers": {
       "start": "ghcr.io/nolcut/github-actions-r-testing:func-path",
-      "sum": "ghcr.io/nolcut/github-actions-r-testing:func-path"
+      "sum": "ghcr.io/nolcut/github-actions-r-testing:func-path",
+      "test-agent": "ghcr.io/faasr/agent-gh-py:agent_ver"
     },
     "FunctionInvoke": "start",
     "DefaultDataStore": "S3",
@@ -56,4 +65,4 @@
     "FaaSrLog": "FaaSrLog",
     "InvocationID": "tutorial-file",
     "WorkflowName": "tutorial-file"
-  }
+}
