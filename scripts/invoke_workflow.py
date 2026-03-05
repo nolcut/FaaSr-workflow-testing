@@ -118,7 +118,7 @@ def main():
         workflow = FaaSrPayload(url=file_path, token=token)
     except Exception as e:
         logger.error(f"Exception raised while while initializing FaaSr payload: {e}")
-        # sys.exit(1)
+        sys.exit(1)
 
     workflow_name = workflow.get("WorkflowName")
 
