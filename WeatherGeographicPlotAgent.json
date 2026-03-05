@@ -59,9 +59,10 @@
     }
   },
   "ActionContainers": {
-    "GetData": "ghcr.io/faasr/github-actions-python:latest",
-    "ProcessData": "ghcr.io/faasr/github-actions-python:latest",
-    "PlotData": "ghcr.io/faasr/github-actions-python:latest"
+    "GetData": "ghcr.io/nolcut/agent-gh-py:agent_ver",
+    "ProcessData": "ghcr.io/nolcut/agent-gh-py:agent_ver",
+    "PlotData": "ghcr.io/nolcut/agent-gh-py:agent_ver",
+    "test-agent": "ghcr.io/nolcut/agent-gh-py:agent_ver"
   },
   "FunctionInvoke": "GetData",
   "DefaultDataStore": "S3",
