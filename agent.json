@@ -51,8 +51,8 @@
       }
     },
     "ActionContainers": {
-      "start": "ghcr.io/faasr/agent-gh-py:agent_ver",
-      "sum": "ghcr.io/faasr/agent-gh-py:agent_ver",
+      "start": "ghcr.io/faasr/agent-gh-r:agent_ver",
+      "sum": "ghcr.io/faasr/agent-gh-r:agent_ver",
       "test-agent": "ghcr.io/faasr/agent-gh-py:agent_ver"
     },
     "FunctionInvoke": "start",
