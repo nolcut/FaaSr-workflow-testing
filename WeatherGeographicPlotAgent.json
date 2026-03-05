@@ -25,7 +25,7 @@
         "folder_name": "WeatherGeographicPlot",
         "county_name": "Benton"
       },
-      "InvokeNext": [],
+      "InvokeNext": ["test-agent"],
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "plot_county_weekly_temperature"
