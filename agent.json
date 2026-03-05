@@ -26,7 +26,6 @@
         "InvokeNext": ["test-agent"]
       },
       "test-agent": {
-        "FunctionName": "placeholder-get-rid",
         "FaaSServer": "GH",
         "Type": "Agent",
         "Arguments": {
