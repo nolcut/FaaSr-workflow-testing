@@ -26,6 +26,7 @@
         "InvokeNext": []
       },
       "test-agent": {
+        "FunctionName": "deletelater",
         "FaaSServer": "GH",
         "Type": "Agent",
         "Arguments": {
