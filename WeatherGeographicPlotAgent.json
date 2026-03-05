@@ -34,7 +34,7 @@
       "FaaSServer": "GH",
       "Type": "Agent",
       "Arguments": {
-        "prompt": "Write a poem of your choice and save it as poem.txt to S3"
+        "prompt": "You are a data science expert. Tell me about the TemperatureHeatmap.png in the WeatherGeographicPlot folder."
       },
       "InvokeNext": [
         "start"
