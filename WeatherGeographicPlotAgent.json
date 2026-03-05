@@ -45,7 +45,7 @@
     "GH": {
       "FaaSType": "GitHubActions",
       "UseSecretStore": true,
-      "ActionRepoName": "FaaSr-workflow",
+      "ActionRepoName": "FaaSr-workflow-testing",
       "Branch": "main",
       "UserName": "nolcut"
     }
