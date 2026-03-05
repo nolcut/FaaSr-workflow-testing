@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 from FaaSr_py import FaaSrPayload, Scheduler
+from FaaSr_py.config.debug_config import global_config
+global_config.SKIP_SCHEMA_VALIDATE = True
 
 logging.basicConfig(
     level=logging.INFO,
