@@ -51,8 +51,8 @@
       }
     },
     "ActionContainers": {
-      "start": "ghcr.io/nolcut/github-actions-r-testing:func-path",
-      "sum": "ghcr.io/nolcut/github-actions-r-testing:func-path",
+      "start": "ghcr.io/faasr/agent-gh-py:agent_ver",
+      "sum": "ghcr.io/faasr/agent-gh-py:agent_ver",
       "test-agent": "ghcr.io/faasr/agent-gh-py:agent_ver"
     },
     "FunctionInvoke": "start",
