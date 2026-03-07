@@ -64,5 +64,6 @@
     },
     "LoggingDataStore": "S3",
     "FaaSrLog": "FaaSrLog",
-    "WorkflowName": "agent-workflow"
+    "WorkflowName": "agent-workflow",
+    "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S"
 }
