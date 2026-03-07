@@ -34,7 +34,7 @@
       "FaaSServer": "GH",
       "Type": "Agent",
       "Arguments": {
-        "prompt": "You are a data science expert. Tell me about the TemperatureHeatmap.png in the WeatherGeographicPlot folder. Put your response in a file 'weather_insights.txt' in S3."
+        "prompt": "You are a data science expert. Tell me about the TemperatureHeatmap.png in the WeatherGeographicPlot folder. Specifically, whag does this tell me about the temperature in Benton County. Also, provide context about this region and why this info is relevant. Put your response in a file 'weather_insights.txt' in S3."
       },
       "InvokeNext": [
       ]
