@@ -52,10 +52,10 @@
   },
   "DataStores": {
     "S3": {
-      "Writable": "TRUE",
-      "Endpoint": "https://play.min.io",
-      "Bucket": "faasr",
-      "Region": "us-east-1"
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
     }
   },
   "ActionContainers": {
