@@ -29,7 +29,7 @@
         "FaaSServer": "GH",
         "Type": "Agent",
         "Arguments": {
-            "prompt": "Tell me about the files in S3. Give me a brief, short summary. Store your answer in agent_response.txt in S3"
+            "prompt": "Tell me about the current workflow instance. Use faasr_invocation_id to get the invocation ID of the workflow, and then find the corresponding log in S3. Write your response to response.txt and store it in S3"
         },
         "InvokeNext": []
       }
