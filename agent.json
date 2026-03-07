@@ -23,7 +23,7 @@
           "input1": "sample1.csv",
           "output": "sum.csv"
         },
-        "InvokeNext": []
+        "InvokeNext": ["test-agent"]
       },
       "test-agent": {
         "FaaSServer": "GH",
@@ -31,7 +31,7 @@
         "Arguments": {
             "prompt": "Tell me about the files in S3. Give me a brief, short summary. Store your answer in agent_response.txt in S3"
         },
-        "InvokeNext": ["start"]
+        "InvokeNext": []
       }
     },
     "ComputeServers": {
@@ -55,7 +55,7 @@
       "sum": "ghcr.io/faasr/agent-gh-r:agent_ver",
       "test-agent": "ghcr.io/nolcut/agent-gh-py:lang"
     },
-    "FunctionInvoke": "test-agent",
+    "FunctionInvoke": "start",
     "DefaultDataStore": "S3",
     "FunctionGitRepo": {
       "create_sample_data": "nolcut/FaaSr-Functions/main/tutorial/create_sample_data.R",
