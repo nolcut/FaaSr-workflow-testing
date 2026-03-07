@@ -29,7 +29,7 @@
         "FaaSServer": "GH",
         "Type": "Agent",
         "Arguments": {
-            "prompt": "Write a poem of your choice and save it as poem.txt to S3"
+            "prompt": "Tell me about the files in S3. Give me a brief, short summary. Store your answer in agent_response.txt in S3"
         },
         "InvokeNext": ["start"]
       }
