@@ -54,7 +54,7 @@
     "S3": {
       "Writable": "TRUE",
       "Endpoint": "https://play.min.io",
-      "Bucket": "weather-agent",
+      "Bucket": "faasr-weather-agent",
       "Region": "us-east-1"
     }
   }
