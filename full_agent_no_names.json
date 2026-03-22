@@ -1,0 +1,61 @@
+{
+  "FunctionInvoke": "GenerateData",
+  "WorkflowName": "stats-demo",
+  "InvocationID": "test-run-001",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "logs",
+
+  "ActionList": {
+    "GenerateData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["ComputeStats"],
+      "Arguments": {
+        "prompt": "Generate a dataset with three numeric variables: temperature, humidity, and pressure. Each variable should contain 1000 random values. Temperature should be normally distributed around 20 with std 5 (in Celsius). Humidity should be uniformly distributed between 20 and 100 (percent). Pressure should be normally distributed around 1013 with std 10 (hPa). Save the dataset as a single file where each key is a variable name and the value is a list of numbers."
+      }
+    },
+    "ComputeStats": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["PlotData"],
+      "Arguments": {
+        "prompt": "Read the file(s) produced by the upstream action. For each of the three variables (temperature, humidity, pressure), compute the mean and standard deviation. Save the results as a file with the structure: {variable_name: {mean: ..., std: ...}} for each variable."
+      }
+    },
+    "PlotData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "Arguments": {
+        "prompt": "Read the file(s) produced by upstream actions. Create a figure with three subplots (one per variable: temperature, humidity, pressure). Each subplot should be a histogram of the variable's values with a vertical line marking the mean and a shaded region indicating +/- one standard deviation. Label axes clearly and include a title for each subplot. Save the figure as plots.png using matplotlib (use the Agg backend: matplotlib.use('Agg') before importing pyplot)."
+      },
+      "InvokeNext": []
+    }
+  },
+
+  "ActionContainers": {
+    "GenerateData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ComputeStats": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotData": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+
+  "ComputeServers": {
+      "GH": {
+        "FaaSType": "GitHubActions",
+        "UserName": "nolcut",
+        "UseSecretStore": true,
+        "ActionRepoName": "FaaSr-workflow-testing",
+        "Branch": "main"
+      }
+  },
+
+  "DataStores": {
+      "S3": {
+        "Endpoint": "https://s3.us-east-1.amazonaws.com",
+        "Bucket": "faasr-full-agent",
+        "Region": "us-east-1",
+        "Writable": "TRUE"
+      }
+  }
+}
+
