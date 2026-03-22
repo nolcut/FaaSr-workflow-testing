@@ -1,0 +1,97 @@
+{
+  "FunctionInvoke": "DownloadBoundaries",
+  "WorkflowName": "Granular-Weather-Agent",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+
+  "ActionList": {
+    "DownloadBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["ComputeOuterBoundary"],
+      "Arguments": {
+        "prompt": "Download US state boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip and county boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip. Filter the states to Oregon and filter the counties to Benton, keeping only the Benton county polygon that lies within Oregon's boundaries. Save the results as State.geojson and County.geojson and upload both to the data store under the folder WeatherGeographicPlot."
+      }
+    },
+    "ComputeOuterBoundary": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["FilterStations"],
+      "Arguments": {
+        "prompt": "Download County.geojson from the data store folder WeatherGeographicPlot. Compute the min and max latitude and longitude of the county geometry, then expand each bound outward by 0.5 degrees to form a rectangular outer bounding polygon. Save this polygon as OuterBoundary.geojson and upload it to the data store under the folder WeatherGeographicPlot."
+      }
+    },
+    "FilterStations": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["DownloadStationData"],
+      "Arguments": {
+        "prompt": "Download OuterBoundary.geojson from the data store folder WeatherGeographicPlot. Download the NOAA GHCND station inventory from https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-inventory.txt. Keep only stations that have records for both TMAX and TMIN element types with an end date in the current year or later. Deduplicate by station ID. Filter the resulting stations to only those whose coordinates fall within the outer boundary polygon. Save the result as Stations.geojson and upload it to the data store under the folder WeatherGeographicPlot."
+      }
+    },
+    "DownloadStationData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["ProcessTemperature"],
+      "Arguments": {
+        "prompt": "Download Stations.geojson from the data store folder WeatherGeographicPlot. For each station, download its full daily observation CSV from https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/<STATION_ID>.csv, where <STATION_ID> is replaced with the station's ID. Save each CSV locally as <STATION_ID>.csv and upload every CSV file to the data store under the folder WeatherGeographicPlot."
+      }
+    },
+    "ProcessTemperature": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": ["RenderPlot"],
+      "Arguments": {
+        "prompt": "Download Stations.geojson and all station CSV files from the data store folder WeatherGeographicPlot. Determine the target week: subtract 28 days from today's date, then back up to the most recent Monday as the week start date; the week end date is the following Sunday. For each station CSV, filter rows to only those within the target date range, keeping the TMIN and TMAX columns. Discard any rows with missing values. Compute the mean TMIN and mean TMAX across all days for each station, then divide both values by 10 to convert from tenths-of-a-degree to whole degrees Celsius. Combine all stations into a single GeoDataFrame with columns STATION, geometry, TMIN, and TMAX, where geometry comes from the station coordinates in Stations.geojson. Save the result as TemperatureData.geojson and upload it to the data store under the folder WeatherGeographicPlot."
+      }
+    },
+    "RenderPlot": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Download OuterBoundary.geojson, TemperatureData.geojson, State.geojson, and County.geojson from the data store folder WeatherGeographicPlot. Create a figure with two side-by-side subplots (12x6 inches). For each subplot, build a 100x100 interpolation grid spanning the outer boundary extent, then use cubic interpolation (scipy.interpolate.griddata) to interpolate station TMIN values (left subplot) and TMAX values (right subplot) across that grid. Render each as a filled contour plot (20 levels) with alpha 0.8 — use colormap 'Blues_r' for TMIN and 'Reds' for TMAX. Overlay the station points as scatter markers colored by their value with black edges. Draw the state and county boundaries on both subplots. Set axis limits to the outer boundary extents, match the aspect ratio to the county bounds, and set tick marks every 0.5 degrees. Label axes as Longitude and Latitude, add a colorbar labeled 'Temperature (°C)', and title each subplot 'Minimum Temperature Heatmap (°C)' and 'Maximum Temperature Heatmap (°C)'. Use the invocation ID (formatted as %Y-%m-%d-%H-%M-%S) to determine the week start date (subtract 28 days then back up to Monday) and set the figure supertitle to 'Temperature Heatmap for Benton County for week starting <day>, <month> <date>, <year>'. Save the figure as TemperatureHeatmap.png and upload it to the data store under folder WeatherGeographicPlot."
+      }
+    }
+  },
+
+  "ActionContainers": {
+    "DownloadBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ComputeOuterBoundary": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FilterStations": "ghcr.io/nolcut/full-agent-gh:agents",
+    "DownloadStationData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessTemperature": "ghcr.io/nolcut/full-agent-gh:agents",
+    "RenderPlot": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+
+  "PyPIPackageDownloads": {
+    "DownloadBoundaries": ["geopandas"],
+    "ComputeOuterBoundary": ["geopandas"],
+    "FilterStations": ["geopandas"],
+    "DownloadStationData": ["geopandas"],
+    "ProcessTemperature": ["geopandas"],
+    "RenderPlot": ["geopandas", "matplotlib", "numpy", "scipy"]
+  }
+
+}
