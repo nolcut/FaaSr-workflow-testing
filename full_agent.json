@@ -28,7 +28,8 @@
       "Type": "Agent",
       "Arguments": {
         "prompt": "Read dataset.json and stats.json produced by upstream actions. Create a figure with three subplots (one per variable: temperature, humidity, pressure). Each subplot should be a histogram of the variable's values with a vertical line marking the mean and a shaded region indicating +/- one standard deviation. Label axes clearly and include a title for each subplot. Save the figure as plots.png using matplotlib (use the Agg backend: matplotlib.use('Agg') before importing pyplot)."
-      }
+      },
+      "InvokeNext": []
     }
   },
 
@@ -57,3 +58,4 @@
       }
   }
 }
+
