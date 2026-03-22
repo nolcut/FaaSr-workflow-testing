@@ -44,18 +44,30 @@
     "GH": {
       "FaaSType": "GitHubActions",
       "UseSecretStore": true,
-      "ActionRepoName": "FaaSr-workflow",
+      "ActionRepoName": "FaaSr-workflow-testing",
       "Branch": "main",
-      "UserName": "YOUR_USERNAME"
+      "UserName": "nolcut"
     }
   },
 
   "DataStores": {
     "S3": {
-      "Writable": "TRUE",
-      "Endpoint": "https://play.min.io",
-      "Bucket": "faasr-weather-agent",
-      "Region": "us-east-1"
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
     }
+  },
+
+  "PyPIPackageDownloads": {
+    "GetData": ["geopandas"],
+    "ComputeStas": ["geopandas"],
+    "PlotData": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "scipy"
+    ]
   }
+
 }
