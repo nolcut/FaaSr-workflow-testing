@@ -1,7 +1,7 @@
 {
   "FunctionInvoke": "GenerateData",
-  "WorkflowName": "stats-demo",
-  "InvocationID": "test-run-001",
+  "WorkflowName": "stats-no-names",
+  "InvocationID": "demo",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "logs",
