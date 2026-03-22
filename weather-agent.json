@@ -53,7 +53,7 @@
   "DataStores": {
     "S3": {
       "Endpoint": "https://s3.us-east-1.amazonaws.com",
-      "Bucket": "faasr-agent",
+      "Bucket": "faasr-weather-agent",
       "Region": "us-east-1",
       "Writable": "TRUE"
     }
