@@ -62,7 +62,7 @@
 
   "PyPIPackageDownloads": {
     "GetData": ["geopandas"],
-    "ComputeStas": ["geopandas"],
+    "ComputeStats": ["geopandas"],
     "PlotData": [
       "geopandas",
       "matplotlib",
