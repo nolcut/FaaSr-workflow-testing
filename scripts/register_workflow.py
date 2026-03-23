@@ -69,7 +69,7 @@ def generate_github_secret_imports(faasr_payload):
     """Generate GitHub Actions secret import commands from FaaSr payload."""
     import_statements = []
 
-    import_statements.extend("AGENT_KEY: ${{ secrets.AGENT_KEY}}")
+    import_statements.append("AGENT_KEY: ${{ secrets.AGENT_KEY}}")
 
     # Add secrets for compute servers
     for faas_name, compute_server in faasr_payload.get("ComputeServers", {}).items():
