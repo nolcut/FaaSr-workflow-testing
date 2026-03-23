@@ -6,7 +6,8 @@
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
-
+  "GlobalInputFiles": ["test.txt"],
+  
   "ActionList": {
     "GetData": {
       "FaaSServer": "GH",
