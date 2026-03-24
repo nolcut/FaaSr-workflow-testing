@@ -1,0 +1,111 @@
+{
+  "FunctionInvoke": "FetchBoundaries",
+  "WorkflowName": "Oregon-NDVI-Workflow-2",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "QueryMODIS"
+      ],
+      "Arguments": {
+        "prompt": "Download Oregon's state boundary shapefile from the US Census Bureau at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip and the US county boundary shapefile from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip. Unzip both archives. Load the state shapefile using geopandas, filter to the row where the NAME field equals 'Oregon', and save it as OregonState.geojson. Load the county shapefile using geopandas, filter to rows where the STATEFP field matches Oregon's STATEFP value, and save it as OregonCounties.geojson. Compute Oregon's bounding box from OregonState.geojson as (minx, miny, maxx, maxy) using the total_bounds method on the GeoDataFrame. Save the bounding box as a JSON file named OregonBBox.json with keys minx, miny, maxx, maxy containing the float values. Upload OregonState.geojson, OregonCounties.geojson, and OregonBBox.json to the S3 data store under the folder OregonNDVI."
+      }
+    },
+    "QueryMODIS": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Download OregonBBox.json from the S3 data store folder OregonNDVI. Parse the JSON to obtain minx, miny, maxx, maxy float values representing Oregon's bounding box. Using Python with pystac-client and planetary-computer packages, connect to the Microsoft Planetary Computer STAC API at https://planetarycomputer.microsoft.com/api/stac/v1 using pystac_client.Client.open with the planetary_computer.sign_inplace modifier. Search the collection named 'modis-13A1-061' (MODIS 16-day NDVI composite at 500m resolution). For each of the past 12 calendar months (month 1 through month 12 counting back from the current month), perform a separate STAC search filtered to that month's date range (first day to last day of that month) and the bounding box [minx, miny, maxx, maxy]. From each monthly search result, select the first item returned. Sign each item using planetary_computer.sign(item). For each signed item, download the asset with key '500m_16_days_NDVI' (the NDVI band GeoTIFF) and the asset with key '500m_16_days_VI_Quality' (the VI Quality band GeoTIFF) by fetching the href URL of each asset using the requests library or rioxarray. Save each downloaded file with a name following the pattern NDVI_YYYY_MM.tif and VIQuality_YYYY_MM.tif where YYYY is the four-digit year and MM is the two-digit month. Also save a JSON file named MODISItemList.json containing a list of objects, each with fields: year (int), month (int), ndvi_file (string filename), quality_file (string filename), and item_datetime (ISO8601 string of the item's datetime). Upload all downloaded NDVI GeoTIFFs, VI Quality GeoTIFFs, and MODISItemList.json to the S3 data store under the folder OregonNDVI."
+      }
+    },
+    "ProcessNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotNDVIGrid",
+        "PlotNDVITimeseries"
+      ],
+      "Arguments": {
+        "prompt": "Download the following files from the S3 data store folder OregonNDVI: OregonState.geojson, MODISItemList.json, and all NDVI GeoTIFFs and VI Quality GeoTIFFs listed in MODISItemList.json (files named NDVI_YYYY_MM.tif and VIQuality_YYYY_MM.tif for each of the 12 months). Parse MODISItemList.json to get the list of monthly entries, each containing fields year, month, ndvi_file, quality_file, and item_datetime. For each monthly entry, perform the following steps using rioxarray and geopandas: (1) Load the NDVI GeoTIFF (e.g. NDVI_2024_01.tif) using rioxarray.open_rasterio. (2) Load the VI Quality GeoTIFF (e.g. VIQuality_2024_01.tif) using rioxarray.open_rasterio. (3) Load OregonState.geojson using geopandas and reproject it to match the CRS of the NDVI raster using gdf.to_crs(ndvi.rio.crs). (4) Clip the NDVI raster to Oregon's state boundary using ndvi.rio.clip(oregon_gdf.geometry, oregon_gdf.crs, drop=True). (5) Clip the VI Quality raster to Oregon's state boundary using the same approach. (6) Scale the clipped NDVI values from their raw integer range to [-1, 1] by multiplying by 0.0001 (MODIS NDVI scale factor is 0.0001, valid range -10000 to 10000, resulting in -1.0 to 1.0). (7) Create a quality mask from the VI Quality band: extract bits 0-1 (the two least significant bits) of each pixel value using bitwise AND with 3 (value & 3); pixels where (quality_value & 3) equals 0 (VI produced with good quality) or 1 (VI produced, but check other QA) are considered acceptable; mask out pixels where (quality_value & 3) is 2 or 3 by setting them to NaN in the scaled NDVI array. (8) Compute the mean NDVI across all non-NaN pixels in the clipped, masked, scaled NDVI array for that month. (9) Save the clipped, masked, scaled NDVI array as a GeoTIFF named ProcessedNDVI_YYYY_MM.tif. After processing all 12 months, save a JSON file named MonthlyMeanNDVI.json containing a list of objects each with fields: year (int), month (int), item_datetime (ISO8601 string), mean_ndvi (float). Upload all 12 ProcessedNDVI_YYYY_MM.tif files and MonthlyMeanNDVI.json to the S3 data store under the folder OregonNDVI."
+      }
+    },
+    "PlotNDVIGrid": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Download the following files from the S3 data store folder OregonNDVI: OregonState.geojson, OregonCounties.geojson, MODISItemList.json, MonthlyMeanNDVI.json, and all 12 processed NDVI GeoTIFFs named ProcessedNDVI_YYYY_MM.tif for each month listed in MODISItemList.json. Parse MODISItemList.json to get the list of 12 monthly entries sorted in chronological order by year and month. Create a matplotlib figure with a 3-row by 4-column grid of subplots (12 panels total) using figsize=(20, 15). For each panel corresponding to one month: (1) Load the ProcessedNDVI_YYYY_MM.tif file using rioxarray.open_rasterio, squeeze the band dimension. (2) Load OregonState.geojson and OregonCounties.geojson using geopandas and reproject both to the CRS of the raster using gdf.to_crs(raster.rio.crs). (3) Plot the NDVI raster data on the subplot using matplotlib's imshow or rasterio's plotting utilities with the 'YlGn' colormap, setting vmin=-0.2 and vmax=1.0. (4) Overlay the Oregon state boundary by plotting the geometry outlines using geopandas plot with facecolor='none', edgecolor='black', linewidth=1.5 on the same axes. (5) Overlay the Oregon county boundaries by plotting the geometry outlines using geopandas plot with facecolor='none', edgecolor='gray', linewidth=0.5 on the same axes. (6) Set the subplot title to the month name and year derived from item_datetime (e.g. 'January 2024') using a font size of 10. (7) Add a colorbar to each subplot labeled 'NDVI' with font size 8. (8) Remove axis tick labels for a cleaner appearance. After creating all 12 panels, set the overall figure supertitle to 'Monthly NDVI Across Oregon (Past 12 Months)' with font size 16 and font weight bold. Adjust subplot spacing using plt.tight_layout(). Save the figure as OregonNDVI_MonthlyGrid.png at 150 DPI. Upload OregonNDVI_MonthlyGrid.png to the S3 data store under the folder OregonNDVI."
+      }
+    },
+    "PlotNDVITimeseries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Download MonthlyMeanNDVI.json from the S3 data store folder OregonNDVI. Parse the JSON to obtain a list of 12 objects each with fields: year (int), month (int), item_datetime (ISO8601 string), mean_ndvi (float). Sort the list chronologically by year and month. Create a list of datetime objects from item_datetime strings and a corresponding list of mean_ndvi float values. Create a matplotlib figure with figsize=(12, 6). Plot the mean NDVI values as a line with markers: use plt.plot with color='green', linewidth=2, marker='o', markersize=6, label='Mean Statewide NDVI'. Identify seasonal peaks (local maxima) and troughs (local minima) in the mean_ndvi series using scipy.signal.find_peaks: find peaks in the mean_ndvi array and find troughs by finding peaks in the negated mean_ndvi array. For each identified peak index, add a scatter point using plt.scatter with color='darkgreen', marker='^', s=100, zorder=5, and annotate it with the text 'Peak' offset by (0, 0.02) in data coordinates using plt.annotate with fontsize=9 and color='darkgreen'. For each identified trough index, add a scatter point using plt.scatter with color='brown', marker='v', s=100, zorder=5, and annotate it with the text 'Trough' offset by (0, -0.03) in data coordinates using plt.annotate with fontsize=9 and color='brown'. Set the x-axis to display month-year labels (e.g. 'Jan 2024') for each of the 12 data points using plt.xticks with rotation=45 and ha='right'. Set the y-axis label to 'Mean NDVI' with fontsize=12. Set the x-axis label to 'Month' with fontsize=12. Set the plot title to 'Mean Statewide NDVI Over Oregon - Past 12 Months' with fontsize=14 and fontweight='bold'. Add a horizontal dashed gray reference line at y=0 using plt.axhline(0, color='gray', linestyle='--', linewidth=0.8). Add a legend with plt.legend(fontsize=10). Add a grid using plt.grid(True, alpha=0.3). Call plt.tight_layout(). Save the figure as OregonNDVI_Timeseries.png at 150 DPI. Upload OregonNDVI_Timeseries.png to the S3 data store under the folder OregonNDVI."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "QueryMODIS": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotNDVIGrid": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotNDVITimeseries": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "QueryMODIS": [
+      "pystac-client",
+      "planetary-computer",
+      "requests",
+      "geopandas"
+    ],
+    "ProcessNDVI": [
+      "rioxarray",
+      "geopandas",
+      "numpy",
+      "rasterio"
+    ],
+    "PlotNDVIGrid": [
+      "rioxarray",
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "rasterio"
+    ],
+    "PlotNDVITimeseries": [
+      "matplotlib",
+      "numpy",
+      "scipy"
+    ]
+  }
+}
