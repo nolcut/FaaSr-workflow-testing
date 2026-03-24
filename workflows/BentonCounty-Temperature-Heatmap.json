@@ -1,0 +1,80 @@
+{
+  "FunctionInvoke": "GetData",
+  "WorkflowName": "BentonCounty-Temperature-Heatmap",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "GetData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ComputeStats"
+      ],
+      "Arguments": {
+        "prompt": "Your task is to download geographic boundary data and NOAA station inventory data, then filter and save the results as GeoJSON files to the S3 data store under the folder WeatherGeographicPlot.\n\nStep 1 \u2014 Download US state boundaries:\nFetch the file at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Unzip it locally. Load the shapefile (cb_2018_us_state_20m.shp) using geopandas. Filter to the single row where the NAME column equals 'Oregon'. Save this as State.geojson locally.\n\nStep 2 \u2014 Download US county boundaries:\nFetch the file at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip. Unzip it locally. Load the shapefile (cb_2018_us_county_5m.shp) using geopandas. Filter to the single row where the NAME column equals 'Benton' and the STATEFP column matches the STATEFP of the Oregon row from Step 1 (Oregon STATEFP is '41'). Save this as County.geojson locally.\n\nStep 3 \u2014 Compute expanded bounding box:\nFrom the Benton County geometry, compute the bounding box: minx, miny, maxx, maxy = geometry.total_bounds. Expand by 0.5 degrees in each direction: expanded_minx = minx - 0.5, expanded_miny = miny - 0.5, expanded_maxx = maxx + 0.5, expanded_maxy = maxy + 0.5. Create a shapely box polygon from these expanded coordinates. Create a GeoDataFrame with this single polygon and CRS EPSG:4326. Save this as OuterBoundary.geojson locally.\n\nStep 4 \u2014 Download and filter NOAA GHCND station inventory:\nFetch the plain-text file at https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-inventory.txt. This file has fixed-width columns with no header. The columns are: STATION (characters 1-11), LATITUDE (characters 13-20), LONGITUDE (characters 22-30), ELEMENT (characters 32-35), FIRSTYEAR (characters 37-40), LASTYEAR (characters 42-45). Parse these columns by position (0-indexed: STATION=0:11, LATITUDE=12:20, LONGITUDE=21:30, ELEMENT=31:35, FIRSTYEAR=36:40, LASTYEAR=41:45). Convert LATITUDE and LONGITUDE to float, FIRSTYEAR and LASTYEAR to int. Keep only rows where ELEMENT is 'TMAX' or 'TMIN'. Keep only rows where LASTYEAR equals the current calendar year or later. For each unique STATION, keep it only if it has BOTH a TMAX row and a TMIN row passing the above filter. Filter the resulting stations to those where LATITUDE is between expanded_miny and expanded_maxy and LONGITUDE is between expanded_minx and expanded_maxx. Create a GeoDataFrame with point geometries from LONGITUDE and LATITUDE, CRS EPSG:4326, and columns STATION, LATITUDE, LONGITUDE. Save this as Stations.geojson locally.\n\nStep 5 \u2014 Upload all files to S3:\nUpload State.geojson, County.geojson, OuterBoundary.geojson, and Stations.geojson to the S3 data store under the folder WeatherGeographicPlot. Also upload the downloaded zip files (cb_2018_us_state_20m.zip, cb_2018_us_county_5m.zip) and the inventory file (ghcnd-inventory.txt) to WeatherGeographicPlot for archival."
+      }
+    },
+    "ComputeStats": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotData"
+      ],
+      "Arguments": {
+        "prompt": "Your task is to download station temperature records from NOAA, filter to a target week, compute per-station averages, and save the result as a GeoJSON file to the S3 data store.\n\nStep 1 \u2014 Download Stations.geojson:\nDownload the file WeatherGeographicPlot/Stations.geojson from the S3 data store. Load it as a GeoDataFrame using geopandas. It has columns: STATION (string station ID), LATITUDE (float), LONGITUDE (float), and geometry (Point).\n\nStep 2 \u2014 Determine the target week:\nGet today's date using Python's datetime.date.today(). Subtract 28 days to get a reference date. Back up from that reference date to the most recent Monday (weekday() == 0): week_start = reference_date - timedelta(days=reference_date.weekday()). The week end is week_start + timedelta(days=6) (Sunday). The target date range is [week_start, week_end] inclusive.\n\nStep 3 \u2014 Download daily CSV records for each station:\nFor each station in the Stations GeoDataFrame, construct the URL: https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/<STATION_ID>.csv where <STATION_ID> is the value in the STATION column. Download the CSV file. The CSV has a header row. Relevant columns are: DATE (format YYYY-MM-DD), TMIN (numeric, tenths of degree Celsius), TMAX (numeric, tenths of degree Celsius). Save each CSV locally as <STATION_ID>.csv.\n\nStep 4 \u2014 Filter and compute averages:\nFor each station CSV: parse the DATE column as dates. Filter rows to those where DATE is between week_start and week_end inclusive. Keep only the DATE, TMIN, and TMAX columns. Drop any rows where TMIN or TMAX is missing (NaN or empty). If no rows remain after filtering, skip this station entirely. Compute the mean of TMIN across all remaining rows, then divide by 10 to convert from tenths-of-a-degree to degrees Celsius. Compute the mean of TMAX across all remaining rows, then divide by 10. Record the station ID, mean TMIN (Celsius), mean TMAX (Celsius).\n\nStep 5 \u2014 Build and save TemperatureData.geojson:\nCombine all stations that had valid data into a single GeoDataFrame. Columns must be: STATION (string), TMIN (float, degrees Celsius), TMAX (float, degrees Celsius), geometry (Point from original Stations.geojson). Set CRS to EPSG:4326. Save as TemperatureData.geojson locally.\n\nStep 6 \u2014 Upload files to S3:\nUpload TemperatureData.geojson to the S3 data store under folder WeatherGeographicPlot. Also upload all individual station CSV files (named <STATION_ID>.csv) to WeatherGeographicPlot for archival."
+      }
+    },
+    "PlotData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Your task is to download geographic and temperature data from the S3 data store, interpolate station values onto a grid, and generate a two-panel heatmap PNG figure.\n\nStep 1 \u2014 Download input files:\nDownload the following files from the S3 data store folder WeatherGeographicPlot: OuterBoundary.geojson, TemperatureData.geojson, State.geojson, County.geojson. Load each as a GeoDataFrame using geopandas.\n\nStep 2 \u2014 Extract bounding box:\nFrom OuterBoundary.geojson, extract the bounding box: minx, miny, maxx, maxy = outer_gdf.total_bounds. These define the spatial extent for the interpolation grid and plot axes.\n\nStep 3 \u2014 Build interpolation grid:\nCreate a 100x100 grid of points spanning [minx, maxx] in longitude and [miny, maxy] in latitude using numpy.linspace and numpy.meshgrid: grid_lon = numpy.linspace(minx, maxx, 100), grid_lat = numpy.linspace(miny, maxy, 100), grid_lon_2d, grid_lat_2d = numpy.meshgrid(grid_lon, grid_lat).\n\nStep 4 \u2014 Extract station coordinates and values:\nFrom TemperatureData.geojson, extract: station_lons = array of geometry.x values, station_lats = array of geometry.y values, tmin_values = array of TMIN column values (float, degrees Celsius), tmax_values = array of TMAX column values (float, degrees Celsius). Stack coordinates as points = numpy.column_stack([station_lons, station_lats]).\n\nStep 5 \u2014 Interpolate TMIN and TMAX:\nUse scipy.interpolate.griddata with method='cubic' to interpolate: grid_tmin = scipy.interpolate.griddata(points, tmin_values, (grid_lon_2d, grid_lat_2d), method='cubic'). grid_tmax = scipy.interpolate.griddata(points, tmax_values, (grid_lon_2d, grid_lat_2d), method='cubic').\n\nStep 6 \u2014 Determine figure supertitle date:\nGet today's date using datetime.date.today(). Subtract 28 days. Back up to the most recent Monday: week_start = ref - timedelta(days=ref.weekday()). Format the supertitle as: 'Temperature Heatmap for Benton County for week starting <weekday_name>, <month_name> <day>, <year>' where weekday_name is the full day name (e.g. Monday), month_name is the full month name (e.g. January), day is the zero-padded day, and year is the four-digit year.\n\nStep 7 \u2014 Create the figure:\nCreate a matplotlib figure with two side-by-side subplots (figsize=(16, 7)): fig, (ax1, ax2) = matplotlib.pyplot.subplots(1, 2, figsize=(16, 7)).\n\nLeft subplot (TMIN, ax1):\n- Plot filled contours using ax1.contourf(grid_lon_2d, grid_lat_2d, grid_tmin, levels=20, cmap='Blues_r', alpha=0.8).\n- Add a colorbar to ax1 labeled 'Temperature (\u00b0C)'.\n- Overlay station scatter points: ax1.scatter(station_lons, station_lats, c=tmin_values, cmap='Blues_r', edgecolors='black', zorder=5, s=50).\n- Plot State.geojson boundary lines on ax1 using state_gdf.boundary.plot(ax=ax1, color='black', linewidth=1).\n- Plot County.geojson boundary lines on ax1 using county_gdf.boundary.plot(ax=ax1, color='darkgray', linewidth=1.5).\n- Set axis limits: ax1.set_xlim(minx, maxx), ax1.set_ylim(miny, maxy).\n- Set tick marks every 0.5 degrees using matplotlib.ticker.MultipleLocator(0.5) on both axes.\n- Label x-axis 'Longitude', y-axis 'Latitude'.\n- Title: 'Minimum Temperature Heatmap (\u00b0C)'.\n\nRight subplot (TMAX, ax2):\n- Plot filled contours using ax2.contourf(grid_lon_2d, grid_lat_2d, grid_tmax, levels=20, cmap='Reds', alpha=0.8).\n- Add a colorbar to ax2 labeled 'Temperature (\u00b0C)'.\n- Overlay station scatter points: ax2.scatter(station_lons, station_lats, c=tmax_values, cmap='Reds', edgecolors='black', zorder=5, s=50).\n- Plot State.geojson boundary lines on ax2 using state_gdf.boundary.plot(ax=ax2, color='black', linewidth=1).\n- Plot County.geojson boundary lines on ax2 using county_gdf.boundary.plot(ax=ax2, color='darkgray', linewidth=1.5).\n- Set axis limits: ax2.set_xlim(minx, maxx), ax2.set_ylim(miny, maxy).\n- Set tick marks every 0.5 degrees using matplotlib.ticker.MultipleLocator(0.5) on both axes.\n- Label x-axis 'Longitude', y-axis 'Latitude'.\n- Title: 'Maximum Temperature Heatmap (\u00b0C)'.\n\nSet the figure supertitle using fig.suptitle(supertitle_string, fontsize=14, fontweight='bold').\nCall matplotlib.pyplot.tight_layout() before saving.\n\nStep 8 \u2014 Save and upload:\nSave the figure locally as TemperatureHeatmap.png using fig.savefig('TemperatureHeatmap.png', dpi=150, bbox_inches='tight'). Upload TemperatureHeatmap.png to the S3 data store under folder WeatherGeographicPlot."
+      }
+    }
+  },
+  "ActionContainers": {
+    "GetData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ComputeStats": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotData": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "GetData": [
+      "geopandas",
+      "requests",
+      "shapely"
+    ],
+    "ComputeStats": [
+      "geopandas",
+      "requests",
+      "pandas",
+      "numpy"
+    ],
+    "PlotData": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "scipy",
+      "pandas"
+    ]
+  }
+}
