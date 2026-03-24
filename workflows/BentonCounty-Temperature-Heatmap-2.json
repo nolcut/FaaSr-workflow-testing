@@ -1,0 +1,80 @@
+{
+  "FunctionInvoke": "GetData",
+  "WorkflowName": "BentonCounty-Temperature-Heatmap-2",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "GetData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ComputeStats"
+      ],
+      "Arguments": {
+        "prompt": "Download US state boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip and US county boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip. Unzip both archives. Load the state shapefile (cb_2018_us_state_20m.shp) using geopandas and filter to the single row where the NAME column equals 'Oregon'. Load the county shapefile (cb_2018_us_county_5m.shp) using geopandas and filter to the single row where the NAME column equals 'Benton' and the STATEFP column matches Oregon's STATEFP value. Reproject both GeoDataFrames to EPSG:4326 if they are not already in that CRS. Compute the bounding box of Benton County by calling the total_bounds property, which returns (minx, miny, maxx, maxy) corresponding to (min_lon, min_lat, max_lon, max_lat). Expand this bounding box by 0.5 degrees in each direction: outer_min_lon = min_lon - 0.5, outer_min_lat = min_lat - 0.5, outer_max_lon = max_lon + 0.5, outer_max_lat = max_lat + 0.5. Create a GeoDataFrame for the outer boundary as a single rectangular polygon using shapely.geometry.box(outer_min_lon, outer_min_lat, outer_max_lon, outer_max_lat) with CRS EPSG:4326. Download the NOAA GHCND station inventory from https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-inventory.txt. This file is a fixed-width text file with columns: STATION (characters 1-11), LATITUDE (characters 13-20), LONGITUDE (characters 22-30), ELEMENT (characters 32-35), FIRSTYEAR (characters 37-40), LASTYEAR (characters 42-45). Parse it using pandas read_fwf with colspecs=[(0,11),(12,20),(21,30),(31,35),(36,40),(41,45)] and names=['STATION','LATITUDE','LONGITUDE','ELEMENT','FIRSTYEAR','LASTYEAR']. Keep only rows where ELEMENT is 'TMAX' or 'TMIN' and where LASTYEAR is greater than or equal to the current calendar year. For each station that appears in the filtered inventory, require that it has at least one TMAX row AND at least one TMIN row \u2014 discard stations that do not have both elements. Filter the remaining stations to only those where LATITUDE is between outer_min_lat and outer_max_lat inclusive and LONGITUDE is between outer_min_lon and outer_max_lon inclusive. Deduplicate so each STATION ID appears only once, keeping the first occurrence. Create a GeoDataFrame from these stations using geopandas.points_from_xy(LONGITUDE, LATITUDE) with CRS EPSG:4326. Save the Oregon state geometry as State.geojson, the Benton County geometry as County.geojson, the outer boundary polygon as OuterBoundary.geojson, and the filtered stations as Stations.geojson. Upload all four files to the S3 data store under the folder WeatherGeographicPlot, so the paths are WeatherGeographicPlot/State.geojson, WeatherGeographicPlot/County.geojson, WeatherGeographicPlot/OuterBoundary.geojson, and WeatherGeographicPlot/Stations.geojson."
+      }
+    },
+    "ComputeStats": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotData"
+      ],
+      "Arguments": {
+        "prompt": "Download the file WeatherGeographicPlot/Stations.geojson from the S3 data store and load it as a GeoDataFrame using geopandas. This file contains columns STATION and geometry (Point with longitude/latitude in EPSG:4326). Determine the target week as follows: take today's date (using datetime.date.today()), subtract 28 days to get a reference date, then find the most recent Monday on or before that reference date by subtracting (reference_date.weekday()) days \u2014 this is the week_start. The week_end is week_start plus 6 days (the following Sunday). For each station in the GeoDataFrame, download its full daily CSV record from the URL https://www.ncei.noaa.gov/data/global-historical-climatology-network-daily/access/<STATION_ID>.csv where <STATION_ID> is the value in the STATION column. Load the CSV using pandas. The CSV contains at minimum the columns DATE (in YYYY-MM-DD format), TMAX, and TMIN among others. Filter the rows to only those where DATE is between week_start and week_end inclusive (convert DATE to datetime.date for comparison). Drop any rows where TMAX is NaN or TMIN is NaN. If after filtering and dropping there are no valid rows for a station, skip that station entirely. For stations with valid rows, compute the mean of TMAX across all remaining rows and the mean of TMIN across all remaining rows. Divide both means by 10.0 to convert from tenths of a degree Celsius to whole degrees Celsius. Collect all valid stations into a list of records with fields STATION (string), geometry (the Point geometry from Stations.geojson), TMIN (float, converted), and TMAX (float, converted). Build a GeoDataFrame from these records with CRS EPSG:4326. Save the result as TemperatureData.geojson and upload it to the S3 data store under the folder WeatherGeographicPlot so the path is WeatherGeographicPlot/TemperatureData.geojson."
+      }
+    },
+    "PlotData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Download the following four files from the S3 data store folder WeatherGeographicPlot: OuterBoundary.geojson, TemperatureData.geojson, State.geojson, and County.geojson. Load each using geopandas. All GeoDataFrames should be in CRS EPSG:4326. From OuterBoundary.geojson, extract the bounding box using total_bounds to get (outer_min_lon, outer_min_lat, outer_max_lon, outer_max_lat). From TemperatureData.geojson, extract station longitudes as station_lons = [geom.x for geom in gdf.geometry], station latitudes as station_lats = [geom.y for geom in gdf.geometry], TMIN values as a numpy array, and TMAX values as a numpy array. Build a 100x100 interpolation grid: grid_lons = numpy.linspace(outer_min_lon, outer_max_lon, 100) and grid_lats = numpy.linspace(outer_min_lat, outer_max_lat, 100), then create meshgrid arrays grid_lon_mesh, grid_lat_mesh = numpy.meshgrid(grid_lons, grid_lats). Use scipy.interpolate.griddata with method='cubic' to interpolate TMIN values onto the grid: tmin_grid = scipy.interpolate.griddata((station_lons, station_lats), tmin_values, (grid_lon_mesh, grid_lat_mesh), method='cubic'). Similarly interpolate TMAX: tmax_grid = scipy.interpolate.griddata((station_lons, station_lats), tmax_values, (grid_lon_mesh, grid_lat_mesh), method='cubic'). Determine the figure supertitle date range as follows: take today's date (datetime.date.today()), subtract 28 days, then back up to the most recent Monday by subtracting (reference_date.weekday()) days to get week_start; week_end = week_start + datetime.timedelta(days=6). Format week_start as '<weekday_name>, <month_name> <day>, <year>' (e.g., 'Monday, January 6, 2025') and week_end similarly. Create a matplotlib figure with figsize=(16, 7) and two side-by-side subplots (1 row, 2 columns) using plt.subplots(1, 2). For the left subplot (TMIN): call contourf on the grid with 20 levels using colormap 'Blues_r' and alpha=0.8, passing tmin_grid, grid_lon_mesh, grid_lat_mesh. Add a colorbar labeled 'Temperature (\u00b0C)'. Overlay station scatter points using ax.scatter(station_lons, station_lats, c=tmin_values, cmap='Blues_r', edgecolors='black', zorder=5, s=50). Plot the Oregon state boundary from State.geojson using state_gdf.boundary.plot(ax=ax, color='black', linewidth=1.0). Plot the Benton County boundary from County.geojson using county_gdf.boundary.plot(ax=ax, color='darkgreen', linewidth=1.5). Set axis limits: ax.set_xlim(outer_min_lon, outer_max_lon) and ax.set_ylim(outer_min_lat, outer_max_lat). Set x ticks and y ticks every 0.5 degrees using numpy.arange. Label x-axis 'Longitude' and y-axis 'Latitude'. Set subplot title 'Minimum Temperature Heatmap (\u00b0C)'. For the right subplot (TMAX): repeat the same steps using tmax_grid, colormap 'Reds', and tmax_values, with subplot title 'Maximum Temperature Heatmap (\u00b0C)'. Set the figure supertitle using plt.suptitle with the string 'Temperature Heatmap for Benton County for week of ' + week_start_formatted + ' to ' + week_end_formatted, fontsize=14. Call plt.tight_layout(). Save the figure as TemperatureHeatmap.png using plt.savefig('TemperatureHeatmap.png', dpi=150, bbox_inches='tight'). Upload TemperatureHeatmap.png to the S3 data store under the folder WeatherGeographicPlot so the path is WeatherGeographicPlot/TemperatureHeatmap.png. Also upload OuterBoundary.geojson, TemperatureData.geojson, State.geojson, and County.geojson back to WeatherGeographicPlot if any local modifications were made, to ensure all intermediate artifacts are present in the data store."
+      }
+    }
+  },
+  "ActionContainers": {
+    "GetData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ComputeStats": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotData": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "GetData": [
+      "geopandas",
+      "requests",
+      "shapely"
+    ],
+    "ComputeStats": [
+      "geopandas",
+      "requests",
+      "pandas",
+      "numpy"
+    ],
+    "PlotData": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "scipy",
+      "shapely"
+    ]
+  }
+}
