@@ -1,0 +1,102 @@
+{
+  "FunctionInvoke": "GetBoundary",
+  "WorkflowName": "Oregon-NDVI-Workflow-13",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "GetBoundary": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "QueryMODIS"
+      ],
+      "Arguments": {
+        "prompt": "Download the US state boundary shapefile from the US Census Bureau at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Unzip the archive and load the shapefile using geopandas. Filter the GeoDataFrame to retain only the record where the state name is Oregon. Extract the geographic bounding box of the Oregon polygon in longitude/latitude coordinates (EPSG:4326), producing four values: minimum longitude, minimum latitude, maximum longitude, and maximum latitude. Also retain the full Oregon state boundary polygon geometry in EPSG:4326. Save two output artifacts: (1) a GeoJSON file containing the Oregon state boundary polygon in EPSG:4326, and (2) a JSON file containing the bounding box as a dictionary with keys 'minx', 'miny', 'maxx', 'maxy' and their corresponding float values. These outputs will be consumed by the next step to spatially filter MODIS satellite data queries."
+      }
+    },
+    "QueryMODIS": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Using the Oregon bounding box JSON file produced by the previous step, connect to the Microsoft Planetary Computer STAC API at https://planetarycomputer.microsoft.com/api/stac/v1 using the pystac-client and planetary-computer Python packages. No authentication is required \u2014 use planetary_computer.sign_inplace on the catalog. Query the collection named modis-13A1-061, which provides 16-day NDVI composites at 500-meter resolution. Determine the past 12 full calendar months relative to today's date: for each month, compute its first and last day. For each of the 12 calendar months, perform a separate STAC search filtered spatially by the Oregon bounding box (expressed as [minx, miny, maxx, maxy]) and temporally to the start and end of that calendar month. For each month, attempt to retrieve at least one MODIS scene item. If a month yields no results, skip it gracefully without raising an error \u2014 simply record that the month has no data and continue to the next month. For each month that does yield at least one result, select the first available item and sign it using planetary_computer.sign. From each signed item, extract the HREF URLs for two assets: the asset with key '500m_16_days_NDVI' and the asset with key '500m_16_days_VI_Quality'. Download both GeoTIFF assets for each available month. Save all downloaded GeoTIFF files as output artifacts. Additionally, save a JSON manifest file that lists, for each available month, the month label (formatted as YYYY-MM), the filename of the downloaded NDVI GeoTIFF, and the filename of the downloaded VI_Quality GeoTIFF. This manifest will be used by the next step to process each month's rasters."
+      }
+    },
+    "ProcessNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "VisualizeNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Using the JSON manifest of available months and their corresponding NDVI and VI_Quality GeoTIFF files produced by the previous step, along with the Oregon state boundary GeoJSON file produced by the boundary step, perform the following processing for each available month. Load each NDVI GeoTIFF using rioxarray. Reproject the raster to EPSG:4326 (WGS84 geographic coordinates) using rioxarray's reproject method before any clipping or analysis. After reprojection, clip the raster to the Oregon state boundary polygon loaded from the GeoJSON file, ensuring the clip uses the same EPSG:4326 coordinate reference system. Scale the raw NDVI integer values to the standard floating-point range of negative one to positive one by multiplying by 0.0001, which is the standard MODIS NDVI scale factor. Load the corresponding VI_Quality GeoTIFF, reproject it to EPSG:4326, and clip it to the Oregon boundary. Use the VI_Quality band to mask out low-quality pixels: retain only pixels where the two least-significant bits of the quality value equal 0 or 1 (i.e., quality flag value AND 3 is less than or equal to 1), which corresponds to good and acceptable quality. Apply this quality mask to the scaled NDVI raster, setting masked pixels to NaN. After masking, compute the spatial mean NDVI across all valid (non-NaN) pixels within Oregon for that month, storing the month label and its mean NDVI value. After processing all available months, save two output artifacts: (1) a collection of processed monthly NDVI arrays \u2014 for each available month, save the clipped, scaled, quality-masked NDVI raster as a GeoTIFF file, and (2) a JSON file mapping each available month label (YYYY-MM) to its computed spatial mean NDVI value as a float. These outputs will be consumed by the visualization step."
+      }
+    },
+    "VisualizeNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the processed monthly NDVI GeoTIFF files, the JSON file of monthly mean NDVI values, and the Oregon state boundary GeoJSON file produced by the previous steps, generate two output visualizations and save each as a PNG file. For the first visualization, create a map grid displaying the monthly NDVI spatial distribution across Oregon for each available month. Determine the number of available months from the monthly mean NDVI JSON file. Arrange the monthly maps in a grid layout with a reasonable number of columns (for example, 3 or 4 columns) and enough rows to accommodate all available months, with one panel per available month. For each panel, load the corresponding processed NDVI GeoTIFF using rioxarray or rasterio, extract the spatial array and its coordinate extents, and render the raster using matplotlib's imshow or a similar method with the YlGn colormap, setting the value range from negative one to positive one. Use either cartopy with the PlateCarree projection or set ax.set_aspect('equal') on each subplot axis to ensure correct geographic proportions. Overlay Oregon state boundaries and county boundaries on each panel to provide geographic context \u2014 download county boundaries from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip and filter to Oregon counties. Label each panel with its month and year. Include a single shared horizontal colorbar positioned below all subplots using fig.add_axes([0.15, 0.04, 0.70, 0.02]), spanning the full figure width. Label the colorbar as 'NDVI (unitless, -1 to 1)' and include tick marks at the values -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, and 1.0. Add a figure-level title using fig.suptitle() with bold font weight and size 14, positioned at y=1.01, with a descriptive title referencing Oregon NDVI over the covered time period. Save this figure as a PNG output file. For the second visualization, create a line plot showing mean statewide NDVI over time. Parse the monthly mean NDVI JSON file to obtain the list of available months and their corresponding mean NDVI values. Convert the month labels to datetime objects for proper axis formatting. Plot the monthly mean NDVI values on the vertical axis against the corresponding month dates on the horizontal axis, connected by a line with markers at each data point. Label the horizontal axis as 'Month' and the vertical axis as 'Mean NDVI'. Include a descriptive title such as 'Oregon Mean Statewide NDVI Over Time'. Format the horizontal axis tick labels to display month and year clearly. Save this figure as a PNG output file. Both PNG files should be uploaded to S3 as output artifacts."
+      }
+    }
+  },
+  "ActionContainers": {
+    "GetBoundary": "ghcr.io/nolcut/full-agent-gh:agents",
+    "QueryMODIS": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "VisualizeNDVI": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "GetBoundary": [
+      "geopandas",
+      "requests"
+    ],
+    "QueryMODIS": [
+      "geopandas",
+      "pystac-client",
+      "planetary-computer",
+      "requests",
+      "rioxarray",
+      "rasterio"
+    ],
+    "ProcessNDVI": [
+      "geopandas",
+      "rioxarray",
+      "rasterio",
+      "numpy",
+      "shapely"
+    ],
+    "VisualizeNDVI": [
+      "geopandas",
+      "rioxarray",
+      "rasterio",
+      "numpy",
+      "matplotlib",
+      "cartopy",
+      "requests",
+      "shapely"
+    ]
+  }
+}
