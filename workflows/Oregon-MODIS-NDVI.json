@@ -1,0 +1,116 @@
+{
+  "FunctionInvoke": "FetchModisData",
+  "WorkflowName": "Oregon-MODIS-NDVI",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchModisData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessNdvi"
+      ],
+      "Arguments": {
+        "prompt": "Perform the following data retrieval tasks and save all outputs for downstream processing.\n\n1. Query the Microsoft Planetary Computer STAC API at https://planetarycomputer.microsoft.com/api/stac/v1 for the collection identified as 'modis-13A1-061'. Use the pystac-client library and sign items with planetary_computer.sign_inplace. Filter the search spatially to the bounding box that encompasses the state of Oregon (approximately longitude -124.7 to -116.5, latitude 41.9 to 46.3) and temporally to cover the past 12 full calendar months relative to today's date (compute the start as the first day of the month 12 months ago and the end as the last day of the most recently completed month). Request the assets named '500m_16_days_NDVI' and '500m_16_days_VI_Quality'. Collect all items returned by the search. For each item, record its datetime, the signed HREF for the NDVI asset, and the signed HREF for the VI Quality asset. Save this collection of item metadata as a JSON-formatted output file containing a list of records, each with fields: item_id, datetime (ISO 8601 string), ndvi_href, quality_href.\n\n2. Download the Oregon state boundary shapefile from the United States Census Bureau generalized boundary files (use the 1:500k or 1:5m scale state shapefile from https://www2.census.gov/geo/tiger/GENZ2022/shp/ or the equivalent current year). Filter the shapefile to retain only the polygon for the state of Oregon. Save the Oregon state boundary as a GeoJSON output file.\n\n3. Download the Oregon county boundary shapefile from the United States Census Bureau (use the county-level generalized boundary file from the same Census Bureau GENZ directory). Filter to retain only counties whose state FIPS code corresponds to Oregon (FIPS 41). Save the Oregon county boundaries as a GeoJSON output file.\n\nEnsure all three output artifacts (MODIS item metadata JSON, Oregon state boundary GeoJSON, Oregon county boundaries GeoJSON) are saved so they are available to subsequent workflow steps."
+      }
+    },
+    "ProcessNdvi": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ComputeMonthlyStats"
+      ],
+      "Arguments": {
+        "prompt": "Using the MODIS item metadata JSON produced by the previous step, perform the following raster processing steps for each MODIS tile record. Also load the Oregon state boundary GeoJSON produced by the previous step for use in clipping.\n\nFor each record in the item metadata list:\n1. Download the NDVI GeoTIFF from the signed HREF stored in the metadata record.\n2. Download the VI Quality GeoTIFF from the signed HREF stored in the metadata record.\n3. Open the NDVI raster using rioxarray. Assign its native coordinate reference system (MODIS sinusoidal, ESRI:54008 or the CRS embedded in the file) if not already set. Reproject the NDVI raster to EPSG:4326 using rioxarray's reproject method.\n4. Clip the reprojected NDVI raster to the Oregon state boundary polygon loaded from the Oregon state boundary GeoJSON. Retain only pixels that fall within the state boundary.\n5. Scale the raw integer NDVI values to the standard floating-point range of -1.0 to 1.0 by multiplying by 0.0001 (the standard MODIS NDVI scale factor). Set any values outside the valid range [-1, 1] to NaN.\n6. Open the VI Quality GeoTIFF, reproject it to EPSG:4326 using the same approach, and clip it to the Oregon state boundary.\n7. Apply a quality mask: extract bits 0 and 1 from each VI Quality pixel value (these represent the VI usefulness/quality ranking). Pixels where bits 0-1 equal 0b00 (value 0) indicate the highest quality ('good data, use with confidence'). Pixels where bits 0-1 equal 0b01 (value 1) indicate acceptable quality. Mask out (set to NaN) any NDVI pixel where bits 0-1 of the corresponding quality value are 0b10 (value 2, 'quality so low that it is not useful') or 0b11 (value 3, 'L1B data faulty'). Also mask fill/no-data values.\n8. After masking, compute the mean NDVI value across all remaining valid (non-NaN) pixels within the clipped Oregon extent for this tile. Record the item_id, the datetime from the metadata, and the computed mean NDVI value.\n9. Also retain the clipped, masked, scaled NDVI array along with its spatial metadata (transform, CRS, shape) so it can be used for map rendering. Save each processed tile's array data in a format suitable for later retrieval (e.g., as a GeoTIFF or NetCDF keyed by item_id).\n\nAfter processing all tiles, save a JSON output file containing a list of per-tile summary records, each with fields: item_id, datetime (ISO 8601), mean_ndvi (float or null if no valid pixels). Save all processed raster outputs so they are accessible to subsequent steps."
+      }
+    },
+    "ComputeMonthlyStats": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotNdviMap",
+        "PlotNdviTimeseries"
+      ],
+      "Arguments": {
+        "prompt": "Using the per-tile summary JSON produced by the previous processing step, compute monthly aggregated NDVI statistics as follows:\n\n1. Load the per-tile summary records. Each record contains an item_id, a datetime string, and a mean_ndvi value (which may be null if no valid pixels were present for that tile).\n2. Parse the datetime field for each record and extract the calendar year and month.\n3. Group all records by (year, month). For each group, collect all non-null mean_ndvi values from tiles falling within that month.\n4. If a month has no non-null mean_ndvi values, silently skip it and do not include it in the output.\n5. For each month that has at least one valid value, compute the mean of the per-tile mean_ndvi values to produce a single representative monthly mean NDVI for Oregon.\n6. Produce a list of monthly summary records sorted chronologically, each containing: year (integer), month (integer), month_label (string formatted as 'YYYY-MM'), and monthly_mean_ndvi (float).\n7. Save this monthly summary as a JSON output file.\n\nAlso produce a second JSON output file that contains metadata about the workflow run, including: the date range covered (earliest and latest datetime from the tile records), the number of tiles processed, the number of months with valid data, and the list of month_labels included in the analysis.\n\nBoth JSON output files must be saved so they are available to the visualization steps that run in parallel after this step."
+      }
+    },
+    "PlotNdviMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the processed raster outputs from the tile processing step, the monthly summary JSON, the Oregon state boundary GeoJSON, and the Oregon county boundaries GeoJSON produced by earlier steps, create a publication-quality map grid figure and save it as a PNG output file.\n\nProcedure:\n1. Load the monthly summary JSON to determine which months have valid data and their chronological order.\n2. Load the Oregon state boundary and county boundary GeoJSON files.\n3. For each month in the monthly summary (in chronological order), load the corresponding processed NDVI raster tiles (clipped, masked, scaled to -1 to 1) that fall within that month. If multiple tiles cover the same month, mosaic or merge them into a single raster covering Oregon before rendering.\n4. Arrange the monthly panels in a grid layout. Choose the number of columns to produce a roughly square or landscape-oriented grid (e.g., 3 or 4 columns). Each panel corresponds to one month.\n5. For each panel:\n   a. Render the clipped and masked NDVI raster using the 'YlGn' colormap with vmin=-0.2 and vmax=1.0.\n   b. Overlay the Oregon state boundary as a black line with linewidth approximately 1.0.\n   c. Overlay the Oregon county boundaries as dark gray lines with linewidth approximately 0.5.\n   d. Set the panel title to the month label (e.g., 'YYYY-MM') in a readable font size.\n   e. Remove axis tick labels to keep panels clean, but retain the axes frame.\n6. Add a single shared horizontal colorbar beneath the grid (or to the side if layout is better). Label the colorbar 'NDVI (unitless, -1 to 1)'. Place tick marks at regular intervals: -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0.\n7. Add a bold super-title for the entire figure at font size 14. The super-title should clearly describe the content, for example: 'Monthly NDVI across Oregon \u2014 [start month] to [end month]' where the start and end months are derived from the data.\n8. Use a figure size large enough to make each panel legible (e.g., approximately 4 inches wide and 3 inches tall per panel).\n9. Save the completed figure as a PNG output file with dpi=150 or higher."
+      }
+    },
+    "PlotNdviTimeseries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the monthly summary JSON produced by the aggregation step, create a publication-quality line plot showing the mean statewide NDVI value over time and save it as a PNG output file.\n\nProcedure:\n1. Load the monthly summary JSON. Each record contains a month_label (formatted as 'YYYY-MM') and a monthly_mean_ndvi value. The records are sorted chronologically.\n2. Extract the month labels as the x-axis values and the monthly_mean_ndvi values as the y-axis values.\n3. Create a single-panel line plot:\n   a. Plot the monthly mean NDVI values as a line with circular markers at each data point. Use a visually distinct color (e.g., forest green or a color from the 'YlGn' colormap at a high value).\n   b. Set the x-axis to display the month labels in chronological order. Rotate x-axis tick labels by 45 degrees for readability.\n   c. Label the x-axis 'Month'.\n   d. Label the y-axis 'Mean NDVI (unitless, -1 to 1)'.\n   e. Set the y-axis range to span from slightly below the minimum observed value to slightly above the maximum observed value, or use a fixed range of -0.2 to 1.0 if that encompasses all values.\n   f. Add a title such as 'Mean Statewide NDVI for Oregon over the Past 12 Months'.\n   g. Add horizontal gridlines with light gray color and alpha 0.5 to improve readability.\n   h. Add a light gray background to the plot area.\n   i. Annotate each data point with its rounded NDVI value displayed just above the marker.\n4. Use a figure size of approximately 10 inches wide by 5 inches tall.\n5. Apply tight layout to prevent label clipping.\n6. Save the completed figure as a PNG output file with dpi=150 or higher."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchModisData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessNdvi": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ComputeMonthlyStats": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotNdviMap": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotNdviTimeseries": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchModisData": [
+      "pystac-client",
+      "planetary-computer",
+      "geopandas",
+      "requests",
+      "shapely"
+    ],
+    "ProcessNdvi": [
+      "rioxarray",
+      "rasterio",
+      "geopandas",
+      "numpy",
+      "xarray",
+      "shapely",
+      "planetary-computer",
+      "requests"
+    ],
+    "ComputeMonthlyStats": [
+      "numpy"
+    ],
+    "PlotNdviMap": [
+      "rioxarray",
+      "rasterio",
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "xarray",
+      "shapely"
+    ],
+    "PlotNdviTimeseries": [
+      "matplotlib",
+      "numpy"
+    ]
+  }
+}
