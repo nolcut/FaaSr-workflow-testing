@@ -1,0 +1,60 @@
+{
+  "FunctionInvoke": "FetchData",
+  "WorkflowName": "Earthquake-Visualization-2",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotEarthquakes"
+      ],
+      "Arguments": {
+        "prompt": "Perform two data retrieval tasks and save the results for downstream use.\n\nTask 1 \u2014 Earthquake event data: Query the USGS Earthquake Hazards Program FDSNWS API at https://earthquake.usgs.gov/fdsnws/event/1/query using the following parameters: format=geojson, minimum magnitude of 2.0, a spatial bounding box covering latitudes 32 to 49 degrees North and longitudes -125 to -114 degrees (western United States), and a time window covering the past 30 days from today's date (compute the start time as today minus 30 days and the end time as today, both in ISO 8601 format). Retrieve the full GeoJSON feature collection from the API response and save it as a GeoJSON output file.\n\nTask 2 \u2014 US Census Bureau state boundary shapefiles: Download the US Census Bureau generalized state boundary shapefile from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Extract the archive, load the shapefile using geopandas, and filter the resulting GeoDataFrame to retain only the following eight states: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered state boundaries as a GeoJSON output file.\n\nProduce two output files: one containing the raw USGS earthquake GeoJSON feature collection, and one containing the filtered eight-state boundary GeoDataFrame in GeoJSON format."
+      }
+    },
+    "PlotEarthquakes": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the earthquake GeoJSON feature collection and the eight-state boundary GeoJSON file produced by the previous step, generate a PNG map visualization of recent seismic activity in the western United States.\n\nData preparation: Load the earthquake GeoJSON feature collection. For each feature in the collection, extract the following fields from the feature's geometry and properties: longitude (geometry coordinates index 0), latitude (geometry coordinates index 1), magnitude (properties field 'mag'), and depth in kilometers (properties field 'depth' from the coordinates array at index 2, or from properties depending on the USGS GeoJSON schema \u2014 use coordinates[2] for depth). Retain the native magnitude scale label as provided (e.g., 'ml' or 'mw') without converting or normalizing. Drop any records where magnitude or depth is null or missing \u2014 do not impute or fill these values. Do not reproject or transform the raw latitude and longitude coordinates.\n\nMarker size formula: Compute the minimum magnitude value across all retained records. For each earthquake, compute marker size as: size = 80 * (2 ** (magnitude - min_magnitude)). This produces exponentially scaled markers relative to the smallest observed magnitude.\n\nColor encoding: Map depth values to colors using matplotlib's plasma colormap. Allow matplotlib to automatically determine the colormap scale from the minimum and maximum depth values present in the filtered dataset.\n\nFigure construction: Create a single matplotlib figure. Plot the earthquake scatter points using the raw longitude as x and latitude as y, with marker sizes from the formula above and colors from the plasma colormap applied to depth values. Overlay the eight-state boundary polygons from the state boundary GeoJSON on the same axes to provide geographic context \u2014 draw only the boundary outlines in a neutral color. Add a colorbar to the figure labeled 'Depth (km)' corresponding to the plasma colormap and the auto-scaled depth range. Add a legend illustrating the marker size-to-magnitude relationship by showing five representative scatter markers for magnitudes 2, 3, 4, 5, and 6, computing their sizes using the same formula (substituting each representative magnitude for the actual magnitude while using the dataset's actual min_magnitude). Label each legend entry with its corresponding magnitude value. Compute the start date (today minus 30 days) and today's date, and set the figure title to include both the date range and the total count of earthquake events displayed after filtering, for example: 'Western US Earthquakes (M2.0+) | YYYY-MM-DD to YYYY-MM-DD | N events'. Label the x-axis 'Longitude' and the y-axis 'Latitude'.\n\nSave the completed figure as a PNG output file and upload it to the configured S3 bucket."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotEarthquakes": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchData": [
+      "geopandas",
+      "requests"
+    ],
+    "PlotEarthquakes": [
+      "geopandas",
+      "matplotlib",
+      "numpy"
+    ]
+  }
+}
