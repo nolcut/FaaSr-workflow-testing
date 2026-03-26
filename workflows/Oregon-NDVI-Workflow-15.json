@@ -1,0 +1,82 @@
+{
+  "FunctionInvoke": "GetBoundary",
+  "WorkflowName": "Oregon-NDVI-Workflow-15",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "GetBoundary": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "FetchNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Download the US state boundary shapefile from the US Census Bureau generalized cartographic boundary files (the 20-meter resolution state shapefile for 2018 is available at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip). Also download the US county boundary shapefile from the same Census Bureau source (the 5-meter resolution county shapefile for 2018 is available at https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_county_5m.zip). From the state shapefile, filter to the single feature representing the state of Oregon. Extract the geographic bounding box (minimum longitude, minimum latitude, maximum longitude, maximum latitude) of the Oregon state polygon. From the county shapefile, filter to only the counties that lie within Oregon. Save the Oregon state boundary as a GeoJSON output file and the Oregon county boundaries as a separate GeoJSON output file. Also save the Oregon bounding box as a small JSON output file containing the four numeric values (min_lon, min_lat, max_lon, max_lat) so that downstream agents can use it for spatial queries."
+      }
+    },
+    "FetchNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessAndVisualize"
+      ],
+      "Arguments": {
+        "prompt": "Using the Oregon bounding box JSON file produced by the previous step, query the Microsoft Planetary Computer STAC API at https://planetarycomputer.microsoft.com/api/stac/v1 for the collection named modis-13A1-061, which provides 16-day NDVI composites at 500-meter resolution. Determine the past 12 complete calendar months relative to today's date (e.g., if today is in July 2025, the 12 months are July 2024 through June 2025). For each of those 12 months, submit a STAC search request filtered to the Oregon bounding box and to the date range spanning that calendar month. Retrieve one representative item per month (the first result is sufficient). If a search for a given month returns zero results, retry that query exactly once before giving up on that month. Keep a running list of any calendar months (formatted as YYYY-MM) for which no data was ultimately found; these months should be skipped gracefully without causing any failure. Use the pystac-client library to perform the searches and the planetary-computer library to sign asset URLs before downloading \u2014 no authentication credentials are required for this collection. For each month that has data, download both the asset named '500m_16_days_NDVI' and the asset named '500m_16_days_VI_Quality' as GeoTIFF raster files. Save all downloaded GeoTIFF rasters as output files (one NDVI GeoTIFF and one VI_Quality GeoTIFF per available month). Also save the list of unavailable months as a JSON output file so downstream agents can reference it."
+      }
+    },
+    "ProcessAndVisualize": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the Oregon state boundary GeoJSON, Oregon county boundaries GeoJSON, unavailable-months JSON, and all NDVI and VI_Quality GeoTIFF raster files produced by the previous steps, perform the following end-to-end processing and visualization pipeline.\n\nPREPROCESSING: For each available month, load the corresponding NDVI GeoTIFF and VI_Quality GeoTIFF using rioxarray or rasterio. Reproject each NDVI raster to EPSG:4326 (WGS84 geographic coordinates). After reprojection, clip each raster to the Oregon state boundary polygon. Scale the raw NDVI integer values to the standard floating-point range of -1.0 to +1.0 by dividing by 10000. Apply a quality mask using the VI_Quality band: consult the MODIS VI Quality bit flags and exclude pixels flagged as low quality (bits 0-1 not equal to 00 or 01, i.e., keep only pixels where the two least-significant bits of the quality value are 0b00 or 0b01). Set excluded pixels to NaN.\n\nMEAN NDVI COMPUTATION: For each available month, compute the mean NDVI value across all valid (non-NaN) pixels within the clipped Oregon raster. This produces one scalar value per month representing statewide average vegetation greenness.\n\nVISUALIZATION 1 \u2014 MONTHLY MAP GRID: Create a multi-panel figure with one subplot per available month arranged in a grid (use up to 4 columns). For each panel, render the clipped, quality-masked NDVI raster using the 'YlGn' colormap with vmin=-1 and vmax=1. Apply ax.set_aspect('equal') on each subplot to maintain correct geographic proportions. Overlay the Oregon state boundary and Oregon county boundaries on every panel as thin black lines. Label each panel with the month and year (e.g., 'Jan 2024'). Add a single shared horizontal colorbar positioned below all subplots using figure coordinates approximately [0.15, 0.04, 0.70, 0.02], and label it 'NDVI (-1 to 1)'. Add a bold figure-level title using fig.suptitle() at font size 14, positioned at y=1.01 above the subplot grid, reading something like 'Monthly NDVI for Oregon'. Include a text annotation somewhere on the figure (e.g., below the colorbar or in a corner) that lists any calendar months for which data was unavailable, formatted as a readable note such as 'No data available for: YYYY-MM, YYYY-MM' (or 'All months available' if none are missing). Save this figure as a PNG output file.\n\nVISUALIZATION 2 \u2014 TEMPORAL LINE PLOT: Create a line plot with months on the horizontal axis and mean statewide NDVI on the vertical axis, covering all available months in chronological order. Use clear markers at each data point. Label the x-axis 'Month', the y-axis 'Mean NDVI', and add a title such as 'Mean Statewide NDVI for Oregon Over 12 Months'. Format the x-axis tick labels as readable month-year strings (e.g., 'Jan 2024'). Save this figure as a PNG output file.\n\nBoth PNG files should be saved as output files so they are automatically uploaded to S3 by the system."
+      }
+    }
+  },
+  "ActionContainers": {
+    "GetBoundary": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FetchNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessAndVisualize": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "GetBoundary": [
+      "geopandas",
+      "requests"
+    ],
+    "FetchNDVI": [
+      "geopandas",
+      "pystac-client",
+      "planetary-computer",
+      "requests",
+      "rioxarray",
+      "rasterio"
+    ],
+    "ProcessAndVisualize": [
+      "geopandas",
+      "rioxarray",
+      "rasterio",
+      "numpy",
+      "matplotlib",
+      "shapely"
+    ]
+  }
+}
