@@ -1,0 +1,77 @@
+{
+  "FunctionInvoke": "FetchData",
+  "WorkflowName": "Earthquake-Visualization-3",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessData"
+      ],
+      "Arguments": {
+        "prompt": "Perform two data acquisition tasks and save the results for downstream use.\n\nTask 1 \u2014 Earthquake event data: Query the USGS Earthquake Hazards Program FDSNWS API at https://earthquake.usgs.gov/fdsnws/event/1/query. Compute the start time as today's date minus 30 days and use today's date as the end time. Set the minimum magnitude to 2.0. Constrain the spatial query to the bounding box with minimum latitude 32, maximum latitude 49, minimum longitude -125, and maximum longitude -114 (covering the western United States). Request the response in GeoJSON format. Save the raw GeoJSON response as an output file.\n\nTask 2 \u2014 US Census Bureau state boundary shapefiles: Download the generalized state boundary shapefile from the US Census Bureau TIGER/Line service (use the 2022 or most recent available 20m resolution cartographic boundary file at https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_state_20m.zip or equivalent). Filter the shapefile to retain only the following eight states: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered state boundaries as a GeoJSON output file.\n\nEnsure both output files are written so that subsequent workflow steps can discover and consume them."
+      }
+    },
+    "ProcessData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotMap"
+      ],
+      "Arguments": {
+        "prompt": "Consume the earthquake GeoJSON file produced by the previous step. Parse the GeoJSON feature collection and extract the following fields for each earthquake event: latitude and longitude from the feature geometry coordinates, magnitude from the feature properties (field typically named 'mag'), and depth in kilometers from the feature geometry coordinates (the third coordinate element) or from the properties as appropriate for the USGS GeoJSON schema.\n\nAfter extraction, drop any records where the magnitude value or the depth value is null, NaN, or otherwise missing. Retain only complete observations. Do not reproject or transform coordinates \u2014 preserve the raw WGS84 latitude and longitude values exactly as provided.\n\nOnce cleaned, compute the following derived columns and store them alongside the cleaned records:\n- A depth-to-colormap mapping value: record the raw depth in kilometers; the colormap scaling (min/max normalization) will be applied at plot time.\n- Marker size for each event: compute as 80 multiplied by 2 raised to the power of (magnitude minus the minimum magnitude present in the cleaned dataset). Use the actual minimum magnitude from the cleaned dataset.\n- Retain the native USGS magnitude values without any conversion or normalization.\n\nAlso record the following metadata to be embedded in the output:\n- The query start date (today minus 30 days, formatted as a human-readable date string).\n- The query end date (today's date, formatted as a human-readable date string).\n- The total count of earthquake events after cleaning.\n\nSave the cleaned and enriched earthquake dataset as a CSV or GeoJSON output file, including all extracted and derived columns plus the metadata fields, so that the plotting step can consume it directly."
+      }
+    },
+    "PlotMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Consume the cleaned earthquake dataset and the state boundary GeoJSON file produced by the previous steps. Use them to render a static scatter map and save it as a PNG output file.\n\nVisualization steps:\n\n1. Load the cleaned earthquake dataset. It contains columns for latitude, longitude, magnitude, depth (km), and precomputed marker size (80 * 2^(magnitude - min_magnitude)). It also contains metadata: query start date string, query end date string, and total event count.\n\n2. Load the state boundary GeoJSON containing outlines for California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana.\n\n3. Create a matplotlib figure with a single map axes.\n\n4. Plot the state boundary polygons as outlines only (no fill) on the map axes to provide geographic context.\n\n5. Plot each earthquake as a scatter point at its raw longitude (x-axis) and latitude (y-axis). Use the plasma colormap to encode depth: scale the colormap automatically based on the minimum and maximum depth values present in the cleaned dataset. Use the precomputed marker size column for the size of each point. Apply a thin contrasting edge color (e.g., black or white, linewidth ~0.3) to each scatter marker to improve visibility.\n\n6. Map styling:\n   - Set the x-axis limits to [-125, -114] and y-axis limits to [32, 49] to match the query bounding box.\n   - Display a coordinate grid (gridlines).\n   - Set appropriate background colors for the map face and the figure background.\n   - Label the x-axis as 'Longitude' and the y-axis as 'Latitude'.\n\n7. Add a colorbar on the side of the map labeled 'Depth (km)' corresponding to the plasma colormap used for depth encoding.\n\n8. Add a size legend illustrating marker sizes for representative magnitude values: 2, 3, 4, 5, and 6. Compute the legend marker sizes using the same formula (80 * 2^(legend_magnitude - min_magnitude_in_dataset)) so they are visually consistent with the plotted points. Style the legend markers with the same edge color used in the scatter plot.\n\n9. Add a descriptive title to the map that includes the query date range (start date to end date from the metadata) and the total count of earthquake events shown (from the metadata). Example format: 'Western US Earthquakes (M2.0+): <start_date> to <end_date> \u2014 N events'.\n\n10. Save the completed figure as a PNG output file at sufficient resolution (e.g., dpi=150 or higher)."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchData": [
+      "geopandas",
+      "requests"
+    ],
+    "ProcessData": [
+      "geopandas",
+      "pandas",
+      "numpy"
+    ],
+    "PlotMap": [
+      "geopandas",
+      "pandas",
+      "numpy",
+      "matplotlib"
+    ]
+  }
+}
