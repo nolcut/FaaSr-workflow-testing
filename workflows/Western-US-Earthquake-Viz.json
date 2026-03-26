@@ -1,0 +1,76 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Western-US-Earthquake-Viz",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "FetchStateBoundaries"
+      ],
+      "Arguments": {
+        "prompt": "Query the USGS Earthquake API at https://earthquake.usgs.gov/fdsnws/event/1/query to retrieve all earthquake events from the past 30 days with a minimum magnitude of 2.0 within the western United States bounding box defined by latitudes 32 to 49 and longitudes -125 to -114. Request the results in GeoJSON format by including the parameters: format=geojson, minmagnitude=2.0, minlatitude=32, maxlatitude=49, minlongitude=-125, maxlongitude=-114, and a starttime set to today minus 30 days and endtime set to today. Parse the GeoJSON response and extract individual earthquake records. For each event, pull out the magnitude (from properties.mag), depth in kilometers (from geometry.coordinates index 2), latitude (from geometry.coordinates index 1), and longitude (from geometry.coordinates index 0) as structured data fields. Also record the queried start date and end date as metadata. Clean the dataset by dropping any records that contain null or missing values in either the magnitude or depth fields, ensuring only complete records are used for downstream processing. Save the cleaned earthquake records as a structured data file (e.g., CSV or JSON) containing columns for magnitude, depth, latitude, and longitude, along with a separate small metadata file recording the start date, end date, and total event count after cleaning."
+      }
+    },
+    "FetchStateBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "CreateEarthquakeMap"
+      ],
+      "Arguments": {
+        "prompt": "Download the US Census Bureau state boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Extract and load the shapefile using geopandas. Filter the state boundaries to include only the following states: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered state boundary geometries as a GeoJSON output file for use as the geographic base layer in a map visualization."
+      }
+    },
+    "CreateEarthquakeMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the cleaned earthquake records data file, the metadata file containing start date, end date, and event count, and the state boundary GeoJSON file produced by the previous steps, create a matplotlib earthquake map visualization as follows. Load the earthquake records (magnitude, depth, latitude, longitude columns) and the state boundary geometries. Compute a marker size for each earthquake using the formula: size = 80 * (2 ** (magnitude - min_magnitude)), where min_magnitude is the minimum magnitude value observed in the dataset. This produces exponentially scaled marker sizes that grow with magnitude. For depth-based coloring, map each earthquake's depth value to the matplotlib plasma colormap using automatic scaling across the full range of depth values present in the dataset. Create a matplotlib figure with a width of 12 inches and a height of 8 inches. Set both the figure and axes background color to the hex color #0d1b2a (dark navy). Plot the state boundary polygons from the loaded GeoJSON in light gray (#cccccc) with a line width of 0.8. Overlay a dashed grid using light gray color, linestyle '--', alpha transparency of 0.3, and line width of 0.5. Plot the earthquake events as a scatter layer on top of the state boundaries, using the depth-based plasma colormap for point color, the exponentially scaled magnitude values for point size, and black edge colors with a line width of 0.3. Apply equal aspect ratio scaling to the axes using set_aspect('equal'), and set the axis limits to x range -125 to -114 and y range 32 to 49. Add a colorbar to the figure labeled 'Depth (km)' reflecting the plasma colormap scaling used for the scatter points. Add a legend positioned outside the map to the right using location 'upper left' with bbox_to_anchor at (1.15, 1.0). The legend should display representative magnitude size examples for M2, M3, M4, M5, and M6, using markerscale=0.4, labelspacing=1.2, and handletextpad=1.0. Set the figure title as a single line formatted as: 'Western US Earthquakes (M2.0+) | <start_date> to <end_date> | <N> events', where start_date and end_date are read from the metadata file and N is the total cleaned event count from the metadata file. Save the completed figure as a PNG image file and upload it to the S3 data store."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FetchStateBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "CreateEarthquakeMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests",
+      "pandas"
+    ],
+    "FetchStateBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "CreateEarthquakeMap": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
