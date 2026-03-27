@@ -1,7 +1,6 @@
 import json
 import os
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+import pandas as pd
 
 
 def ProcessEarthquakeData():
@@ -12,144 +11,115 @@ def ProcessEarthquakeData():
 
     # Download inputs
     faasr_get_file(
-        local_file="earthquake_data.json",
-        remote_file="earthquake_data.json",
+        local_file="earthquakes.geojson",
+        remote_file="earthquakes.geojson",
         local_folder="/tmp/agent/input",
-        remote_folder="Western-US-Earthquake-Map-6/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
     )
     faasr_get_file(
-        local_file="_manifest.json",
-        remote_file="_manifest.json",
+        local_file="query_metadata.json",
+        remote_file="query_metadata.json",
         local_folder="/tmp/agent/input",
-        remote_folder="Western-US-Earthquake-Map-6/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
     )
 
     # --- Generated code ---
-
-    faasr_log("Starting visual encoding computation for earthquake dataset")
 
     input_dir = "/tmp/agent/input"
     output_dir = "/tmp/agent/output"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load earthquake data
-    input_path = os.path.join(input_dir, "earthquake_data.json")
-    faasr_log(f"Reading earthquake data from {input_path}")
+    faasr_log("Starting earthquake data parsing and enrichment")
 
-    with open(input_path, "r") as f:
-        data = json.load(f)
+    # Load GeoJSON
+    geojson_path = os.path.join(input_dir, "earthquakes.geojson")
+    with open(geojson_path, "r") as f:
+        geojson_data = json.load(f)
 
-    metadata = data["metadata"]
-    earthquakes = data["earthquakes"]
+    faasr_log(f"Loaded GeoJSON with {len(geojson_data.get('features', []))} features")
 
-    faasr_log(f"Loaded {len(earthquakes)} earthquake records")
-    faasr_log(f"Query date range: {metadata['query_start_date']} to {metadata['query_end_date']}")
+    # Load query metadata
+    metadata_path = os.path.join(input_dir, "query_metadata.json")
+    with open(metadata_path, "r") as f:
+        query_metadata = json.load(f)
 
-    # Extract magnitudes and depths
-    magnitudes = [eq["magnitude"] for eq in earthquakes]
-    depths = [eq["depth"] for eq in earthquakes]
+    query_starttime = query_metadata.get("query_starttime")
+    query_endtime = query_metadata.get("query_endtime")
+    faasr_log(f"Query period: {query_starttime} to {query_endtime}")
 
-    # Compute min magnitude for marker size formula
-    min_magnitude = min(magnitudes)
-    faasr_log(f"Minimum magnitude: {min_magnitude}")
+    # Parse features
+    records = []
+    for feature in geojson_data.get("features", []):
+        props = feature.get("properties", {})
+        coords = feature.get("geometry", {}).get("coordinates", [None, None, None])
 
-    # Compute min/max depth for color scaling
-    min_depth = min(depths)
-    max_depth = max(depths)
-    faasr_log(f"Depth range: vmin={min_depth}, vmax={max_depth}")
+        magnitude = props.get("mag")
+        longitude = coords[0] if len(coords) > 0 else None
+        latitude = coords[1] if len(coords) > 1 else None
+        depth_km = coords[2] if len(coords) > 2 else None
 
-    # Set up plasma colormap for depth encoding
-    cmap = plt.get_cmap("plasma")
-    norm = mcolors.Normalize(vmin=min_depth, vmax=max_depth)
-
-    # Augment each earthquake record
-    augmented_earthquakes = []
-    for eq in earthquakes:
-        magnitude = eq["magnitude"]
-        depth = eq["depth"]
-
-        # Compute marker size: size = 80 * (2 ** (magnitude - min_magnitude))
-        marker_size = 80 * (2 ** (magnitude - min_magnitude))
-
-        # Compute RGBA color from plasma colormap based on depth
-        rgba = cmap(norm(depth))
-        color_rgba = [round(rgba[0], 6), round(rgba[1], 6), round(rgba[2], 6), round(rgba[3], 6)]
-
-        augmented_eq = {
+        records.append({
             "magnitude": magnitude,
-            "depth": depth,
-            "latitude": eq["latitude"],
-            "longitude": eq["longitude"],
-            "marker_size": round(marker_size, 6),
-            "color_rgba": color_rgba
-        }
-        augmented_earthquakes.append(augmented_eq)
+            "depth_km": depth_km,
+            "latitude": latitude,
+            "longitude": longitude
+        })
 
-    faasr_log(f"Computed marker sizes and color encodings for {len(augmented_earthquakes)} records")
+    faasr_log(f"Parsed {len(records)} records from features")
 
-    # Sample log for verification
-    sample = augmented_earthquakes[0]
-    faasr_log(f"Sample record: mag={sample['magnitude']}, depth={sample['depth']}, "
-              f"marker_size={sample['marker_size']}, color_rgba={sample['color_rgba']}")
+    # Create DataFrame
+    df = pd.DataFrame(records, columns=["magnitude", "depth_km", "latitude", "longitude"])
 
-    # Build output structure
-    output_data = {
-        "metadata": {
-            "query_start_date": metadata["query_start_date"],
-            "query_end_date": metadata["query_end_date"],
-            "total_records": len(augmented_earthquakes),
-            "min_magnitude": min_magnitude,
-            "depth_color_scaling": {
-                "vmin": min_depth,
-                "vmax": max_depth,
-                "colormap": "plasma"
-            }
-        },
-        "earthquakes": augmented_earthquakes
+    # Drop rows where magnitude or depth_km is null
+    df_clean = df.dropna(subset=["magnitude", "depth_km"]).copy()
+    faasr_log(f"After dropping nulls: {len(df_clean)} records retained (dropped {len(df) - len(df_clean)})")
+
+    # Compute derived columns
+    min_magnitude = df_clean["magnitude"].min()
+    faasr_log(f"Minimum magnitude in cleaned dataset: {min_magnitude}")
+
+    df_clean["marker_size"] = 80 * (2 ** (df_clean["magnitude"] - min_magnitude))
+
+    # depth_km retained as-is for colormap mapping (no normalization needed)
+    # It's already present in the DataFrame
+
+    event_count = len(df_clean)
+    faasr_log(f"Total event count after filtering: {event_count}")
+
+    # Save cleaned CSV
+    csv_output_path = os.path.join(output_dir, "earthquakes_cleaned.csv")
+    df_clean.to_csv(csv_output_path, index=False)
+    faasr_log(f"Saved cleaned CSV to {csv_output_path}")
+
+    # Save metadata JSON
+    output_metadata = {
+        "query_starttime": query_starttime,
+        "query_endtime": query_endtime,
+        "event_count": event_count
     }
 
-    # Save augmented dataset
-    output_path = os.path.join(output_dir, "earthquake_visual_encoding.json")
-    with open(output_path, "w") as f:
-        json.dump(output_data, f, indent=2)
+    metadata_output_path = os.path.join(output_dir, "processing_metadata.json")
+    with open(metadata_output_path, "w") as f:
+        json.dump(output_metadata, f, indent=2)
+    faasr_log(f"Saved processing metadata to {metadata_output_path}")
 
-    faasr_log(f"Saved augmented dataset to {output_path}")
-
-    # Save manifest
-    manifest = {
-        "inputs": ["earthquake_data.json"],
-        "outputs": [
-            {
-                "local_file": "earthquake_visual_encoding.json",
-                "description": (
-                    "Augmented earthquake dataset with visual encoding properties. "
-                    "Each record includes original fields (magnitude, depth, latitude, longitude), "
-                    "a computed marker_size using the formula 80 * (2 ** (magnitude - min_magnitude)), "
-                    "and a color_rgba value derived from matplotlib's plasma colormap scaled by depth range. "
-                    "Metadata includes query date range, min_magnitude, and depth color scaling parameters (vmin, vmax)."
-                )
-            }
-        ],
-        "packages": ["numpy", "matplotlib"]
-    }
-
-    manifest_path = os.path.join(output_dir, "_manifest.json")
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    faasr_log("Visual encoding computation complete. Output ready for map rendering action.")
+    faasr_log("Earthquake data parsing and enrichment complete")
+    print(f"Processed {event_count} earthquake records")
+    print(f"CSV saved to: {csv_output_path}")
+    print(f"Metadata saved to: {metadata_output_path}")
+    print(df_clean.head())
     # --- End generated code ---
 
     # Upload outputs
     faasr_put_file(
-        local_file="earthquake_visual_encoding.json",
-        remote_file="earthquake_visual_encoding.json",
+        local_file="processing_metadata.json",
+        remote_file="processing_metadata.json",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/ProcessEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/ProcessEarthquakeData",
     )
     faasr_put_file(
-        local_file="ProcessEarthquakeData.py",
-        remote_file="ProcessEarthquakeData.py",
+        local_file="earthquakes_cleaned.csv",
+        remote_file="earthquakes_cleaned.csv",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/ProcessEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/ProcessEarthquakeData",
     )

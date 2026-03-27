@@ -2,7 +2,6 @@ import json
 import os
 import datetime
 import requests
-import pandas as pd
 from datetime import datetime, timedelta
 
 
@@ -16,100 +15,97 @@ def FetchEarthquakeData():
 
     faasr_log("Starting USGS Earthquake API query")
 
-    # Set up date range
+    # Compute date range: past 30 days
     end_date = datetime.utcnow().date()
     start_date = end_date - timedelta(days=30)
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
 
-    faasr_log(f"Query date range: {start_str} to {end_str}")
+    start_date_str = start_date.isoformat()
+    end_date_str = end_date.isoformat()
 
-    # Build API request
-    url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+    faasr_log(f"Query time window: {start_date_str} to {end_date_str}")
+
+    # Build API request parameters
     params = {
         "format": "geojson",
         "minmagnitude": 2.0,
+        "starttime": start_date_str,
+        "endtime": end_date_str,
         "minlatitude": 32,
         "maxlatitude": 49,
         "minlongitude": -125,
-        "maxlongitude": -114,
-        "starttime": start_str,
-        "endtime": end_str
+        "maxlongitude": -114
     }
 
-    faasr_log("Sending request to USGS Earthquake API")
+    api_url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+
+    faasr_log(f"Sending request to USGS API: {api_url}")
 
     try:
-        response = requests.get(url, params=params, timeout=60)
+        response = requests.get(api_url, params=params, timeout=60)
         response.raise_for_status()
         faasr_log(f"API response status: {response.status_code}")
-    except Exception as e:
-        faasr_log(f"Error fetching data from USGS API: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        faasr_log(f"ERROR: Failed to fetch data from USGS API: {e}")
         raise
 
+    # Parse the GeoJSON response
     geojson_data = response.json()
-    features = geojson_data.get("features", [])
-    faasr_log(f"Total features retrieved: {len(features)}")
 
-    # Extract fields from each feature
-    records = []
-    for feature in features:
-        try:
-            props = feature.get("properties", {})
-            coords = feature.get("geometry", {}).get("coordinates", [None, None, None])
-            mag = props.get("mag")
-            depth = coords[2] if len(coords) > 2 else None
-            lat = coords[1] if len(coords) > 1 else None
-            lon = coords[0] if len(coords) > 0 else None
-            records.append({
-                "magnitude": mag,
-                "depth": depth,
-                "latitude": lat,
-                "longitude": lon
-            })
-        except Exception as e:
-            faasr_log(f"Error parsing feature: {str(e)}")
-            continue
+    feature_count = len(geojson_data.get("features", []))
+    faasr_log(f"Received {feature_count} earthquake features from API")
 
-    faasr_log(f"Records before filtering: {len(records)}")
+    # Inject query metadata into the GeoJSON metadata field if present, or add a custom key
+    if "metadata" in geojson_data:
+        geojson_data["metadata"]["query_starttime"] = start_date_str
+        geojson_data["metadata"]["query_endtime"] = end_date_str
+    else:
+        geojson_data["query_metadata"] = {
+            "query_starttime": start_date_str,
+            "query_endtime": end_date_str
+        }
 
-    # Build DataFrame and drop rows with null magnitude or depth
-    df = pd.DataFrame(records, columns=["magnitude", "depth", "latitude", "longitude"])
-    df_clean = df.dropna(subset=["magnitude", "depth"])
+    # Save the GeoJSON output
+    os.makedirs(output_dir, exist_ok=True)
+    geojson_output_path = os.path.join(output_dir, "earthquakes.geojson")
 
-    faasr_log(f"Records after dropping nulls: {len(df_clean)}")
+    with open(geojson_output_path, "w") as f:
+        json.dump(geojson_data, f, indent=2)
 
-    # Prepare output with metadata
-    output_data = {
-        "metadata": {
-            "query_start_date": start_str,
-            "query_end_date": end_str,
-            "total_records": len(df_clean)
+    faasr_log(f"Saved GeoJSON with {feature_count} features to {geojson_output_path}")
+
+    # Save companion metadata file for downstream steps
+    metadata = {
+        "query_starttime": start_date_str,
+        "query_endtime": end_date_str,
+        "feature_count": feature_count,
+        "bounding_box": {
+            "minlatitude": 32,
+            "maxlatitude": 49,
+            "minlongitude": -125,
+            "maxlongitude": -114
         },
-        "earthquakes": df_clean.to_dict(orient="records")
+        "minmagnitude": 2.0,
+        "api_url": api_url
     }
 
-    # Write output
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, "earthquake_data.json")
+    metadata_output_path = os.path.join(output_dir, "query_metadata.json")
+    with open(metadata_output_path, "w") as f:
+        json.dump(metadata, f, indent=2)
 
-    with open(output_path, "w") as f:
-        json.dump(output_data, f, indent=2)
-
-    faasr_log(f"Earthquake data saved to {output_path}")
-    faasr_log(f"Done. {len(df_clean)} clean earthquake records saved.")
+    faasr_log(f"Saved query metadata to {metadata_output_path}")
+    faasr_log("USGS Earthquake API query completed successfully")
     # --- End generated code ---
 
     # Upload outputs
     faasr_put_file(
-        local_file="earthquake_data.json",
-        remote_file="earthquake_data.json",
+        local_file="earthquakes.geojson",
+        remote_file="earthquakes.geojson",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
     )
     faasr_put_file(
-        local_file="FetchEarthquakeData.py",
-        remote_file="FetchEarthquakeData.py",
+        local_file="query_metadata.json",
+        remote_file="query_metadata.json",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
     )

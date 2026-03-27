@@ -13,10 +13,16 @@ def FetchStateBoundaries():
 
     # Download inputs
     faasr_get_file(
-        local_file="earthquake_data.json",
-        remote_file="earthquake_data.json",
+        local_file="earthquakes_cleaned.csv",
+        remote_file="earthquakes_cleaned.csv",
         local_folder="/tmp/agent/input",
-        remote_folder="Western-US-Earthquake-Map-6/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-7/ProcessEarthquakeData",
+    )
+    faasr_get_file(
+        local_file="query_metadata.json",
+        remote_file="query_metadata.json",
+        local_folder="/tmp/agent/input",
+        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
     )
 
     # --- Generated code ---
@@ -30,64 +36,63 @@ def FetchStateBoundaries():
         faasr_log(f"Downloading shapefile from {url}")
         response = requests.get(url, timeout=60)
         response.raise_for_status()
-        faasr_log("Download complete, extracting zip archive")
-
-        zip_bytes = io.BytesIO(response.content)
-        extract_dir = "/tmp/census_states"
-        os.makedirs(extract_dir, exist_ok=True)
-
-        with zipfile.ZipFile(zip_bytes) as zf:
-            zf.extractall(extract_dir)
-            faasr_log(f"Extracted files: {zf.namelist()}")
-
-        shp_files = [f for f in os.listdir(extract_dir) if f.endswith(".shp")]
-        if not shp_files:
-            faasr_log("ERROR: No .shp file found in extracted archive")
-            raise FileNotFoundError("No shapefile found in zip archive")
-
-        shp_path = os.path.join(extract_dir, shp_files[0])
-        faasr_log(f"Loading shapefile: {shp_path}")
-        gdf = gpd.read_file(shp_path)
-        faasr_log(f"Loaded GeoDataFrame with {len(gdf)} records and columns: {list(gdf.columns)}")
-
-        western_states = ["California", "Oregon", "Washington", "Nevada", "Idaho", "Arizona", "Utah", "Montana"]
-        faasr_log(f"Filtering to western states: {western_states}")
-
-        gdf_western = gdf[gdf["NAME"].isin(western_states)].copy()
-        faasr_log(f"Filtered GeoDataFrame contains {len(gdf_western)} states")
-
-        found_states = sorted(gdf_western["NAME"].tolist())
-        faasr_log(f"States found: {found_states}")
-
-        if len(gdf_western) != len(western_states):
-            missing = set(western_states) - set(gdf_western["NAME"].tolist())
-            faasr_log(f"WARNING: Missing states: {missing}")
-
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, "western_states.geojson")
-
-        faasr_log(f"Saving filtered GeoDataFrame as GeoJSON to {output_path}")
-        gdf_western.to_file(output_path, driver="GeoJSON")
-        faasr_log(f"Successfully saved western states GeoJSON to {output_path}")
-
-    except requests.exceptions.RequestException as e:
-        faasr_log(f"ERROR downloading shapefile: {e}")
-        raise
+        faasr_log(f"Download complete, size: {len(response.content)} bytes")
     except Exception as e:
-        faasr_log(f"ERROR processing shapefile: {e}")
+        faasr_log(f"Error downloading shapefile: {e}")
         raise
+
+    extract_dir = "/tmp/census_shapefile"
+    os.makedirs(extract_dir, exist_ok=True)
+
+    try:
+        faasr_log("Extracting zip archive")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            zf.extractall(extract_dir)
+        faasr_log("Extraction complete")
+    except Exception as e:
+        faasr_log(f"Error extracting zip: {e}")
+        raise
+
+    shp_files = [f for f in os.listdir(extract_dir) if f.endswith(".shp")]
+    if not shp_files:
+        faasr_log("No .shp file found in extracted archive")
+        raise FileNotFoundError("No shapefile found in extracted archive")
+
+    shp_path = os.path.join(extract_dir, shp_files[0])
+    faasr_log(f"Loading shapefile: {shp_path}")
+
+    try:
+        gdf = gpd.read_file(shp_path)
+        faasr_log(f"Shapefile loaded with {len(gdf)} records and columns: {list(gdf.columns)}")
+    except Exception as e:
+        faasr_log(f"Error loading shapefile: {e}")
+        raise
+
+    western_states = ["California", "Oregon", "Washington", "Nevada", "Idaho", "Arizona", "Utah", "Montana"]
+
+    faasr_log(f"Filtering to {len(western_states)} western states")
+    filtered_gdf = gdf[gdf["NAME"].isin(western_states)][["NAME", "geometry"]].copy()
+    filtered_gdf = filtered_gdf.reset_index(drop=True)
+    faasr_log(f"Filtered GeoDataFrame has {len(filtered_gdf)} records")
+    faasr_log(f"States included: {sorted(filtered_gdf['NAME'].tolist())}")
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "western_states.geojson")
+
+    try:
+        filtered_gdf.to_file(output_path, driver="GeoJSON")
+        faasr_log(f"GeoJSON saved to {output_path}")
+    except Exception as e:
+        faasr_log(f"Error saving GeoJSON: {e}")
+        raise
+
+    faasr_log("Western states boundary GeoJSON creation complete")
     # --- End generated code ---
 
     # Upload outputs
     faasr_put_file(
-        local_file="FetchStateBoundaries.py",
-        remote_file="FetchStateBoundaries.py",
-        local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/FetchStateBoundaries",
-    )
-    faasr_put_file(
         local_file="western_states.geojson",
         remote_file="western_states.geojson",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-6/FetchStateBoundaries",
+        remote_folder="Western-US-Earthquake-Map-7/FetchStateBoundaries",
     )
