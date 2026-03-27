@@ -1,6 +1,6 @@
 {
   "FunctionInvoke": "FetchEarthquakeData",
-  "WorkflowName": "Western-US-Earthquake-Map-7-static",
+  "WorkflowName": "Western-US-Earthquake-Map-8-static",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
@@ -28,14 +28,14 @@
       "Type": "Python",
       "FunctionName": "FetchStateBoundaries",
       "InvokeNext": [
-        "BuildEarthquakeMap"
+        "GenerateEarthquakeMap"
       ],
       "Arguments": {}
     },
-    "BuildEarthquakeMap": {
+    "GenerateEarthquakeMap": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "BuildEarthquakeMap",
+      "FunctionName": "GenerateEarthquakeMap",
       "InvokeNext": [],
       "Arguments": {}
     }
@@ -44,13 +44,13 @@
     "FetchEarthquakeData": "nolcut/FaaSr-workflow-testing",
     "ProcessEarthquakeData": "nolcut/FaaSr-workflow-testing",
     "FetchStateBoundaries": "nolcut/FaaSr-workflow-testing",
-    "BuildEarthquakeMap": "nolcut/FaaSr-workflow-testing"
+    "GenerateEarthquakeMap": "nolcut/FaaSr-workflow-testing"
   },
   "ActionContainers": {
     "FetchEarthquakeData": "ghcr.io/faasr/github-actions-python:latest",
     "ProcessEarthquakeData": "ghcr.io/faasr/github-actions-python:latest",
     "FetchStateBoundaries": "ghcr.io/faasr/github-actions-python:latest",
-    "BuildEarthquakeMap": "ghcr.io/faasr/github-actions-python:latest"
+    "GenerateEarthquakeMap": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -74,13 +74,15 @@
       "requests"
     ],
     "ProcessEarthquakeData": [
-      "pandas"
+      "geopandas",
+      "pandas",
+      "numpy"
     ],
     "FetchStateBoundaries": [
       "geopandas",
       "requests"
     ],
-    "BuildEarthquakeMap": [
+    "GenerateEarthquakeMap": [
       "geopandas",
       "matplotlib",
       "numpy",

@@ -14,112 +14,149 @@ def ProcessEarthquakeData():
         local_file="earthquakes.geojson",
         remote_file="earthquakes.geojson",
         local_folder="/tmp/agent/input",
-        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-8/FetchEarthquakeData",
     )
     faasr_get_file(
-        local_file="query_metadata.json",
-        remote_file="query_metadata.json",
+        local_file="metadata.json",
+        remote_file="metadata.json",
         local_folder="/tmp/agent/input",
-        remote_folder="Western-US-Earthquake-Map-7/FetchEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-8/FetchEarthquakeData",
     )
 
     # --- Generated code ---
+
+    faasr_log("Starting earthquake data parsing and cleaning step")
 
     input_dir = "/tmp/agent/input"
     output_dir = "/tmp/agent/output"
     os.makedirs(output_dir, exist_ok=True)
 
-    faasr_log("Starting earthquake data parsing and enrichment")
-
-    # Load GeoJSON
+    # Load the raw GeoJSON earthquake data
     geojson_path = os.path.join(input_dir, "earthquakes.geojson")
+    faasr_log(f"Reading GeoJSON from {geojson_path}")
+
     with open(geojson_path, "r") as f:
         geojson_data = json.load(f)
 
-    faasr_log(f"Loaded GeoJSON with {len(geojson_data.get('features', []))} features")
+    features = geojson_data.get("features", [])
+    faasr_log(f"Total features found in GeoJSON: {len(features)}")
 
-    # Load query metadata
-    metadata_path = os.path.join(input_dir, "query_metadata.json")
+    # Load the metadata file
+    metadata_path = os.path.join(input_dir, "metadata.json")
+    faasr_log(f"Reading metadata from {metadata_path}")
+
     with open(metadata_path, "r") as f:
-        query_metadata = json.load(f)
+        metadata = json.load(f)
 
-    query_starttime = query_metadata.get("query_starttime")
-    query_endtime = query_metadata.get("query_endtime")
-    faasr_log(f"Query period: {query_starttime} to {query_endtime}")
+    start_date = metadata.get("start_date", "")
+    end_date = metadata.get("end_date", "")
+    faasr_log(f"Query date range: {start_date} to {end_date}")
 
-    # Parse features
+    # Parse each feature and extract relevant fields
     records = []
-    for feature in geojson_data.get("features", []):
+    for feature in features:
         props = feature.get("properties", {})
-        coords = feature.get("geometry", {}).get("coordinates", [None, None, None])
+        geometry = feature.get("geometry", {})
+        coords = geometry.get("coordinates", [None, None, None])
 
-        magnitude = props.get("mag")
+        mag = props.get("mag", None)
+        # Coordinates are [longitude, latitude, depth]
         longitude = coords[0] if len(coords) > 0 else None
         latitude = coords[1] if len(coords) > 1 else None
-        depth_km = coords[2] if len(coords) > 2 else None
+        depth = coords[2] if len(coords) > 2 else None
 
         records.append({
-            "magnitude": magnitude,
-            "depth_km": depth_km,
+            "magnitude": mag,
+            "depth": depth,
             "latitude": latitude,
             "longitude": longitude
         })
 
-    faasr_log(f"Parsed {len(records)} records from features")
+    faasr_log(f"Parsed {len(records)} records from GeoJSON features")
 
-    # Create DataFrame
-    df = pd.DataFrame(records, columns=["magnitude", "depth_km", "latitude", "longitude"])
+    # Assemble into a DataFrame
+    df = pd.DataFrame(records, columns=["magnitude", "depth", "latitude", "longitude"])
 
-    # Drop rows where magnitude or depth_km is null
-    df_clean = df.dropna(subset=["magnitude", "depth_km"]).copy()
-    faasr_log(f"After dropping nulls: {len(df_clean)} records retained (dropped {len(df) - len(df_clean)})")
+    faasr_log(f"DataFrame shape before cleaning: {df.shape}")
+    faasr_log(f"Null counts - magnitude: {df['magnitude'].isnull().sum()}, depth: {df['depth'].isnull().sum()}")
 
-    # Compute derived columns
-    min_magnitude = df_clean["magnitude"].min()
-    faasr_log(f"Minimum magnitude in cleaned dataset: {min_magnitude}")
+    # Drop rows with null/missing values in magnitude or depth
+    df_clean = df.dropna(subset=["magnitude", "depth"])
+    valid_count = len(df_clean)
+    faasr_log(f"Valid earthquake events after cleaning: {valid_count}")
 
-    df_clean["marker_size"] = 80 * (2 ** (df_clean["magnitude"] - min_magnitude))
-
-    # depth_km retained as-is for colormap mapping (no normalization needed)
-    # It's already present in the DataFrame
-
-    event_count = len(df_clean)
-    faasr_log(f"Total event count after filtering: {event_count}")
-
-    # Save cleaned CSV
-    csv_output_path = os.path.join(output_dir, "earthquakes_cleaned.csv")
+    # Save cleaned data as CSV
+    csv_output_path = os.path.join(output_dir, "earthquakes_clean.csv")
     df_clean.to_csv(csv_output_path, index=False)
-    faasr_log(f"Saved cleaned CSV to {csv_output_path}")
+    faasr_log(f"Saved cleaned earthquake CSV to {csv_output_path}")
 
-    # Save metadata JSON
-    output_metadata = {
-        "query_starttime": query_starttime,
-        "query_endtime": query_endtime,
-        "event_count": event_count
+    # Also save as GeoJSON with point geometries
+    geojson_features = []
+    for _, row in df_clean.iterrows():
+        feature = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [row["longitude"], row["latitude"], row["depth"]]
+            },
+            "properties": {
+                "magnitude": row["magnitude"],
+                "depth": row["depth"],
+                "latitude": row["latitude"],
+                "longitude": row["longitude"]
+            }
+        }
+        geojson_features.append(feature)
+
+    clean_geojson = {
+        "type": "FeatureCollection",
+        "features": geojson_features
     }
 
-    metadata_output_path = os.path.join(output_dir, "processing_metadata.json")
-    with open(metadata_output_path, "w") as f:
-        json.dump(output_metadata, f, indent=2)
-    faasr_log(f"Saved processing metadata to {metadata_output_path}")
+    geojson_output_path = os.path.join(output_dir, "earthquakes_clean.geojson")
+    with open(geojson_output_path, "w") as f:
+        json.dump(clean_geojson, f)
+    faasr_log(f"Saved cleaned earthquake GeoJSON to {geojson_output_path}")
 
-    faasr_log("Earthquake data parsing and enrichment complete")
-    print(f"Processed {event_count} earthquake records")
-    print(f"CSV saved to: {csv_output_path}")
-    print(f"Metadata saved to: {metadata_output_path}")
-    print(df_clean.head())
+    # Save updated metadata with valid event count
+    updated_metadata = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "valid_event_count": valid_count
+    }
+
+    metadata_output_path = os.path.join(output_dir, "metadata.json")
+    with open(metadata_output_path, "w") as f:
+        json.dump(updated_metadata, f, indent=2)
+    faasr_log(f"Saved updated metadata to {metadata_output_path}")
+
+    faasr_log(f"Earthquake parsing complete. {valid_count} valid events saved.")
+
+    # Print summary
+    print(f"Summary:")
+    print(f"  Total features in GeoJSON: {len(features)}")
+    print(f"  Valid events after cleaning: {valid_count}")
+    print(f"  Date range: {start_date} to {end_date}")
+    print(f"  Magnitude range: {df_clean['magnitude'].min():.1f} - {df_clean['magnitude'].max():.1f}")
+    print(f"  Depth range: {df_clean['depth'].min():.1f} - {df_clean['depth'].max():.1f} km")
     # --- End generated code ---
 
     # Upload outputs
     faasr_put_file(
-        local_file="processing_metadata.json",
-        remote_file="processing_metadata.json",
+        local_file="earthquakes_clean.geojson",
+        remote_file="earthquakes_clean.geojson",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-7/ProcessEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-8/2026-03-26-19-59-26/outputs",
     )
     faasr_put_file(
-        local_file="earthquakes_cleaned.csv",
-        remote_file="earthquakes_cleaned.csv",
+        local_file="earthquakes_clean.csv",
+        remote_file="earthquakes_clean.csv",
         local_folder="/tmp/agent/output",
-        remote_folder="Western-US-Earthquake-Map-7/ProcessEarthquakeData",
+        remote_folder="Western-US-Earthquake-Map-8/2026-03-26-19-59-26/outputs",
+    )
+    faasr_put_file(
+        local_file="metadata.json",
+        remote_file="metadata.json",
+        local_folder="/tmp/agent/output",
+        remote_folder="Western-US-Earthquake-Map-8/2026-03-26-19-59-26/outputs",
     )
