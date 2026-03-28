@@ -56,6 +56,15 @@
         "Region": "us-east-1",
         "Writable": "TRUE"
       }
-  }
+  },
+
+    "GlobalInputFiles": [
+      "data/*.csv",
+      "data/**.txt"
+    ],
+    "GlobalInputFolders": [
+      "raw-data/",
+      "test123/*/"
+    ]
 }
 
