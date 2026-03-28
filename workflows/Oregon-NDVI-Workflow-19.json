@@ -1,0 +1,109 @@
+{
+  "FunctionInvoke": "DownloadBoundaries",
+  "WorkflowName": "Oregon-NDVI-Workflow-19",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "DownloadBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "QueryMODIS"
+      ],
+      "Arguments": {
+        "prompt": "Download the US state boundary shapefile and the US county boundary shapefile from the US Census Bureau TIGER/GENZ2022 dataset. The state boundary shapefile is available at https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_state_20m.zip and the county boundary shapefile is available at https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_county_5m.zip. After downloading and extracting each archive, filter both shapefiles to retain only Oregon records using the state FIPS code 41 (the state FIPS field is typically named STATEFP). Reproject both the Oregon state boundary geometry and the Oregon county boundary geometries to the EPSG:5070 coordinate reference system (Albers Equal Area Conic for the contiguous US). Additionally, compute the bounding box of the Oregon state boundary in its original geographic coordinate system EPSG:4326 \u2014 this bounding box should be expressed as a dictionary or similar structure with keys for minimum longitude, minimum latitude, maximum longitude, and maximum latitude. Save three outputs: (1) the Oregon state boundary as a GeoJSON file in EPSG:5070, (2) the Oregon county boundaries as a GeoJSON file in EPSG:5070, and (3) the Oregon bounding box in EPSG:4326 as a JSON file. These outputs will be consumed by subsequent workflow steps."
+      }
+    },
+    "QueryMODIS": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Retrieve from the data registry the Oregon bounding box JSON file produced by the previous step. This file contains the geographic bounding box of Oregon in EPSG:4326 with minimum longitude, minimum latitude, maximum longitude, and maximum latitude. Using this bounding box, determine the 12 most recent full calendar months prior to today's date. For each of those 12 months, query the Microsoft Planetary Computer STAC API (endpoint: https://planetarycomputer.microsoft.com/api/stac/v1) for the collection named 'modis-13A1-061', which is the MODIS 16-day NDVI composite at 500-meter resolution. Apply a spatial filter using the Oregon bounding box in EPSG:4326 and a temporal filter covering the full calendar month (from the first day to the last day of that month, inclusive). Use a request timeout of 180 seconds per query. Implement error handling so that if a query for any individual month fails (due to timeout, network error, or API error), the failure is logged with the month identifier and that month is skipped rather than halting the entire process. For each month that returns results, collect all STAC item records returned by the API. Save the results as a single JSON file containing a list of records, where each record includes the month timestamp (year and month), and the list of STAC item dictionaries returned for that month. This output will be consumed by the next workflow step to download and process the imagery."
+      }
+    },
+    "ProcessNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "GenerateFigures"
+      ],
+      "Arguments": {
+        "prompt": "Retrieve from the data registry: (1) the STAC query results JSON file produced by the previous step, which contains a list of records each with a month timestamp and a list of STAC item dictionaries for that month; (2) the Oregon state boundary GeoJSON file in EPSG:5070; and (3) the Oregon county boundaries GeoJSON file in EPSG:5070. For each month record in the STAC results, process the imagery as follows. For each STAC item in that month's list, sign the asset URL using the planetary_computer library's sign function immediately before attempting to download \u2014 call planetary_computer.sign(item) or planetary_computer.sign_url on the asset href. Extract the HREF for the asset named '500m_16_days_NDVI' as a plain string. Use rioxarray to open the raster from that URL. Reproject each individual tile to EPSG:5070. Once all tiles for a given month have been reprojected, mosaic them together into a single raster covering Oregon. Where tiles overlap, resolve the overlap by computing the pixel-wise mean across all valid non-masked pixels rather than simply taking the first or last value \u2014 accumulate a sum array and a count array, then divide sum by count where count is greater than zero. After mosaicking, clip the resulting raster to the Oregon state boundary polygon in EPSG:5070 using the clip method. Scale the raw integer NDVI values by dividing by 10000.0 to convert them to the standard floating-point NDVI range. Mask any pixels whose scaled value falls outside the valid NDVI range of -1 to 1, treating them as no-data (NaN). After processing each month's imagery, compute the mean NDVI value across all valid unmasked Oregon pixels for that month and record it along with the corresponding month timestamp. If any month fails during processing (due to download error, reprojection error, or any other exception), log the failure and skip that month rather than halting the workflow. If, after attempting all months, zero months have been processed successfully, raise an explicit error indicating that no NDVI data was available or processable and halt. Save two outputs: (1) a serialized collection of monthly clipped scaled NDVI rasters (one per successfully processed month, stored together in a format such as a NetCDF file or a set of GeoTIFF files with month labels embedded in metadata), and (2) a JSON or CSV file containing the time series of monthly mean NDVI values, with each record containing the month timestamp and the corresponding mean NDVI value. These outputs will be consumed by the figure generation step."
+      }
+    },
+    "GenerateFigures": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Retrieve from the data registry: (1) the collection of monthly clipped scaled NDVI rasters produced by the previous step; (2) the monthly mean NDVI time series file (JSON or CSV) produced by the previous step; (3) the Oregon state boundary GeoJSON file in EPSG:5070; and (4) the Oregon county boundaries GeoJSON file in EPSG:5070. Generate two output figures as described below.\n\nFigure 1 \u2014 Monthly NDVI Map Grid: Create a figure with a 4-column by 3-row grid of panels (12 panels total) with a 16:9 aspect ratio, saved at 200 DPI. Each panel corresponds to one month of processed NDVI data. In each panel, display the clipped scaled NDVI raster for that month using the 'YlGn' colormap. Compute a single shared colorbar scale using the 2nd-to-98th percentile range of NDVI values pooled across all months to avoid distortion from outliers \u2014 apply this same vmin and vmax to all panels. Include a single shared colorbar for all panels positioned appropriately on the figure. Overlay the Oregon state boundary and county boundaries on each panel using the reprojected vector geometries in EPSG:5070, drawn as thin lines. Label each panel with an abbreviated month name and year (for example 'Jan 2024'). Remove all axis ticks and axis spines from every panel for a clean cartographic appearance. Save this figure as a PNG file.\n\nFigure 2 \u2014 Mean NDVI Time Series Line Plot: Create a line plot showing the monthly mean statewide NDVI values over time. Plot the values as a continuous line. Label the horizontal axis with month and year tick labels. Label the vertical axis as 'Mean NDVI'. Identify interior local maxima and minima \u2014 that is, peaks and troughs that are not at the first or last position in the time series \u2014 using a peak-finding approach (a point is a local maximum if it is greater than both its neighbors; a local minimum if it is less than both its neighbors). Annotate each such interior peak and trough with a text label showing the abbreviated month name and the NDVI value rounded to three decimal places, positioned slightly above peaks and slightly below troughs to avoid overlap with the line. Include a light background grid for readability. Save this figure as a PNG file at 150 DPI.\n\nAfter generating both figures, save them as PNG output files so they are uploaded to S3 by the system. The two deliverables are the monthly NDVI map grid PNG and the mean NDVI time series line plot PNG."
+      }
+    }
+  },
+  "ActionContainers": {
+    "DownloadBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "QueryMODIS": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "GenerateFigures": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "DownloadBoundaries": [
+      "geopandas",
+      "requests",
+      "pyproj",
+      "shapely"
+    ],
+    "QueryMODIS": [
+      "pystac-client",
+      "planetary-computer",
+      "requests",
+      "geopandas",
+      "shapely"
+    ],
+    "ProcessNDVI": [
+      "rioxarray",
+      "xarray",
+      "geopandas",
+      "numpy",
+      "planetary-computer",
+      "pystac-client",
+      "shapely",
+      "pyproj",
+      "rasterio",
+      "netCDF4"
+    ],
+    "GenerateFigures": [
+      "rioxarray",
+      "xarray",
+      "geopandas",
+      "numpy",
+      "matplotlib",
+      "rasterio",
+      "netCDF4",
+      "shapely",
+      "pyproj"
+    ]
+  }
+}
