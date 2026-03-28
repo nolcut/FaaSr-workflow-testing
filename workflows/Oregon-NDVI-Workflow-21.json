@@ -1,0 +1,110 @@
+{
+  "FunctionInvoke": "DownloadBoundaries",
+  "WorkflowName": "Oregon-NDVI-Workflow-21",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "DownloadBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "FetchNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Download the US state boundary shapefile from the US Census Bureau TIGER/GENZ2022 dataset at 20-meter resolution (https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_state_20m.zip) and the US county boundary shapefile from the same dataset at 5-meter resolution (https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_county_5m.zip). Filter both shapefiles to Oregon using FIPS code 41 (the state FIPS field is typically named 'STATEFP'). Reproject both the Oregon state boundary and the Oregon county boundary geometries to EPSG:5070 (Albers Equal Area Conic). From the original unprojected (EPSG:4326) Oregon state boundary, extract the bounding box as (min_longitude, min_latitude, max_longitude, max_latitude) \u2014 this bounding box will be used as the spatial filter for satellite data queries. Save three outputs to the local staging directory (the FaaSr system will automatically upload them to S3): (1) the Oregon state boundary as a GeoJSON file in EPSG:5070, containing a single polygon feature representing the full Oregon state outline; (2) the Oregon county boundaries as a GeoJSON file in EPSG:5070, containing one polygon feature per county; and (3) the Oregon bounding box in EPSG:4326 as a JSON file containing the four coordinate values (min_lon, min_lat, max_lon, max_lat). These outputs will be consumed by downstream steps in the workflow, which will discover them from the data registry at runtime."
+      }
+    },
+    "FetchNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Discover the Oregon bounding box JSON file produced by the previous step from the data registry at runtime. The file contains four coordinate values (min_lon, min_lat, max_lon, max_lat) in EPSG:4326. Using these bounding box coordinates, determine the 12 most recent full calendar months relative to today's date. For each of those 12 months, query the Microsoft Planetary Computer STAC API (endpoint: https://planetarycomputer.microsoft.com/api/stac/v1) for items from the collection 'modis-13A1-061', which provides 16-day NDVI composites at 500-meter resolution. When initializing the STAC client, do NOT pass a modifier parameter \u2014 open the client without any signing modifier (i.e., pystac_client.Client.open(url) with no modifier argument). This ensures that the item JSON returned and saved contains raw, unsigned asset HREFs that can be safely stored and re-signed at the moment of use in the downstream processing step. Use the Oregon bounding box as the spatial filter (bbox parameter) and the full month date range as the temporal filter. Set a request timeout of 180 seconds per query. If a given month returns zero results, skip it silently without raising an error. If a month fails due to an exception, log the error message and continue to the next month. For each month that returns results, collect the full STAC item metadata for all items in that month by calling item.to_dict() on each pystac Item object to produce a plain Python dictionary. This ensures clean serialization to JSON and clean round-tripping back to a pystac Item object in the downstream step via pystac.Item.from_dict(). The stored asset HREFs within each serialized item will be raw unsigned URLs \u2014 they must be signed unconditionally using planetary_computer.sign() at the moment of use in the processing step, regardless of their apparent state. Save the collected full STAC item metadata for all successfully queried months as a single structured JSON output file to the local staging directory. The JSON should contain, for each month: the month label (e.g., 'Jan 2024'), the date range (start and end), and the list of serialized STAC item dictionaries (produced via item.to_dict()). The FaaSr system will automatically upload this output to S3 for the next step to discover."
+      }
+    },
+    "ProcessNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "VisualizeNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Discover from the data registry at runtime: (1) the STAC item metadata JSON file produced by the FetchNDVI step, containing serialized STAC item dictionaries organized by month; and (2) the Oregon state boundary GeoJSON in EPSG:5070 produced by the DownloadBoundaries step \u2014 this is a single-feature GeoJSON containing one polygon representing the full Oregon state outline, reprojected to EPSG:5070 (Albers Equal Area Conic). Process MODIS NDVI data for each month as follows. For each month in the metadata: (1) For each serialized STAC item dictionary, reconstruct the pystac Item object using pystac.Item.from_dict(item_dict). Then sign the asset URL unconditionally using planetary_computer.sign() immediately before use \u2014 always re-sign regardless of whether the URL appears to already be signed, since stored HREFs are raw unsigned URLs and signed URLs expire. Extract the HREF for the asset named '500m_16_days_NDVI' as a plain string after signing. (2) Use rioxarray to open each signed asset URL and reproject the raster to EPSG:5070. (3) Once all tiles for a given month have been reprojected, mosaic them together by computing the pixel-wise mean across all valid (non-masked, non-NaN) pixel values at each location. When only a single tile covers a given pixel location, the mean of that single value equals that value \u2014 no special handling is needed for single-tile pixels. At locations where all contributing tiles are masked or contain no-data values, preserve NaN in the output rather than producing zero or any other fill value \u2014 do not use a simple first-or-last-wins approach. (4) Clip the mosaicked raster to the Oregon state boundary geometry. (5) Divide the raw integer NDVI values by 10,000 to convert to floating-point NDVI in the standard range. (6) Mask out any pixels whose values fall outside the valid NDVI range of -1 to 1 by setting them to NaN. If a month fails during processing due to an exception, log the error and continue to the next month. After processing all months, compute the mean NDVI value across all valid (non-NaN) Oregon pixels for each successfully processed month, yielding a single scalar value per month. If the total number of successfully processed months is zero, raise an explicit error to halt the workflow. Save two categories of outputs to the local staging directory (the FaaSr system will automatically upload them to S3): (1) a JSON file containing, for each successfully processed month, the month label (e.g., 'Jan 2024') and its mean statewide NDVI scalar value; (2) one GeoTIFF file per successfully processed month, each containing the clipped, scaled, and masked NDVI raster for that month. When writing each GeoTIFF, embed the month label in the file's GDAL metadata using the tag key 'month_label' (for example, using rasterio's dataset.update_tags(month_label='Jan 2024') or equivalent), so that the visualization step can unambiguously identify which raster corresponds to which month by reading this tag. The FaaSr system will automatically upload all outputs to S3 for the next step to discover."
+      }
+    },
+    "VisualizeNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Discover from the data registry at runtime: (1) the set of monthly NDVI GeoTIFF files produced by the ProcessNDVI step \u2014 each file contains a clipped, scaled, and masked NDVI raster for one month, with the month label stored in the GDAL metadata tag key 'month_label' (readable via rasterio's dataset.tags()['month_label'] or equivalent); (2) the JSON file containing mean statewide NDVI scalar values per month, with one entry per successfully processed month; (3) the Oregon state boundary GeoJSON in EPSG:5070, which is a single-feature GeoJSON containing one polygon representing the full Oregon state outline; and (4) the Oregon county boundaries GeoJSON in EPSG:5070, containing one polygon feature per county. After discovering all GeoTIFF files, read the 'month_label' tag from each file's GDAL metadata and sort all discovered rasters into chronological order by their month label before any further processing or grid population. Generate two output figures. Figure 1 \u2014 Monthly NDVI Map Grid: Arrange the monthly NDVI rasters in a 4-column by 3-row grid layout (12 subplots total) with a 16:9 aspect ratio, saved at 200 DPI. Populate the panels in chronological order using the sorted month labels. Each panel displays the NDVI raster for one month using the 'YlGn' colormap. If fewer than 12 months were successfully processed, populate the available panels in chronological order and hide the axes of any unused subplot panels by calling ax.set_visible(False) on each unused panel \u2014 do not leave them with empty frames. Include a single shared colorbar scaled to the 2nd through 98th percentile of NDVI values across all months to avoid distortion from outliers. Overlay both the Oregon state boundary and county boundaries on each panel using thin lines. Label each panel with an abbreviated month-year title derived from the 'month_label' tag (e.g., 'Jan 2024'). Remove axis ticks and labels from all panels for a clean presentation. Save this figure as a PNG file to the local staging directory. Figure 2 \u2014 Mean NDVI Time-Series Line Plot: Create a line plot of mean statewide NDVI over time, with one data point per successfully processed month sorted chronologically, saved at 150 DPI. The x-axis represents time (months) and the y-axis represents mean NDVI. Annotate only the interior local maxima and minima \u2014 that is, peaks and troughs that are not the first or last data points \u2014 with the month name and the NDVI value rounded to three decimal places. Do not annotate the endpoints. Save this figure as a PNG file to the local staging directory. The FaaSr system will automatically upload both PNG files to S3 as the final outputs of the workflow."
+      }
+    }
+  },
+  "ActionContainers": {
+    "DownloadBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FetchNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "VisualizeNDVI": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "DownloadBoundaries": [
+      "geopandas",
+      "requests",
+      "pyproj",
+      "shapely"
+    ],
+    "FetchNDVI": [
+      "geopandas",
+      "pystac-client",
+      "pystac",
+      "planetary-computer",
+      "requests",
+      "shapely",
+      "pyproj"
+    ],
+    "ProcessNDVI": [
+      "geopandas",
+      "rioxarray",
+      "rasterio",
+      "xarray",
+      "numpy",
+      "planetary-computer",
+      "pystac-client",
+      "pystac",
+      "shapely",
+      "pyproj"
+    ],
+    "VisualizeNDVI": [
+      "geopandas",
+      "rioxarray",
+      "rasterio",
+      "xarray",
+      "numpy",
+      "matplotlib",
+      "shapely",
+      "pyproj"
+    ]
+  }
+}
