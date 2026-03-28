@@ -1,0 +1,77 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Western-US-Earthquake-Map-13-static",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "FetchEarthquakeData",
+      "InvokeNext": [
+        "FetchStateBoundaries"
+      ],
+      "Arguments": {}
+    },
+    "FetchStateBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "FetchStateBoundaries",
+      "InvokeNext": [
+        "GenerateEarthquakeMap"
+      ],
+      "Arguments": {}
+    },
+    "GenerateEarthquakeMap": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "GenerateEarthquakeMap",
+      "InvokeNext": [],
+      "Arguments": {}
+    }
+  },
+  "FunctionGitRepo": {
+    "FetchEarthquakeData": "nolcut/FaaSr-workflow-testing",
+    "FetchStateBoundaries": "nolcut/FaaSr-workflow-testing",
+    "GenerateEarthquakeMap": "nolcut/FaaSr-workflow-testing"
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FetchStateBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "GenerateEarthquakeMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests",
+      "pandas"
+    ],
+    "FetchStateBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "GenerateEarthquakeMap": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
