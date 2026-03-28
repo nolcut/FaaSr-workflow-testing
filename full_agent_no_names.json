@@ -60,7 +60,7 @@
 
     "GlobalInputFiles": [
       "data/*.csv",
-      "data/**.txt"
+      "data/**/*.txt"
     ],
     "GlobalInputFolders": [
       "raw-data/",
