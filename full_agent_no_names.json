@@ -52,7 +52,7 @@
   "DataStores": {
       "S3": {
         "Endpoint": "https://s3.us-east-1.amazonaws.com",
-        "Bucket": "faasr-full-agent",
+        "Bucket": "faasr-end-to-end",
         "Region": "us-east-1",
         "Writable": "TRUE"
       }
