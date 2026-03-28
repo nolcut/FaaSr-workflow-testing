@@ -1,0 +1,92 @@
+{
+  "FunctionInvoke": "DownloadBoundaries",
+  "WorkflowName": "Oregon-NDVI-Analysis-2",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "DownloadBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "QueryAndProcessNDVI"
+      ],
+      "Arguments": {
+        "prompt": "Download the Oregon state boundary shapefile and the US county boundary shapefile from the US Census Bureau TIGER/GENZ2022 dataset. The state boundary is available at https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_state_20m.zip and the county boundary is available at https://www2.census.gov/geo/tiger/GENZ2022/shp/cb_2022_us_county_20m.zip. From the state shapefile, filter to the single feature representing Oregon by selecting the row where the NAME field equals 'Oregon' (alternatively, where the STUSPS field equals 'OR'). From the county shapefile, filter to only those features whose STATEFP field equals '41', which is the FIPS code for Oregon. Reproject both the Oregon state boundary and the Oregon county boundaries to EPSG:5070 (Conus Albers Equal Area). From the reprojected state boundary, compute the total dissolved geometry and derive its bounding box expressed in EPSG:4326 (WGS84 geographic coordinates) \u2014 this bounding box will be used as the spatial filter for satellite data queries. Save the reprojected Oregon state boundary as a GeoJSON output file, the reprojected Oregon county boundaries as a separate GeoJSON output file, and the Oregon bounding box in WGS84 as a third JSON output file containing the west, south, east, and north coordinate values as named fields. Write all three output files to the local staging directory so that FaaSr can automatically upload them to S3."
+      }
+    },
+    "QueryAndProcessNDVI": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "GenerateVisualizations"
+      ],
+      "Arguments": {
+        "prompt": "Using the Oregon state boundary (reprojected to EPSG:5070), Oregon county boundaries (reprojected to EPSG:5070), and the Oregon bounding box in WGS84 produced by the previous step and available via the data registry, perform the following end-to-end NDVI processing pipeline for the 24-month period spanning January 2023 through December 2024.\n\nFor each of the 24 months (January 2023 through December 2024), query the Microsoft Planetary Computer STAC API at https://planetarycomputer.microsoft.com/api/stac/v1 using the pystac-client library. The collection to query is 'modis-13A1-061', which is the MODIS 16-day NDVI composite at 500-meter resolution. Use the Oregon WGS84 bounding box as the spatial filter and set a 180-second timeout per request. Construct the datetime filter to cover the full calendar month being queried. Handle errors carefully and separately: if a request times out, log a timeout warning and skip that month; if a month returns no results, log that no items were found and skip it; if processing fails for any other reason, log the error and skip that month gracefully rather than failing the entire workflow.\n\nFor each month that returns results, sign each asset URL immediately before use by calling planetary_computer.sign_inplace or planetary_computer.sign to obtain authenticated access. Extract the HREF for the asset named '500m_16_days_NDVI' as a plain string for each item returned.\n\nProcess the NDVI tiles for each month using rioxarray as follows: for each individual tile, open it with rioxarray and reproject it to EPSG:5070 before any mosaicking. Before mosaicking, verify that all reprojected tiles share the same CRS and resolution. If any tile has a differing resolution or transform, resample it to match the resolution and grid alignment of the first tile in the set using rioxarray reproject_match, so that all tiles are on a consistent grid prior to merging. Once all tiles for a given month are confirmed to share the same CRS and resolution, mosaic them together using pixel-wise mean for overlapping areas (use rasterio.merge with the 'mean' method or an equivalent rioxarray approach). Clip the resulting mosaic to the Oregon state boundary polygon geometry. After clipping, divide the raw integer NDVI values by 10000.0 to convert to floating-point NDVI in the standard range. Mask out any pixels whose NDVI value falls outside the valid range of -1.0 to 1.0 by setting them to NaN.\n\nAfter processing each month, compute the mean NDVI value across all valid (non-NaN) Oregon pixels and store this value along with the month identifier as a 'YYYY-MM' string.\n\nIf after attempting all 24 months zero months were successfully processed, raise an explicit RuntimeError indicating that no NDVI data was available for any month in the requested period.\n\nSave the following outputs to the local staging directory so that FaaSr can automatically upload them to S3:\n(1) A single multi-band GeoTIFF file containing exactly 24 bands in chronological order, one band per month from January 2023 (band 1) through December 2024 (band 24). Each band contains the clipped, scaled, masked NDVI raster for that month, or is filled entirely with NaN if that month had no valid data. Set the band description for each band to the corresponding 'YYYY-MM' string (e.g., '2023-01' for band 1, '2023-02' for band 2, and so on through '2024-12' for band 24). This consistent 24-band structure with 'YYYY-MM' band descriptions allows downstream agents to unambiguously identify which band corresponds to which month.\n(2) A CSV file containing the time series of successfully processed months and their corresponding mean statewide NDVI values, with columns named 'year', 'month', 'month_label' (in 'YYYY-MM' format), and 'mean_ndvi'."
+      }
+    },
+    "GenerateVisualizations": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the monthly clipped NDVI raster data, the mean NDVI time series CSV, the Oregon state boundary (EPSG:5070), and the Oregon county boundaries (EPSG:5070) produced by the previous steps and available via the data registry, generate two PNG visualizations and save them as output files to the local staging directory so that FaaSr can automatically upload them to S3.\n\nThe NDVI raster data is stored as a single multi-band GeoTIFF with exactly 24 bands in chronological order from January 2023 (band 1) through December 2024 (band 24). Each band's description is set to a 'YYYY-MM' string (e.g., '2023-01' for band 1). Use these band descriptions to determine which band corresponds to which month. A band filled entirely with NaN indicates that no valid data was available for that month.\n\nVisualization 1 \u2014 Monthly NDVI Map Grid:\nCreate a figure arranged in a grid of 6 rows and 4 columns, giving 24 panels total, one for each month in the January 2023 through December 2024 period in chronological order (left to right, top to bottom), corresponding to bands 1 through 24 of the multi-band GeoTIFF. The overall figure should have a 16:9 aspect ratio and be saved at 200 dots per inch. For each panel that has valid NDVI raster data (i.e., the band is not entirely NaN), display the clipped Oregon NDVI raster using the 'YlGn' colormap with the value range fixed at -1.0 to 1.0. Overlay the Oregon state boundary and county boundaries on each panel as thin lines. Set each panel title to an abbreviated month-year format derived from the band description, such as 'Jan 2023'. Remove all axis ticks and spines from every panel. For months where data is unavailable (band is entirely NaN), render the panel as blank with only the month-year label as the title, so the grid layout remains consistent across all 24 positions. Include a single shared colorbar for the entire figure positioned below or to the right of the grid, labeled with the text 'NDVI' to indicate the scale. Save this figure as a PNG output file.\n\nVisualization 2 \u2014 Mean NDVI Time Series Line Plot:\nLoad the mean NDVI time series from the CSV file in the registry, which has columns 'year', 'month', 'month_label' (in 'YYYY-MM' format), and 'mean_ndvi'. Create a line plot showing mean statewide NDVI on the vertical axis and time on the horizontal axis, with one data point per successfully processed month. Label the vertical axis 'Mean NDVI' and the horizontal axis 'Month'. Format the horizontal axis tick labels as abbreviated month-year strings (e.g., 'Jan 2023') and rotate them if needed to prevent overlap. Add a light grid to the plot background. Identify all interior local maxima and minima of the time series \u2014 that is, peaks and troughs that are not the first or the last data point in the series. Annotate each such interior extremum with a text label showing the abbreviated month name and the NDVI value rounded to three decimal places, positioned to avoid overlap with the line. Save this figure at 150 dots per inch as a PNG output file."
+      }
+    }
+  },
+  "ActionContainers": {
+    "DownloadBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "QueryAndProcessNDVI": "ghcr.io/nolcut/full-agent-gh:agents",
+    "GenerateVisualizations": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "DownloadBoundaries": [
+      "geopandas",
+      "requests",
+      "pyproj",
+      "shapely"
+    ],
+    "QueryAndProcessNDVI": [
+      "geopandas",
+      "pystac-client",
+      "planetary-computer",
+      "rioxarray",
+      "rasterio",
+      "numpy",
+      "xarray",
+      "pyproj",
+      "shapely",
+      "requests"
+    ],
+    "GenerateVisualizations": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "rioxarray",
+      "rasterio",
+      "xarray",
+      "scipy",
+      "pyproj",
+      "shapely",
+      "pandas"
+    ]
+  }
+}
