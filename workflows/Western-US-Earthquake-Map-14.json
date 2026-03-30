@@ -1,0 +1,91 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Western-US-Earthquake-Map-14",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessEarthquakeData"
+      ],
+      "Arguments": {
+        "prompt": "This is the first step in a pipeline that fetches, processes, and visualizes recent earthquake data for the western United States. Your role is to retrieve the raw earthquake data from the USGS API and save it for downstream processing. Query the USGS Earthquake Hazards Program FDSNWS event API at https://earthquake.usgs.gov/fdsnws/event/1/query with the following parameters: format=geojson, minimum magnitude of 2.0, a time window covering the past 30 days from today's date (compute the start date as today minus 30 days and the end date as today, both in ISO 8601 date format YYYY-MM-DD), and a geographic bounding box with minimum latitude 32, maximum latitude 49, minimum longitude -125, and maximum longitude -114. Perform an HTTP GET request to that URL with those query parameters. Parse the returned GeoJSON response. Extract from each feature in the features array the following fields: magnitude (from properties.mag), depth (from geometry.coordinates index 2), latitude (from geometry.coordinates index 1), and longitude (from geometry.coordinates index 0). Assemble these extracted fields into a structured tabular dataset with columns named exactly: magnitude, depth, latitude, longitude. Also record the queried start date and end date as metadata. Save the tabular dataset as a CSV file with a descriptive name to the local staging directory; the FaaSr system will automatically upload it to S3. Save the date range metadata (start_date and end_date keys) as a separate JSON file to the local staging directory; the FaaSr system will automatically upload it to S3."
+      }
+    },
+    "ProcessEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "DownloadStateBoundaries"
+      ],
+      "Arguments": {
+        "prompt": "This is the second step in a pipeline that fetches, processes, and visualizes recent earthquake data for the western United States. Your role is to clean and enrich the raw earthquake dataset for visualization. Discover and load the earthquake CSV file from the S3 registry; it is a CSV file containing columns named magnitude, depth, latitude, and longitude representing individual earthquake events. Also discover and load the date range metadata JSON file from the S3 registry; it is a JSON file containing the keys start_date and end_date representing the queried time window. Clean the CSV dataset by dropping any rows that have null or missing values in either the magnitude or depth columns. After cleaning, compute a marker_size column for each row using exponential scaling: marker_size = 80 * (2 ** (magnitude - min_magnitude)), where min_magnitude is the minimum value of the magnitude column in the cleaned dataset. Record the minimum and maximum depth values from the cleaned dataset so that the plasma colormap can be auto-scaled to this range during visualization. Record the total count of earthquake events remaining after cleaning. Save the cleaned and enriched dataset (with columns magnitude, depth, latitude, longitude, and marker_size) as a CSV file to the local staging directory; the FaaSr system will automatically upload it to S3. Save a metadata JSON file containing the keys min_depth, max_depth, event_count, min_magnitude, start_date, and end_date to the local staging directory; the FaaSr system will automatically upload it to S3."
+      }
+    },
+    "DownloadStateBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "CreateEarthquakeMap"
+      ],
+      "Arguments": {
+        "prompt": "This is the third step in a pipeline that fetches, processes, and visualizes recent earthquake data for the western United States. Your role is to download and filter US state boundary geometries for use in the map visualization. Download the US Census Bureau TIGER/Line cartographic boundary shapefiles for US states from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Extract and load the shapefile from the downloaded archive using geopandas. Filter the state geometries to retain only the following eight states: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered state boundary geodata as a GeoJSON file to the local staging directory; the FaaSr system will automatically upload it to S3. The GeoJSON file should contain the geometry column with Polygon and MultiPolygon geometries representing state boundaries, and a NAME column identifying each state."
+      }
+    },
+    "CreateEarthquakeMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "This is the final step in a pipeline that fetches, processes, and visualizes recent earthquake data for the western United States. Your role is to produce the finished map image. Discover and load the following files from the S3 registry: (1) the enriched earthquake CSV file containing columns magnitude, depth, latitude, longitude, and marker_size; (2) the metadata JSON file containing keys min_depth, max_depth, event_count, min_magnitude, start_date, and end_date; (3) the state boundary GeoJSON file containing Polygon and MultiPolygon geometries for California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana with a NAME column. Using these inputs, create a matplotlib figure of size 12 by 8 inches. Set the background color of both the figure and the axes to the dark navy hex color #0d1b2a. Load the state boundary GeoJSON into a geopandas GeoDataFrame. Plot the state boundary geometries by iterating over each row and handling both Polygon and MultiPolygon geometry types: for a Polygon, plot its exterior coordinates; for a MultiPolygon, iterate over each constituent polygon and plot its exterior coordinates. Render all state boundaries in light gray (#cccccc) with a line width of 0.8. Overlay a dashed grid in light gray with alpha transparency 0.3 and line width 0.5 using ax.grid. Plot the earthquake events as a scatter plot using ax.scatter, with longitude on the x-axis and latitude on the y-axis, coloring each point by its depth value using the plasma colormap auto-scaled to the min_depth and max_depth values from the metadata, using the marker_size column for point sizes, and applying black edge colors with a line width of 0.3. Apply equal aspect ratio to the axes using ax.set_aspect('equal'). Clamp the x-axis limits to -125 to -114 and the y-axis limits to 32 to 49. Add a colorbar to the figure labeled 'Depth (km)' reflecting the plasma depth color scale. Add a legend positioned outside the map to the right using loc='upper left' and bbox_to_anchor=(1.15, 1.0); the legend should display representative scatter handles for magnitudes M2, M3, M4, M5, and M6 (whole number steps from 2 to 6 inclusive), with each handle's size computed as 80 * (2 ** (m - min_magnitude)) where min_magnitude is the value from the metadata JSON, and configure the legend with markerscale=0.4, labelspacing=1.2, and handletextpad=1.0. Set the figure title dynamically as 'Western US Earthquakes (M2.0+) | <start_date> to <end_date> | <N> events', substituting the actual start_date, end_date, and event_count values from the metadata JSON. Save the completed figure as a PNG image file to the local staging directory; the FaaSr system will automatically upload it to S3."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "DownloadStateBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "CreateEarthquakeMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests",
+      "pandas"
+    ],
+    "ProcessEarthquakeData": [
+      "pandas",
+      "numpy"
+    ],
+    "DownloadStateBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "CreateEarthquakeMap": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
