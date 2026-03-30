@@ -1,0 +1,72 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Earthquake-Visualization-4",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "TransformEarthquakeData"
+      ],
+      "Arguments": {
+        "prompt": "Fetch earthquake data from the USGS Earthquake Hazards Program GeoJSON API. The API base URL is https://earthquake.usgs.gov/fdsnws/event/1/query. Query it with the following parameters: format set to geojson, minmagnitude set to 2.0, and a time range where the start time is exactly 30 days before today's current UTC date and the end time is today's current UTC date. Both dates should be formatted as ISO 8601 strings (YYYY-MM-DDTHH:MM:SS). Make an HTTP GET request to this endpoint with these parameters. The response will be a GeoJSON FeatureCollection where each feature in the features array represents a single earthquake event. Save the complete raw GeoJSON response as a single output file so that downstream steps can access the full earthquake feature collection."
+      }
+    },
+    "TransformEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PlotEarthquakeMap"
+      ],
+      "Arguments": {
+        "prompt": "Using the raw earthquake GeoJSON data produced by the previous step and available via the registry, transform it into a clean flat dataset. The input is a GeoJSON FeatureCollection where each feature has a geometry object with a coordinates array (index 0 is longitude, index 1 is latitude) and a properties object containing at minimum the keys 'mag' (magnitude) and 'place' (location description string). Iterate through every feature in the features array and extract exactly four fields for each event: latitude (geometry.coordinates[1]), longitude (geometry.coordinates[0]), magnitude (properties.mag), and place (properties.place). After extraction, filter the records to retain only those where magnitude is 2.0 or greater, discarding any records with a magnitude below 2.0 or where magnitude is null. The result should be a clean, flat tabular dataset where each row corresponds to one earthquake event and contains exactly the four columns: latitude, longitude, magnitude, and place. Save this transformed dataset as a CSV output file so that the visualization step can consume it."
+      }
+    },
+    "PlotEarthquakeMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Using the clean flat earthquake CSV dataset produced by the previous step and available via the registry, create an interactive global scatter map visualization of recent seismic activity. The dataset contains one row per earthquake with columns for latitude, longitude, magnitude, and place. Load this data and use plotly (plotly.express.scatter_geo or plotly.graph_objects.Scattergeo) to render each earthquake as a point on a world map using the latitude and longitude columns as geographic coordinates. Use the magnitude column to visually differentiate points: scale the marker size proportionally to magnitude (for example, marker size = magnitude raised to a power or multiplied by a scaling factor so that larger earthquakes appear noticeably larger) and also map marker color to magnitude using a sequential colorscale such as 'Reds' or 'YlOrRd' so that higher-magnitude events appear in more intense colors. Include the place column as the hover tooltip text so that when a user inspects any point, the location name is displayed. Set the map projection to a natural earth or orthographic global projection that shows all continents simultaneously. Add a colorbar legend labeled 'Magnitude'. Set the figure title to 'Global M2+ Earthquake Activity - Past 30 Days'. Configure the map to show country borders and coastlines. Save the final interactive visualization as an HTML output file so that users can open it in a browser and interactively explore the global distribution and intensity of recent earthquakes."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "TransformEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PlotEarthquakeMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests"
+    ],
+    "TransformEarthquakeData": [
+      "pandas"
+    ],
+    "PlotEarthquakeMap": [
+      "pandas",
+      "plotly"
+    ]
+  }
+}
