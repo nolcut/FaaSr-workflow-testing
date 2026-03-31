@@ -1,0 +1,92 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Western-US-Earthquake-Map-18",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "ProcessEarthquakeData",
+        "DownloadStateBoundaries"
+      ],
+      "Arguments": {
+        "prompt": "Query the USGS Earthquake API at https://earthquake.usgs.gov/fdsnws/event/1/query to retrieve earthquake events from the past 30 days. Use the following query parameters: format=geojson, minimum magnitude of 2.0 (minmagnitude=2.0), and a geographic bounding box covering the western United States defined by minimum latitude 32, maximum latitude 49, minimum longitude -125, and maximum longitude -114. Set the starttime parameter to today's date minus 30 days and endtime to today's date, formatted as YYYY-MM-DD. Send the HTTP GET request to the API and receive the GeoJSON response. Parse the GeoJSON structure: iterate over the features array and extract the following fields for each earthquake event: magnitude (from properties.mag), depth in kilometers (from geometry.coordinates index 2), latitude (from geometry.coordinates index 1), and longitude (from geometry.coordinates index 0). Also record the time field (from properties.time, which is a Unix timestamp in milliseconds) for each event. Assemble all extracted records into a structured dataset. Also record the query start date and end date as metadata strings in YYYY-MM-DD format. Save the complete extracted dataset as a CSV file named earthquake_raw.csv with columns: magnitude, depth, latitude, longitude, time. Save the query metadata as a separate JSON file named query_metadata.json containing exactly two keys: start_date and end_date, both as strings in YYYY-MM-DD format. The FaaSr system will automatically upload both output files to S3."
+      }
+    },
+    "ProcessEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "RenderEarthquakeMap"
+      ],
+      "Arguments": {
+        "prompt": "Load the CSV file named earthquake_raw.csv from the data registry. This file contains columns: magnitude, depth, latitude, longitude, and time, representing raw earthquake records fetched from the USGS API. Perform the following data cleaning and feature engineering steps. Drop any rows where the magnitude or depth fields contain null or missing values. After cleaning, compute two new columns for visual encoding. First, compute marker sizes using exponential scaling: size = 80 * (2 ** (magnitude - min(magnitude))), where min(magnitude) is the minimum magnitude value in the cleaned dataset. Second, retain the raw depth values as a column named depth, which will be mapped to the plasma colormap using automatic min-max scaling during plotting. Save the cleaned and feature-engineered dataset as a CSV file named earthquake_processed.csv with columns: magnitude, depth, latitude, longitude, time, marker_size. Ensure no rows with missing magnitude or depth values remain in the output. Additionally, compute and save a JSON file named processing_metadata.json containing the following keys: min_magnitude (the minimum magnitude value in the cleaned dataset as a float), max_magnitude (the maximum magnitude value in the cleaned dataset as a float), and event_count (the total number of rows in the cleaned dataset as an integer). These metadata values must be derived from the cleaned dataset after dropping null rows. The FaaSr system will automatically upload all output files to S3."
+      }
+    },
+    "DownloadStateBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "RenderEarthquakeMap"
+      ],
+      "Arguments": {
+        "prompt": "Download the US Census Bureau state boundary cartographic boundary shapefile for the United States from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Extract the ZIP archive and load the shapefile using geopandas. Filter the GeoDataFrame to retain only the following states by their NAME field: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Ensure the resulting GeoDataFrame contains only polygon or multipolygon geometries representing the boundaries of these eight states. Save the filtered state boundaries as a GeoJSON file named state_boundaries.geojson. The output file must contain only the eight named western US states and must be a valid GeoJSON FeatureCollection with geometry and NAME attribute preserved. The FaaSr system will automatically upload the output file to S3."
+      }
+    },
+    "RenderEarthquakeMap": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Load the following three input files from the data registry: (1) earthquake_processed.csv, a CSV file with columns magnitude, depth, latitude, longitude, time, and marker_size representing cleaned and feature-engineered earthquake records; (2) state_boundaries.geojson, a GeoJSON FeatureCollection containing polygon geometries for California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana; (3) query_metadata.json, a JSON file containing keys start_date and end_date as strings in YYYY-MM-DD format; (4) processing_metadata.json, a JSON file containing keys min_magnitude (float), max_magnitude (float), and event_count (integer) derived from the cleaned earthquake dataset. From processing_metadata.json, read min_magnitude and event_count. Use event_count as N (the total number of earthquake events to display in the title). Use min_magnitude when computing legend marker sizes so that the legend is guaranteed to be consistent with the scatter plot encoding. Create a matplotlib figure with a size of 12 by 8 inches. Set both the figure facecolor and the axes facecolor to dark navy (#0d1b2a). Plot the state boundary polygons from the GeoJSON onto the axes using their polygon geometries: draw only the boundary outlines in light gray (#cccccc) with a line width of 0.8 and no fill (facecolor set to 'none'). Overlay a dashed grid on the axes using linestyle '--', alpha 0.3, and line width 0.5, with grid line color set to light gray (#cccccc). Plot the earthquake events as a scatter layer on top of the state boundaries using matplotlib's scatter function: use the longitude values for x, latitude values for y, the marker_size column for the s parameter, the depth column for the c parameter, the plasma colormap (cmap='plasma'), black edge colors (edgecolors='black') with line width 0.3, and zorder=3 to ensure points appear above the state boundaries. After plotting, call set_aspect('equal') on the axes to maintain geographic proportions. Set the x-axis limits to -125 and -114, and the y-axis limits to 32 and 49. Add a colorbar to the figure associated with the scatter plot and label it 'Depth (km)'. Add a legend positioned outside the map to the right using loc='upper left' and bbox_to_anchor=(1.15, 1.0). The legend must display five representative entries for magnitudes M2, M3, M4, M5, and M6. For each representative magnitude value m in [2, 3, 4, 5, 6], compute the representative marker size using: size = 80 * (2 ** (m - min_magnitude)), where min_magnitude is the value loaded from processing_metadata.json. Create each legend entry as a scatter handle labeled as 'M{m}'. Configure the legend with markerscale=0.4, labelspacing=1.2, handletextpad=1.0, facecolor='#0d1b2a', and labelcolor='white' so the legend is readable against the dark background. Set the map title to a single line formatted as: 'Western US Earthquakes (M2.0+) | {start_date} to {end_date} | {N} events', substituting the actual start_date and end_date strings from query_metadata.json and the actual count N from processing_metadata.json. Set the title color to white. Set the x-axis and y-axis tick label colors to white. Set the axis spine colors to white. Save the completed figure as a PNG image file named earthquake_map.png using tight bounding box (bbox_inches='tight') and a DPI of 150. The FaaSr system will automatically upload the output file to S3."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "ProcessEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "DownloadStateBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "RenderEarthquakeMap": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests",
+      "pandas"
+    ],
+    "ProcessEarthquakeData": [
+      "pandas",
+      "numpy"
+    ],
+    "DownloadStateBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "RenderEarthquakeMap": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
