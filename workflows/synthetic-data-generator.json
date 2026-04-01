@@ -1,0 +1,64 @@
+{
+  "FunctionInvoke": "generate-inputs",
+  "WorkflowName": "synthetic-data-generator",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "generate-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "Bridge-generate-inputs-to-sum"
+      ],
+      "Arguments": {
+        "prompt": "Generate two separate JSON files to serve as synthetic inputs for a downstream summation workflow. Each file should contain a single random floating-point number sampled uniformly from the range 0.0 to 100.0 (this range is configurable). The two numbers must be generated independently of one another. Each JSON file must contain exactly one key named 'value' whose value is the randomly sampled floating-point number, for example: {\"value\": 73.21}. Name the first file 'sample1.json' and the second file 'sample2.json'. Write both files to the local staging directory only \u2014 the FaaSr system will automatically upload them to S3 after this action completes. Do not call any S3 upload functions or reference any S3 paths. To support reproducibility: check whether an environment variable named RANDOM_SEED is set; if it is, parse its value as an integer and use it as the random seed before generating any numbers; if RANDOM_SEED is not set or is empty, use non-deterministic (default) random behavior. Do not perform any arithmetic or summation. The sole purpose of this step is synthetic data generation."
+      }
+    },
+    "sum": {
+      "FunctionName": "compute_sum",
+      "FaaSServer": "GH",
+      "Type": "R",
+      "Arguments": {
+        "folder": "tutorial",
+        "input1": "sample1.json",
+        "input2": "sample2.json",
+        "output": "sum.json"
+      },
+      "InvokeNext": []
+    },
+    "Bridge-generate-inputs-to-sum": {
+      "FaaSServer": "GH",
+      "Type": "Bridge",
+      "InvokeNext": [
+        "sum"
+      ]
+    }
+  },
+  "ActionContainers": {
+    "generate-inputs": "ghcr.io/nolcut/full-agent-gh:bridge",
+    "sum": "ghcr.io/nolcut/github-actions-r-testing:func-path",
+    "Bridge-generate-inputs-to-sum": "ghcr.io/nolcut/full-agent-gh:bridge"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "compute_sum": "https://github.com/nolcut/FaaSr-Functions/blob/main/tutorial/compute_sum.R"
+  }
+}
