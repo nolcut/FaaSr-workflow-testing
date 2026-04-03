@@ -23,7 +23,7 @@
         "CreateEarthquakeMap"
       ],
       "Arguments": {
-        "prompt": "Download US Census Bureau state boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Unzip the archive and load the shapefile using geopandas. Filter the GeoDataFrame to retain only the following eight states by their NAME field: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered GeoDataFrame as a GeoJSON file named 'western_states.geojson' containing only the geometry and NAME columns for those eight states."
+        "prompt": "Download US Census Bureau state boundary shapefiles from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. Unzip the archive and load the shapefile using geopandas. Filter the GeoDataFrame down to ONLY the following eight states by their NAME field: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Save the filtered GeoDataFrame as a GeoJSON file named 'western_states.geojson' containing only the geometry and NAME columns for those eight states."
       }
     },
     "CreateEarthquakeMap": {
