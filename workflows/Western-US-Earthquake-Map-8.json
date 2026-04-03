@@ -1,0 +1,77 @@
+{
+  "FunctionInvoke": "FetchEarthquakeData",
+  "WorkflowName": "Western-US-Earthquake-Map-8",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "FetchEarthquakeData": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "FetchStateBoundaries",
+        "PrepareAndPlot"
+      ],
+      "Arguments": {
+        "prompt": "Query the USGS Earthquake Hazards Program FDSN Web Service API at https://earthquake.usgs.gov/fdsnws/event/1/query to retrieve all seismic events that occurred within the past 30 days. Compute the start date as today minus 30 days and the end date as today, both formatted as ISO 8601 date strings (YYYY-MM-DD). Use the following query parameters: format=geojson, minmagnitude=2.0, minlatitude=32, maxlatitude=49, minlongitude=-125, maxlongitude=-114.\n\nParse the returned GeoJSON response. For each feature in the 'features' array, extract the following fields:\n- 'magnitude': from properties.mag\n- 'depth': from geometry.coordinates[2] (depth in kilometers)\n- 'latitude': from geometry.coordinates[1]\n- 'longitude': from geometry.coordinates[0]\n- 'magType': from properties.magType\n\nSave the results as a single JSON file named 'earthquake_data.json' with the following exact top-level structure:\n{\n  \"metadata\": {\n    \"start_date\": \"<ISO 8601 start date string>\",\n    \"end_date\": \"<ISO 8601 end date string>\"\n  },\n  \"features\": [\n    {\n      \"magnitude\": <float or null>,\n      \"depth\": <float or null>,\n      \"latitude\": <float>,\n      \"longitude\": <float>,\n      \"magType\": <string or null>\n    },\n    ...\n  ]\n}\n\nInclude all features returned by the API without any filtering at this stage. Write the file to the local staging directory so that the FaaSr system automatically uploads it to S3."
+      }
+    },
+    "FetchStateBoundaries": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [
+        "PrepareAndPlot"
+      ],
+      "Arguments": {
+        "prompt": "Download US Census Bureau state boundary shapefiles from the TIGER/Line generalized cartographic boundary files. Attempt to download the 2018 20-meter resolution state shapefile from https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_20m.zip. If this URL is unavailable or the download fails, raise a clear error message describing the failure so the workflow does not silently continue with missing data.\n\nIf the download succeeds, extract the zip archive in memory or to a temporary directory, then load the shapefile using geopandas. Filter the GeoDataFrame to retain only the following eight states by matching the NAME column: California, Oregon, Washington, Nevada, Idaho, Arizona, Utah, and Montana. Keep only the 'geometry' and 'NAME' columns.\n\nSave the filtered state boundaries as a GeoJSON file named 'state_boundaries.geojson'. The output GeoJSON will be a standard FeatureCollection where each feature has a 'geometry' field containing the polygon geometry and a 'properties' field containing at minimum the 'NAME' field with the state name. Write this file to the local staging directory so that the FaaSr system automatically uploads it to S3."
+      }
+    },
+    "PrepareAndPlot": {
+      "FaaSServer": "GH",
+      "Type": "Agent",
+      "InvokeNext": [],
+      "Arguments": {
+        "prompt": "Load the two input files from the data registry at runtime. The registry will contain:\n\n1. 'earthquake_data.json': A JSON file with the following top-level structure:\n   {\n     \"metadata\": { \"start_date\": \"<string>\", \"end_date\": \"<string>\" },\n     \"features\": [\n       { \"magnitude\": <float or null>, \"depth\": <float or null>, \"latitude\": <float>, \"longitude\": <float>, \"magType\": <string or null> },\n       ...\n     ]\n   }\n   Load the features array into a pandas DataFrame. Retrieve start_date and end_date from the metadata object.\n\n2. 'state_boundaries.geojson': A GeoJSON FeatureCollection where each feature has a 'geometry' field (polygon or multipolygon) representing a US state boundary and a 'properties' field containing at minimum a 'NAME' field. Load this file using geopandas into a GeoDataFrame.\n\nDATA CLEANING AND TRANSFORMATION:\n1. Drop any rows in the earthquake DataFrame where either the 'magnitude' or 'depth' field is null or missing.\n2. Retain the native magnitude scale as provided by the API without any conversion or normalization.\n3. Compute min_magnitude locally from the cleaned dataset as the minimum value of the 'magnitude' column across all cleaned records. This value is derived entirely from the cleaned DataFrame and is not loaded from any upstream file.\n4. Compute the exponential marker size for each earthquake using the formula: size = 80 * (2 ** (magnitude - min_magnitude)).\n5. Map the 'depth' values to the plasma colormap using automatic scaling derived from the actual minimum and maximum depth values in the cleaned dataset. Do not hardcode depth range limits.\n6. Use the raw 'latitude' and 'longitude' values directly without any reprojection or coordinate reference system transformation.\n7. Record N as the total count of earthquake records remaining after cleaning.\n\nMAP VISUALIZATION:\nCreate a matplotlib figure with size 12 by 8 inches and a single axes object.\n- Set the axes facecolor to '#0d1b2a'.\n- Draw the state boundary polygons by calling geopandas .plot(ax=ax, facecolor='none', edgecolor='#cccccc', linewidth=0.8) on the state boundaries GeoDataFrame. Do not use the descartes library, which is deprecated and unmaintained.\n- Render a dashed grid overlay on the axes with alpha=0.3 and line width=0.5.\n- Set xlim to (-125, -114) and ylim to (32, 49).\n\nSCATTER PLOT:\n- Plot the earthquake events as a scatter layer on top of the state boundaries using ax.scatter().\n- Use the computed exponential marker sizes as the 's' parameter.\n- Apply the plasma colormap ('plasma') to the 'depth' column values, with vmin and vmax set to the actual minimum and maximum depth values from the cleaned dataset.\n- Set edgecolors='black' and linewidths=0.3 on the scatter call.\n- Attach a colorbar to the figure using the scatter mappable, labeled 'Depth (km)'.\n\nLEGEND:\n- Create five dummy scatter handles for magnitude values M2, M3, M4, M5, and M6. For each representative magnitude value m (integer), compute the representative size using: size = 80 * (2 ** (m - min_magnitude)). Create each handle using ax.scatter([], [], s=size, color='gray', edgecolors='black', linewidths=0.3, label=f'M{m}').\n- Add the legend with loc='upper left', bbox_to_anchor=(1.15, 1.0), markerscale=0.4, labelspacing=1.2, and handletextpad=1.0.\n- After creating the legend, style it for visual consistency with the dark background: set the legend frame facecolor to '#0d1b2a' and the legend frame edgecolor to '#cccccc'.\n\nTITLE:\n- Set the figure title using the format: 'Western US Earthquakes (M2.0+) | {start_date} to {end_date} | {N} events', substituting the actual start_date and end_date strings from the metadata and the actual cleaned event count N.\n\nOUTPUT:\n- Save the fully rendered figure as a PNG image file named 'western_us_earthquakes.png'. Write this file to the local staging directory so that the FaaSr system automatically uploads it to S3."
+      }
+    }
+  },
+  "ActionContainers": {
+    "FetchEarthquakeData": "ghcr.io/nolcut/full-agent-gh:agents",
+    "FetchStateBoundaries": "ghcr.io/nolcut/full-agent-gh:agents",
+    "PrepareAndPlot": "ghcr.io/nolcut/full-agent-gh:agents"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UserName": "nolcut"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-end-to-end",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  },
+  "PyPIPackageDownloads": {
+    "FetchEarthquakeData": [
+      "requests"
+    ],
+    "FetchStateBoundaries": [
+      "geopandas",
+      "requests"
+    ],
+    "PrepareAndPlot": [
+      "geopandas",
+      "matplotlib",
+      "numpy",
+      "pandas",
+      "shapely"
+    ]
+  }
+}
