@@ -2,6 +2,7 @@
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -132,8 +133,12 @@ def main():
         logger.error("FunctionInvoke not found in payload")
         sys.exit(1)
 
+    # Strip rank suffix (e.g. "func(5)" -> "func") for ActionList lookup.
+    # trigger_func handles the full "func(5)" form internally.
+    bare_action_name = re.split(r"[()]", entry_action_name)[0]
+
     try:
-        server_name = workflow["ActionList"][entry_action_name]["FaaSServer"]
+        server_name = workflow["ActionList"][bare_action_name]["FaaSServer"]
 
         server = workflow["ComputeServers"][server_name]
 
@@ -141,6 +146,7 @@ def main():
 
         use_secret_store = server.get("UseSecretStore", False)
     except KeyError as e:
+        logger.error(f"Missing key while resolving entry action '{entry_action_name}': {e}")
         sys.exit(1)
 
     if not use_secret_store:
