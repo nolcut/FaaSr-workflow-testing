@@ -48,12 +48,12 @@
     "plot-results": "ghcr.io/nolcut/gh-py-generator:generators"
   },
   "FunctionGitRepo": {
-    "generate-samples": "nolcut/FaaSr-workflow-testing",
-    "collect-results": "nolcut/FaaSr-workflow-testing",
-    "plot-results": "nolcut/FaaSr-workflow-testing"
+    "generate_samples": "nolcut/FaaSr-workflow-testing",
+    "collect_results": "nolcut/FaaSr-workflow-testing",
+    "plot_results": "nolcut/FaaSr-workflow-testing"
   },
   "PyPIPackageDownloads": {
-    "plot-results": ["matplotlib"]
+    "plot_results": ["matplotlib"]
   },
   "ComputeServers": {
     "GH": {
