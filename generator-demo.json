@@ -3,6 +3,7 @@
   "WorkflowName": "generator-demo",
   "InvocationID": "generator-demo-001",
   "DefaultDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
   "ActionList": {
     "generate-samples": {
       "FunctionName": "generate_samples",
