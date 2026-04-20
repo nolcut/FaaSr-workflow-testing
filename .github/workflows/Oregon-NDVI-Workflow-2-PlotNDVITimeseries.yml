@@ -1,4 +1,4 @@
-name: Oregon-NDVI-Workflow-2-PlotNDVITimeseries
+name: Oregon-NDVI-Workflow-2-PlotNDVITimeSeries
 
 on:
     workflow_dispatch:

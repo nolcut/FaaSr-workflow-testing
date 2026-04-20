@@ -1,0 +1,55 @@
+{
+  "FunctionInvoke": "generate-samples(4)",
+  "WorkflowName": "generator-demo",
+  "InvocationID": "generator-demo-001",
+  "DefaultDataStore": "S3",
+  "ActionList": {
+    "generate-samples": {
+      "FunctionName": "generate_samples",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "ArgumentGenerator": {
+        "x_val": {
+          "Name": "linspace",
+          "Arguments": { "start": 0.0, "stop": 3.0 }
+        },
+        "label": {
+          "Name": "from_list",
+          "Arguments": { "values": ["A", "B", "C", "D"] }
+        }
+      },
+      "InvokeNext": ["collect-results"]
+    },
+    "collect-results": {
+      "FunctionName": "collect_results",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "n_samples": 4
+      },
+      "InvokeNext": ["plot-results"]
+    },
+    "plot-results": {
+      "FunctionName": "plot_results",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "InvokeNext": []
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://play.min.io",
+      "Bucket": "faasr",
+      "Region": "us-east-1"
+    }
+  }
+}
