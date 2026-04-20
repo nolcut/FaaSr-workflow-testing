@@ -8,6 +8,10 @@
       "FunctionName": "generate_samples",
       "FaaSServer": "GH",
       "Type": "Python",
+      "Arguments": {
+        "x_val": 0.0,
+        "label": ""
+      },
       "ArgumentGenerator": {
         "x_val": {
           "Name": "linspace",
@@ -47,9 +51,10 @@
   },
   "DataStores": {
     "S3": {
-      "Endpoint": "https://play.min.io",
-      "Bucket": "faasr",
-      "Region": "us-east-1"
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-generators",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
     }
   }
 }
