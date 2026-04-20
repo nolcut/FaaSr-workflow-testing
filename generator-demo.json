@@ -1,11 +1,17 @@
 {
-  "FunctionInvoke": "generate-samples(4)",
+  "FunctionInvoke": "init-workflow",
   "WorkflowName": "generator-demo",
   "InvocationID": "generator-demo-001",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "ActionList": {
+    "init-workflow": {
+      "FunctionName": "init_workflow",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "InvokeNext": ["generate-samples(4)"]
+    },
     "generate-samples": {
       "FunctionName": "generate_samples",
       "FaaSServer": "GH",
@@ -43,11 +49,13 @@
     }
   },
   "ActionContainers": {
+    "init-workflow": "ghcr.io/nolcut/gh-py-generator:generators",
     "generate-samples": "ghcr.io/nolcut/gh-py-generator:generators",
     "collect-results": "ghcr.io/nolcut/gh-py-generator:generators",
     "plot-results": "ghcr.io/nolcut/gh-py-generator:generators"
   },
   "FunctionGitRepo": {
+    "init_workflow": "nolcut/FaaSr-workflow-testing",
     "generate_samples": "nolcut/FaaSr-workflow-testing",
     "collect_results": "nolcut/FaaSr-workflow-testing",
     "plot_results": "nolcut/FaaSr-workflow-testing"
