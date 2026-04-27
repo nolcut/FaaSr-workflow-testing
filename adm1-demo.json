@@ -1,0 +1,84 @@
+{
+  "FunctionInvoke": "generate-synthetic-data",
+  "WorkflowName": "adm1-demo",
+  "InvocationID": "adm1-demo-001",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "generate-synthetic-data": {
+      "FunctionName": "generate_synthetic_data",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "InvokeNext": ["run-adm1(15)"]
+    },
+    "run-adm1": {
+      "FunctionName": "run_adm1",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "k_m_ac": 8.0,
+        "Y_ac": 0.05,
+        "k_dis": 0.5
+      },
+      "ArgumentGenerator": {
+        "k_m_ac": {
+          "Name": "linspace",
+          "Arguments": { "start": 4.0, "stop": 14.0 }
+        },
+        "Y_ac": {
+          "Name": "logspace",
+          "Arguments": { "start": -1.7, "stop": -1.1 }
+        },
+        "k_dis": {
+          "Name": "gaussian_jitter",
+          "Arguments": { "center": 0.5, "scale": 0.15, "seed": 42 }
+        }
+      },
+      "InvokeNext": ["visualize-results"]
+    },
+    "visualize-results": {
+      "FunctionName": "visualize_adm1",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "n_runs": 15
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-synthetic-data": "ghcr.io/nolcut/gh-py-generator:generators",
+    "run-adm1": "ghcr.io/nolcut/gh-py-generator:generators",
+    "visualize-results": "ghcr.io/nolcut/gh-py-generator:generators"
+  },
+  "FunctionGitRepo": {
+    "generate_synthetic_data": "nolcut/FaaSr-workflow-testing",
+    "run_adm1": "nolcut/FaaSr-workflow-testing",
+    "visualize_adm1": "nolcut/FaaSr-workflow-testing"
+  },
+  "Generators": {
+    "gaussian_jitter": "nolcut/FaaSr-workflow-testing/main/functions/adm1/generators/gaussian_jitter.py"
+  },
+  "PyPIPackageDownloads": {
+    "run_adm1": ["numpy", "pandas", "scipy"],
+    "visualize_adm1": ["matplotlib"]
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "UseSecretStore": true,
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main"
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-generators",
+      "Region": "us-east-1",
+      "Writable": "TRUE"
+    }
+  }
+}
