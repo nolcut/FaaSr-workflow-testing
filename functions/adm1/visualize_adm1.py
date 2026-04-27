@@ -6,9 +6,11 @@ import random
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 
 OBSERVABLES = ["S_ac", "S_ch4", "S_gas_ch4", "pH"]
+TRAJECTORY_PANELS = ["S_ac", "S_gas_ch4"]
 
 
 def _linspace(n, start, stop):
@@ -93,59 +95,81 @@ def visualize_adm1(n_runs: int = 15):
     Y_ac_vals = _logspace(n_runs, -1.7, -1.1)
     k_dis_vals = _gaussian_jitter(n_runs, 0.5, 0.15, 42)
 
-    s_min = min(r["score"] for r in runs)
-    s_max = max(r["score"] for r in runs)
-    cmap = plt.get_cmap("viridis_r")
+    sorted_runs = sorted(runs, key=lambda r: r["score"])
+    best = sorted_runs[0]
+    worst = sorted_runs[-1]
 
-    def color_for(score):
-        t = (score - s_min) / (s_max - s_min) if s_max > s_min else 0.0
-        return cmap(t)
+    fig = plt.figure(figsize=(15, 10), constrained_layout=True)
+    gs = GridSpec(3, 3, figure=fig, height_ratios=[2.2, 2.2, 1.6])
 
-    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-
-    for ax, col in [(axes[0, 0], "S_ch4"), (axes[0, 1], "pH")]:
+    # Two trajectory panels (top two rows, full width)
+    for row, col in enumerate(TRAJECTORY_PANELS):
+        ax = fig.add_subplot(gs[row, :])
         for r in runs:
-            ax.plot(syn_t, r["per_col"][col][0], color=color_for(r["score"]),
-                    linewidth=0.9, alpha=0.85)
-        ax.scatter(syn_t, syn[col], color="red", s=14, zorder=5, label="synthetic")
+            if r["rank"] in (best["rank"], worst["rank"]):
+                continue
+            ax.plot(syn_t, r["per_col"][col][0], color="#bbbbbb",
+                    linewidth=0.9, alpha=0.7, zorder=2)
+        ax.plot(syn_t, worst["per_col"][col][0], color="#d62728",
+                linewidth=2.0, linestyle="--", zorder=3,
+                label=f"worst (rank {worst['rank']}, score {worst['score']:.2f})")
+        ax.plot(syn_t, best["per_col"][col][0], color="#1f77b4",
+                linewidth=2.4, zorder=4,
+                label=f"best (rank {best['rank']}, score {best['score']:.2f})")
+        ax.scatter(syn_t, syn[col], color="black", s=22, zorder=5,
+                   label="synthetic measurements", edgecolor="white", linewidth=0.5)
         ax.set_xlabel("time (d)")
         ax.set_ylabel(col)
-        ax.set_title(f"{col}: 15 runs vs synthetic")
-        ax.legend(loc="best", fontsize=9)
+        ax.set_title(f"{col} — 15 ADM1 runs against synthetic data")
+        ax.legend(loc="best", fontsize=9, framealpha=0.9)
         ax.grid(True, alpha=0.3)
 
-    sorted_runs = sorted(runs, key=lambda r: r["score"])
-    ranks = [r["rank"] for r in sorted_runs]
-    scores = [r["score"] for r in sorted_runs]
-    bar_colors = [color_for(s) for s in scores]
-    axes[1, 0].bar(range(len(ranks)), scores, color=bar_colors)
-    axes[1, 0].set_xticks(range(len(ranks)))
-    axes[1, 0].set_xticklabels([str(r) for r in ranks])
-    axes[1, 0].set_xlabel("run rank (sorted by score)")
-    axes[1, 0].set_ylabel("normalized RMSE (sum over observables)")
-    axes[1, 0].set_title("Match quality per run (lower is better)")
-    axes[1, 0].grid(True, alpha=0.3, axis="y")
+    # Bottom row: bar chart + 2 param-vs-score scatters
+    ax_bar = fig.add_subplot(gs[2, 0])
+    ranks_sorted = [r["rank"] for r in sorted_runs]
+    scores_sorted = [r["score"] for r in sorted_runs]
+    bar_colors = ["#1f77b4" if r == best["rank"]
+                  else "#d62728" if r == worst["rank"]
+                  else "#888888" for r in ranks_sorted]
+    ax_bar.bar(range(len(ranks_sorted)), scores_sorted, color=bar_colors)
+    ax_bar.set_xticks(range(len(ranks_sorted)))
+    ax_bar.set_xticklabels([str(r) for r in ranks_sorted], fontsize=8)
+    ax_bar.set_xlabel("run rank (sorted by score)")
+    ax_bar.set_ylabel("normalized RMSE")
+    ax_bar.set_title("Match quality per run")
+    ax_bar.grid(True, alpha=0.3, axis="y")
 
+    # Param scatters
     rank_score = {r["rank"]: r["score"] for r in runs}
-    xs = [k_m_ac_vals[r - 1] for r in rank_score]
-    ys = [rank_score[r] for r in rank_score]
-    axes[1, 1].scatter(xs, ys, c=[color_for(s) for s in ys], s=80)
-    for r in runs:
-        axes[1, 1].annotate(str(r["rank"]),
-                            (k_m_ac_vals[r["rank"] - 1], r["score"]),
-                            textcoords="offset points", xytext=(5, 4), fontsize=9)
-    axes[1, 1].axvline(8.0, color="gray", linestyle="--", alpha=0.6, label="default 8.0")
-    axes[1, 1].set_xlabel("k_m_ac (linspace 4..14)")
-    axes[1, 1].set_ylabel("normalized RMSE")
-    axes[1, 1].set_title("Score vs swept k_m_ac")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
+    param_specs = [
+        ("k_m_ac", k_m_ac_vals, 8.0, "linear"),
+        ("Y_ac", Y_ac_vals, 0.05, "log"),
+    ]
+    for col_i, (name, vals, default, scale) in enumerate(param_specs):
+        ax = fig.add_subplot(gs[2, col_i + 1])
+        xs = [vals[r - 1] for r in range(1, n_runs + 1)]
+        ys = [rank_score[r] for r in range(1, n_runs + 1)]
+        colors = ["#1f77b4" if r == best["rank"]
+                  else "#d62728" if r == worst["rank"]
+                  else "#888888" for r in range(1, n_runs + 1)]
+        ax.scatter(xs, ys, c=colors, s=70, zorder=3, edgecolor="white", linewidth=0.5)
+        ax.axvline(default, color="green", linestyle=":", alpha=0.7,
+                   label=f"BSM2 default {default:g}")
+        ax.set_xscale(scale)
+        ax.set_xlabel(name)
+        ax.set_ylabel("normalized RMSE")
+        ax.set_title(f"score vs {name}")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
 
-    fig.suptitle("ADM1 parameter-search match against synthetic measurements", fontsize=13)
-    fig.tight_layout()
+    fig.suptitle(
+        f"ADM1 parameter-search calibration "
+        f"(best: rank {best['rank']} — k_m_ac={k_m_ac_vals[best['rank']-1]:.2f}, "
+        f"Y_ac={Y_ac_vals[best['rank']-1]:.4f}, k_dis={k_dis_vals[best['rank']-1]:.3f})",
+        fontsize=12,
+    )
     fig.savefig("/tmp/match_plot.png", dpi=150)
 
-    best = sorted_runs[0]
     faasr_log(
         f"Best run: rank={best['rank']}, score={best['score']:.4f}, "
         f"k_m_ac={k_m_ac_vals[best['rank']-1]:.3f}, "
