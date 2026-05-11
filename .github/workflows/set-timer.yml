@@ -51,15 +51,19 @@ jobs:
           AWS_SecretKey: ${{ secrets.AWS_SecretKey }}
           GCP_SecretKey: ${{ secrets.GCP_SecretKey }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          WORKFLOW_FILE: ${{ github.event.inputs.workflow_file }}
+          CRON_EXPR: ${{ github.event.inputs.cron }}
+          TARGET_ACTION: ${{ github.event.inputs.target }}
+          UNSET_TIMER: ${{ github.event.inputs.unset }}
         run: |
-          ARGS="--workflow-file ${{ github.event.inputs.workflow_file }}"
-          if [ "${{ github.event.inputs.unset }}" = "true" ]; then
-            ARGS="$ARGS --unset"
+          args=(--workflow-file "$WORKFLOW_FILE")
+          if [ "$UNSET_TIMER" = "true" ]; then
+            args+=(--unset)
           fi
-          if [ -n "${{ github.event.inputs.cron }}" ]; then
-            ARGS="$ARGS --cron \"${{ github.event.inputs.cron }}\""
+          if [ -n "$CRON_EXPR" ]; then
+            args+=(--cron "$CRON_EXPR")
           fi
-          if [ -n "${{ github.event.inputs.target }}" ]; then
-            ARGS="$ARGS --target ${{ github.event.inputs.target }}"
+          if [ -n "$TARGET_ACTION" ]; then
+            args+=(--target "$TARGET_ACTION")
           fi
-          eval python scripts/set_timer.py $ARGS
+          python scripts/set_timer.py "${args[@]}"
