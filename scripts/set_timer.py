@@ -163,7 +163,7 @@ def set_timer_github(workflow_data, target, cron, unset, workflow_file):
 
 def _generate_timer_wrapper_yaml(workflow_name, cron, workflow_file):
     return (
-        f"name: '  ({workflow_name} TIMER)'\n"
+        f"name: ' ({workflow_name} TIMER)'\n"
         f"\n"
         f"on:\n"
         f"  schedule:\n"
