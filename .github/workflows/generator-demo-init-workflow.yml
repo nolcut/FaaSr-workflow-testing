@@ -10,8 +10,6 @@ on:
                 description: "URL to payload"
                 required: true
 
-    schedule:
-        - cron: '* * * * *'
 jobs:
     run_docker_image:
         runs-on: ubuntu-latest
