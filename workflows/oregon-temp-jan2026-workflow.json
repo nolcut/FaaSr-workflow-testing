@@ -1,0 +1,84 @@
+{
+  "FunctionInvoke": "download-temperature-data",
+  "WorkflowName": "oregon-temp-jan2026-workflow",
+  "DefaultDataStore": "S3",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "download-temperature-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "download_temperature_data",
+      "Arguments": {
+        "folder": "oregon_temp_jan2026",
+        "output1": "oregon_temp_raw.csv"
+      },
+      "InvokeNext": [
+        "compute-daily-averages"
+      ]
+    },
+    "compute-daily-averages": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "compute_daily_averages",
+      "Arguments": {
+        "folder": "oregon_temp_jan2026",
+        "input1": "oregon_temp_raw.csv",
+        "output1": "oregon_temp_daily_avg.csv"
+      },
+      "InvokeNext": [
+        "plot-daily-temperatures"
+      ]
+    },
+    "plot-daily-temperatures": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "plot_daily_temperatures",
+      "Arguments": {
+        "folder": "oregon_temp_jan2026",
+        "input1": "oregon_temp_daily_avg.csv",
+        "output1": "oregon_temp_jan2026_plot.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "download-temperature-data": "ghcr.io/faasr/github-actions-python:latest",
+    "compute-daily-averages": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-daily-temperatures": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "download_temperature_data": [
+      "nolcut/FaaSr-workflow-testing",
+      "main",
+      "functions/download_temperature_data.py"
+    ],
+    "compute_daily_averages": [
+      "nolcut/FaaSr-workflow-testing",
+      "main",
+      "functions/compute_daily_averages.py"
+    ],
+    "plot_daily_temperatures": [
+      "nolcut/FaaSr-workflow-testing",
+      "main",
+      "functions/plot_daily_temperatures.py"
+    ]
+  }
+}
