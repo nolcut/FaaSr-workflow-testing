@@ -2,35 +2,35 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     import pandas as pd
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
+    import os
 
-    faasr_get_file(local_file="oregon_daily_avg_temperature_jan2026.csv", remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="oregon_daily_avg_temperature_feb2026.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
     import os
-    if not os.path.exists("oregon_daily_avg_temperature_jan2026.csv"):
+    if not os.path.exists("oregon_daily_avg_temperature_feb2026.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must exist after download from S3")
         raise SystemExit(1)
-    if not os.path.exists("oregon_daily_avg_temperature_jan2026.csv") or os.path.getsize("oregon_daily_avg_temperature_jan2026.csv") == 0:
+    if not os.path.exists("oregon_daily_avg_temperature_feb2026.csv") or os.path.getsize("oregon_daily_avg_temperature_feb2026.csv") == 0:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must not be empty")
         raise SystemExit(1)
     try:
         import csv as _csv
-        with open("oregon_daily_avg_temperature_jan2026.csv", newline="") as _f:
+        with open("oregon_daily_avg_temperature_feb2026.csv", newline="") as _f:
             next(_csv.reader(_f))
     except Exception as _e:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV with at least 'date' and 'avg_temperature' columns: " + str(_e))
         raise SystemExit(1)
     # --- end requires ---
     # --- CONTRACT: requires ---
-    import os
-    if not os.path.exists("oregon_daily_avg_temperature_jan2026.csv"):
+    if not os.path.exists("oregon_daily_avg_temperature_feb2026.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must exist after download from S3")
         raise SystemExit(1)
-    if not os.path.exists("oregon_daily_avg_temperature_jan2026.csv") or os.path.getsize("oregon_daily_avg_temperature_jan2026.csv") == 0:
+    if os.path.getsize("oregon_daily_avg_temperature_feb2026.csv") == 0:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must not be empty")
         raise SystemExit(1)
     try:
         import csv as _csv
-        with open("oregon_daily_avg_temperature_jan2026.csv", newline="") as _f:
+        with open("oregon_daily_avg_temperature_feb2026.csv", newline="") as _f:
             next(_csv.reader(_f))
     except Exception as _e:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV with at least 'date' and 'avg_temperature' columns: " + str(_e))
@@ -38,15 +38,23 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     # --- end requires ---
     faasr_log("Downloaded daily average temperature CSV from S3")
 
-    df = pd.read_csv("oregon_daily_avg_temperature_jan2026.csv")
+    df = pd.read_csv("oregon_daily_avg_temperature_feb2026.csv")
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
     faasr_log(f"Loaded {len(df)} rows of temperature data")
 
+    # Verify or convert values to Celsius
+    # If values appear to be in Fahrenheit (all > 40), convert to Celsius
+    if df["avg_temperature"].mean() > 40:
+        df["avg_temperature"] = (df["avg_temperature"] - 32) * 5 / 9
+        faasr_log("Converted temperature values from Fahrenheit to Celsius")
+    else:
+        faasr_log("Temperature values already in Celsius, no conversion needed")
+
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(df["date"], df["avg_temperature"], marker="o", linewidth=2, color="#1f77b4", markersize=5, label="Avg Temperature")
 
-    ax.set_title("Daily Average Temperature in Oregon — January 2026", fontsize=16, fontweight="bold", pad=15)
+    ax.set_title("Daily Average Temperature in Oregon — February 2026", fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Date", fontsize=13)
     ax.set_ylabel("Average Temperature (°C)", fontsize=13)
 
@@ -66,10 +74,10 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     if not os.path.exists("oregon_temperature_chart_jan2026.png"):
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output temperature chart PNG must exist after rendering")
         raise SystemExit(1)
-    if not os.path.exists("oregon_temperature_chart_jan2026.png") or os.path.getsize("oregon_temperature_chart_jan2026.png") == 0:
+    if os.path.getsize("oregon_temperature_chart_jan2026.png") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output temperature chart PNG must not be empty")
         raise SystemExit(1)
-    # INPUTS_UNCHANGED: oregon_daily_avg_temperature_jan2026.csv (tracked at require time)
+    # INPUTS_UNCHANGED: oregon_daily_avg_temperature_feb2026.csv (tracked at require time)
     # --- end promises ---
     # --- CONTRACT: promises ---
     if not os.path.exists("oregon_temperature_chart_jan2026.png"):
@@ -78,7 +86,7 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     if not os.path.exists("oregon_temperature_chart_jan2026.png") or os.path.getsize("oregon_temperature_chart_jan2026.png") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output temperature chart PNG must not be empty")
         raise SystemExit(1)
-    # INPUTS_UNCHANGED: oregon_daily_avg_temperature_jan2026.csv (tracked at require time)
+    # INPUTS_UNCHANGED: oregon_daily_avg_temperature_feb2026.csv (tracked at require time)
     # --- end promises ---
     faasr_put_file(local_file="oregon_temperature_chart_jan2026.png", remote_folder=folder, remote_file=output1)
     faasr_log("Uploaded temperature chart PNG to S3")
