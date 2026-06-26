@@ -74,14 +74,17 @@
   "PyPIPackageDownloads": {
     "download_temperature_data": [
       "requests",
+      "boto3",
       "pandas"
     ],
     "compute_monthly_averages": [
+      "boto3",
       "pandas"
     ],
     "plot_monthly_averages": [
-      "matplotlib",
-      "pandas"
+      "boto3",
+      "pandas",
+      "matplotlib"
     ]
   }
 }
