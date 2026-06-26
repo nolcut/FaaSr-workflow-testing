@@ -1,0 +1,88 @@
+{
+  "FunctionInvoke": "download-temperature-data",
+  "WorkflowName": "oregon-temperature-monthly-pipeline",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "download-temperature-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "download_temperature_data",
+      "Arguments": {
+        "folder": "oregon_temperature_jan2026",
+        "output1": "oregon_temperature_jan2026_raw.csv"
+      },
+      "InvokeNext": [
+        "compute-monthly-averages"
+      ]
+    },
+    "compute-monthly-averages": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "compute_monthly_averages",
+      "Arguments": {
+        "folder": "oregon_temperature_jan2026",
+        "input1": "oregon_temperature_jan2026_raw.csv",
+        "output1": "oregon_temperature_monthly_averages.csv"
+      },
+      "InvokeNext": [
+        "plot-temperature-averages"
+      ]
+    },
+    "plot-temperature-averages": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "plot_temperature_averages",
+      "Arguments": {
+        "folder": "oregon_temperature_jan2026",
+        "input1": "oregon_temperature_monthly_averages.csv",
+        "output1": "oregon_monthly_avg_temperatures.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "download-temperature-data": "ghcr.io/faasr/github-actions-python:latest",
+    "compute-monthly-averages": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-temperature-averages": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "download_temperature_data": "nolcut/FaaSr-workflow-testing/main/functions/download_temperature_data.py",
+    "compute_monthly_averages": "nolcut/FaaSr-workflow-testing/main/functions/compute_monthly_averages.py",
+    "plot_temperature_averages": "nolcut/FaaSr-workflow-testing/main/functions/plot_temperature_averages.py"
+  },
+  "PyPIPackageDownloads": {
+    "download_temperature_data": [
+      "requests"
+    ],
+    "compute_monthly_averages": [
+      "pandas",
+      "numpy"
+    ],
+    "plot_temperature_averages": [
+      "matplotlib",
+      "pandas",
+      "numpy"
+    ]
+  }
+}
