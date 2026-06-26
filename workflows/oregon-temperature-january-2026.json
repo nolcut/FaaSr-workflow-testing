@@ -12,7 +12,7 @@
       "FunctionName": "download_temperature_data",
       "Arguments": {
         "folder": "oregon_temp_jan2026",
-        "output1": "oregon_temperature_jan2026.csv"
+        "output1": "oregon_temperature_jan2026_raw.csv"
       },
       "InvokeNext": [
         "compute-daily-averages"
@@ -24,8 +24,8 @@
       "FunctionName": "compute_daily_averages",
       "Arguments": {
         "folder": "oregon_temp_jan2026",
-        "input1": "oregon_temperature_jan2026.csv",
-        "output1": "daily_avg_temperature_jan2026.csv"
+        "input1": "oregon_temperature_jan2026_raw.csv",
+        "output1": "oregon_daily_avg_temperature_jan2026.csv"
       },
       "InvokeNext": [
         "plot-temperature-chart"
@@ -37,8 +37,8 @@
       "FunctionName": "plot_temperature_chart",
       "Arguments": {
         "folder": "oregon_temp_jan2026",
-        "input1": "daily_avg_temperature_jan2026.csv",
-        "output1": "temperature_chart_january_2026.png"
+        "input1": "oregon_daily_avg_temperature_jan2026.csv",
+        "output1": "oregon_temperature_chart_jan2026.png"
       }
     }
   },
@@ -74,16 +74,14 @@
   "PyPIPackageDownloads": {
     "download_temperature_data": [
       "requests",
-      "boto3"
+      "pandas"
     ],
     "compute_daily_averages": [
-      "boto3",
       "pandas"
     ],
     "plot_temperature_chart": [
-      "boto3",
-      "pandas",
-      "matplotlib"
+      "matplotlib",
+      "pandas"
     ]
   }
 }
