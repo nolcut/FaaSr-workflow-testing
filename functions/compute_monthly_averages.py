@@ -1,65 +1,92 @@
 def compute_monthly_averages(folder: str, input1: str, output1: str) -> None:
     import pandas as pd
-    import numpy as np
 
-    faasr_get_file(local_file="raw_data.csv", remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="oregon_temperature_jan2026.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
     import os
-    if not os.path.exists("raw_data.csv"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file raw_data.csv must exist after download from S3")
+    if not os.path.exists("oregon_temperature_jan2026.csv"):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must exist on S3 before processing")
         raise SystemExit(1)
-    if not os.path.exists("raw_data.csv") or os.path.getsize("raw_data.csv") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file raw_data.csv must not be empty")
+    if not os.path.exists("oregon_temperature_jan2026.csv") or os.path.getsize("oregon_temperature_jan2026.csv") == 0:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must not be empty")
         raise SystemExit(1)
     try:
-        import pandas as _pd; _pd.read_csv("raw_data.csv", nrows=1)
+        import pandas as _pd; _pd.read_csv("oregon_temperature_jan2026.csv", nrows=1)
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file raw_data.csv must be a valid CSV file ({_e})")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV file ({_e})")
         raise SystemExit(1)
-    # FORMAT check for columns:date,tmax_f,tmin_f,tavg_f on raw_data.csv (not yet implemented)
     # --- end requires ---
-    faasr_log(f"Downloaded raw temperature data from S3: {input1}")
+    faasr_log("Downloaded raw Oregon temperature CSV from S3")
 
-    df = pd.read_csv("raw_data.csv")
-    faasr_log(f"Loaded raw data with {len(df)} rows and columns: {list(df.columns)}")
+    df = pd.read_csv("oregon_temperature_jan2026.csv")
+    faasr_log(f"Loaded {len(df)} rows from input CSV")
+    faasr_log(f"Columns found: {list(df.columns)}")
 
-    df['date'] = pd.to_datetime(df['date'])
-    df['month'] = df['date'].dt.to_period('M')
+    # Identify the date column
+    date_col = None
+    for candidate in ["DATE", "Date", "date"]:
+        if candidate in df.columns:
+            date_col = candidate
+            break
+    if date_col is None:
+        raise ValueError("No date column found in CSV")
 
-    monthly_avg = df.groupby('month').agg(
-        avg_tmax_f=('tmax_f', 'mean'),
-        avg_tmin_f=('tmin_f', 'mean'),
-        avg_tavg_f=('tavg_f', 'mean')
-    ).reset_index()
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col])
+    df["year_month"] = df[date_col].dt.to_period("M").astype(str)
 
-    monthly_avg['month'] = monthly_avg['month'].astype(str)
+    # Determine temperature column and unit
+    unit = "C"
+    if "TAVG" in df.columns:
+        temp_col = "TAVG"
+        df[temp_col] = pd.to_numeric(df[temp_col], errors="coerce")
+        faasr_log("Using TAVG column for temperature")
+    elif "TMAX" in df.columns and "TMIN" in df.columns:
+        df["TMAX"] = pd.to_numeric(df["TMAX"], errors="coerce")
+        df["TMIN"] = pd.to_numeric(df["TMIN"], errors="coerce")
+        df["TAVG_derived"] = (df["TMAX"] + df["TMIN"]) / 2.0
+        temp_col = "TAVG_derived"
+        faasr_log("Derived TAVG from TMAX and TMIN")
+    else:
+        # Try to find any temperature-like column
+        temp_candidates = [c for c in df.columns if "TEMP" in c.upper() or "TAVG" in c.upper() or "TMAX" in c.upper()]
+        if temp_candidates:
+            temp_col = temp_candidates[0]
+            df[temp_col] = pd.to_numeric(df[temp_col], errors="coerce")
+            faasr_log(f"Using fallback temperature column: {temp_col}")
+        else:
+            raise ValueError("No recognizable temperature column found in CSV")
 
-    monthly_avg = monthly_avg.round({'avg_tmax_f': 2, 'avg_tmin_f': 2, 'avg_tavg_f': 2})
+    df = df.dropna(subset=[temp_col])
+    faasr_log(f"After dropping NaN temperatures: {len(df)} rows")
 
-    faasr_log(f"Computed monthly averages for {len(monthly_avg)} month(s)")
+    monthly = (
+        df.groupby("year_month")[temp_col]
+        .mean()
+        .reset_index()
+        .rename(columns={temp_col: "avg_temperature", "year_month": "year_month"})
+    )
+    monthly["unit"] = unit
+    monthly = monthly[["year_month", "avg_temperature", "unit"]]
+    monthly["avg_temperature"] = monthly["avg_temperature"].round(2)
 
-    monthly_avg.to_csv("monthly_averages.csv", index=False)
+    faasr_log(f"Computed monthly averages for {len(monthly)} month(s)")
+    faasr_log(f"Monthly averages:\n{monthly.to_string(index=False)}")
 
+    monthly.to_csv("oregon_monthly_averages.csv", index=False)
     # --- CONTRACT: promises ---
-    if hasattr(_faasr_log_buffer, "_entries") and any("error" in e.lower() for e in _faasr_log_buffer._entries):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Execution log contains error messages — possible silent failure")
+    if not os.path.exists("oregon_monthly_averages.csv"):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output monthly averages CSV must exist after processing")
         raise SystemExit(1)
-    if not os.path.exists("monthly_averages.csv"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file monthly_averages.csv must exist after processing")
-        raise SystemExit(1)
-    if not os.path.exists("monthly_averages.csv") or os.path.getsize("monthly_averages.csv") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file monthly_averages.csv must not be empty")
+    if not os.path.exists("oregon_monthly_averages.csv") or os.path.getsize("oregon_monthly_averages.csv") == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output monthly averages CSV must not be empty")
         raise SystemExit(1)
     try:
-        import pandas as _pd; _pd.read_csv("monthly_averages.csv", nrows=1)
+        import pandas as _pd; _pd.read_csv("oregon_monthly_averages.csv", nrows=1)
     except Exception as _e:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file monthly_averages.csv must be a valid CSV file ({_e})")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output monthly averages file must be a valid CSV file ({_e})")
         raise SystemExit(1)
-    # FORMAT check for columns:month,avg_tmax_f,avg_tmin_f,avg_tavg_f on monthly_averages.csv (not yet implemented)
-    # INPUTS_UNCHANGED: raw_data.csv (tracked at require time)
-    if hasattr(_faasr_log_buffer, "_entries") and any("error" in e.lower() for e in _faasr_log_buffer._entries):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: No error or Error messages should appear in faasr_log output during execution")
-        raise SystemExit(1)
+    # INPUTS_UNCHANGED: oregon_temperature_jan2026.csv (tracked at require time)
     # --- end promises ---
-    faasr_put_file(local_file="monthly_averages.csv", remote_folder=folder, remote_file=output1)
-    faasr_log(f"Uploaded monthly averages to S3: {output1}")
+    faasr_put_file(local_file="oregon_monthly_averages.csv", remote_folder=folder, remote_file=output1)
+    faasr_log("Uploaded monthly averages CSV to S3")
