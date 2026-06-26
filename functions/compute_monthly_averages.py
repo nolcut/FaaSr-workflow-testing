@@ -13,60 +13,66 @@ def compute_monthly_averages(folder: str, input1: str, output1: str) -> None:
     try:
         import pandas as _pd; _pd.read_csv("oregon_temperature_january_2026.csv", nrows=1)
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file 'oregon_temperature_january_2026.csv' must be a valid CSV with at least two columns (date-like and numeric temperature-like) ({_e})")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file 'oregon_temperature_january_2026.csv' must be a valid CSV file ({_e})")
         raise SystemExit(1)
-    if not (at_least_one_numeric_column):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input CSV must contain at least one numeric column usable as a temperature column")
+    if not (has_date_column: at least one of ['date','datetime','day','time'] must exist as a column (case-insensitive, whitespace-stripped)):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input CSV must contain a recognizable date column (e.g. 'date', 'datetime', 'day', or 'time')")
         raise SystemExit(1)
-    if not (date_column_parseable):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: The date column in the input CSV must be parseable as datetime by pandas")
+    if not (has_temperature_column: at least one of ['temperature_f','temperature','temp_f','temp','tmax','tmin','tavg','value'] must exist as a column (case-insensitive, whitespace-stripped)):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input CSV must contain a recognizable temperature column (e.g. 'temperature_f', 'temp', 'tavg', 'value', etc.)")
+        raise SystemExit(1)
+    if not (has_at_least_one_valid_temperature_row: at least one row must have a non-null, numeric temperature value after coercion):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input CSV must contain at least one row with a valid numeric temperature value")
+        raise SystemExit(1)
+    if not (has_parseable_dates: at least one row must have a date column value parseable by pd.to_datetime):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input CSV must contain at least one row with a parseable date value in the date column")
         raise SystemExit(1)
     # --- end requires ---
-    faasr_log("Downloaded raw Oregon temperature CSV from S3")
+    faasr_log("Downloaded raw daily temperature CSV from S3")
 
     df = pd.read_csv("oregon_temperature_january_2026.csv")
-    faasr_log(f"Loaded {len(df)} rows from raw temperature file")
+    faasr_log(f"Loaded {len(df)} rows from input CSV, columns: {list(df.columns)}")
 
-    # Identify date and temperature columns (case-insensitive)
-    df.columns = df.columns.str.strip()
-    col_lower = {c.lower(): c for c in df.columns}
+    # Normalize column names to lowercase and strip whitespace
+    df.columns = [col.strip().lower() for col in df.columns]
 
+    # Resolve date column (support common variants)
     date_col = None
-    for candidate in ["date", "datetime", "time", "day"]:
-        if candidate in col_lower:
-            date_col = col_lower[candidate]
+    for candidate in ["date", "datetime", "day", "time"]:
+        if candidate in df.columns:
+            date_col = candidate
             break
     if date_col is None:
-        date_col = df.columns[0]
-        faasr_log(f"No explicit date column found; using first column '{date_col}' as date")
+        raise ValueError(f"No date column found. Available columns: {list(df.columns)}")
 
+    # Resolve temperature column (support common variants)
     temp_col = None
-    for candidate in ["temperature", "temp", "temperature_f", "temperature_c", "avg_temp", "tmax", "tmin", "tavg"]:
-        if candidate in col_lower:
-            temp_col = col_lower[candidate]
+    for candidate in ["temperature_f", "temperature", "temp_f", "temp", "tmax", "tmin", "tavg", "value"]:
+        if candidate in df.columns:
+            temp_col = candidate
             break
     if temp_col is None:
-        # Use the first numeric column that is not the date column
-        for c in df.columns:
-            if c != date_col and pd.api.types.is_numeric_dtype(df[c]):
-                temp_col = c
-                break
-    if temp_col is None:
-        temp_col = df.columns[1]
-        faasr_log(f"No explicit temperature column found; using second column '{temp_col}' as temperature")
+        raise ValueError(f"No temperature column found. Available columns: {list(df.columns)}")
 
-    faasr_log(f"Using date column: '{date_col}', temperature column: '{temp_col}'")
+    faasr_log(f"Using date column '{date_col}' and temperature column '{temp_col}'")
 
-    df[date_col] = pd.to_datetime(df[date_col], infer_datetime_format=True)
+    # Parse dates and extract year-month
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     df["month"] = df[date_col].dt.to_period("M").astype(str)
 
+    # Drop null temperature values before computing mean
+    df = df.dropna(subset=[temp_col])
+    df[temp_col] = pd.to_numeric(df[temp_col], errors="coerce")
+    df = df.dropna(subset=[temp_col])
+
+    # Group by year-month and compute mean temperature
     monthly_avg = (
         df.groupby("month")[temp_col]
         .mean()
         .reset_index()
         .rename(columns={temp_col: "average_temperature"})
+        .sort_values("month")
     )
-    monthly_avg = monthly_avg.sort_values("month").reset_index(drop=True)
 
     faasr_log(f"Computed monthly averages for {len(monthly_avg)} month(s)")
 
@@ -81,15 +87,25 @@ def compute_monthly_averages(folder: str, input1: str, output1: str) -> None:
     if not os.path.exists("oregon_monthly_avg_temperature.csv") or os.path.getsize("oregon_monthly_avg_temperature.csv") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output file 'oregon_monthly_avg_temperature.csv' must not be empty")
         raise SystemExit(1)
-    # FORMAT check for csv_with_columns:month,average_temperature on oregon_monthly_avg_temperature.csv (not yet implemented)
-    if not (month_column_sorted_ascending):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV 'month' column must be sorted in ascending order")
+    try:
+        import pandas as _pd; _pd.read_csv("oregon_monthly_avg_temperature.csv", nrows=1)
+    except Exception as _e:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file 'oregon_monthly_avg_temperature.csv' must be a valid CSV file ({_e})")
         raise SystemExit(1)
-    if not (average_temperature_column_numeric):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV 'average_temperature' column must contain only numeric (float/int) values")
+    if not (has_columns: output CSV must contain exactly columns ['month', 'average_temperature']):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must have exactly two columns: 'month' and 'average_temperature'")
         raise SystemExit(1)
-    if not (row_count_geq_1):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must contain at least one row of monthly average data")
+    if not (month_format: all values in 'month' column must match YYYY-MM period string format):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV 'month' column values must follow YYYY-MM period format (e.g. '2026-01')")
+        raise SystemExit(1)
+    if not (average_temperature_numeric: all values in 'average_temperature' column must be numeric (float or int)):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV 'average_temperature' column must contain only numeric values")
+        raise SystemExit(1)
+    if not (month_sorted_ascending: rows in output CSV must be sorted in ascending order by 'month'):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV rows must be sorted in ascending order by the 'month' column")
+        raise SystemExit(1)
+    if not (no_null_values: output CSV must contain no null or missing values in either column):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must not contain any null or missing values in 'month' or 'average_temperature' columns")
         raise SystemExit(1)
     # INPUTS_UNCHANGED: oregon_temperature_january_2026.csv (tracked at require time)
     # --- end promises ---
