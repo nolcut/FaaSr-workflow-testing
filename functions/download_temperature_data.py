@@ -2,12 +2,15 @@ def download_temperature_data(folder: str, output1: str) -> None:
     # --- CONTRACT: requires ---
     import os
     # --- end requires ---
+    # --- CONTRACT: requires ---
+    import os
+    # --- end requires ---
     import requests
     import pandas as pd
     import datetime
     import io
 
-    faasr_log("Starting download of Oregon temperature data for January 2026")
+    faasr_log("Starting download of Oregon temperature data for February 2026")
 
     # We'll try to fetch data from NOAA Climate Data Online (CDO) API
     # If that fails, we generate realistic synthetic data for Oregon stations
@@ -42,8 +45,8 @@ def download_temperature_data(folder: str, output1: str) -> None:
             params = {
                 "datasetid": "GHCND",
                 "stationid": station,
-                "startdate": "2026-01-01",
-                "enddate": "2026-01-31",
+                "startdate": "2026-02-01",
+                "enddate": "2026-02-28",
                 "datatypeid": ["TMAX", "TMIN", "TAVG"],
                 "units": "standard",
                 "limit": 1000,
@@ -73,31 +76,31 @@ def download_temperature_data(folder: str, output1: str) -> None:
                 faasr_log(f"NOAA API error for station {station}: {e}")
 
     if not api_success:
-        faasr_log("NOAA API not available or no token; generating realistic synthetic Oregon temperature data for January 2026")
+        faasr_log("NOAA API not available or no token; generating realistic synthetic Oregon temperature data for February 2026")
 
         import random
         random.seed(42)
 
         # Oregon station metadata: (station_id, name, base_tmax_C, base_tmin_C)
-        # January typical temperatures in Celsius
+        # February typical temperatures in Celsius (slightly warmer than January)
         station_profiles = [
-            ("USW00024229", "Portland_Intl_Airport",     8.0,  1.0),
-            ("USW00024221", "Eugene_Airport",             9.0,  1.5),
-            ("USW00024232", "Salem_Airport",              8.5,  1.0),
-            ("USW00024225", "Medford_Airport",            8.0, -1.0),
-            ("USW00024284", "Astoria_Airport",            9.5,  3.0),
-            ("USW00024230", "Pendleton_Airport",          5.0, -3.0),
-            ("USW00024255", "Redmond_Airport",            4.0, -5.0),
-            ("USW00024243", "North_Bend_Airport",        11.0,  4.0),
-            ("USW00094224", "Klamath_Falls",              5.0, -5.0),
-            ("USW00024227", "Burns",                      3.0, -7.0),
+            ("USW00024229", "Portland_Intl_Airport",     9.0,  2.0),
+            ("USW00024221", "Eugene_Airport",            10.0,  2.5),
+            ("USW00024232", "Salem_Airport",              9.5,  2.0),
+            ("USW00024225", "Medford_Airport",            9.0,  0.0),
+            ("USW00024284", "Astoria_Airport",           10.5,  4.0),
+            ("USW00024230", "Pendleton_Airport",          6.0, -2.0),
+            ("USW00024255", "Redmond_Airport",            5.0, -4.0),
+            ("USW00024243", "North_Bend_Airport",        12.0,  5.0),
+            ("USW00094224", "Klamath_Falls",              6.0, -4.0),
+            ("USW00024227", "Burns",                      4.0, -6.0),
         ]
 
-        start_date = datetime.date(2026, 1, 1)
+        start_date = datetime.date(2026, 2, 1)
         for station_id, station_name, base_tmax, base_tmin in station_profiles:
-            # Simulate a temperature trend over January with realistic variation
+            # Simulate a temperature trend over February with realistic variation
             prev_anomaly = 0.0
-            for day_offset in range(31):
+            for day_offset in range(28):
                 date = start_date + datetime.timedelta(days=day_offset)
                 date_str = date.strftime("%Y-%m-%d")
 
@@ -127,21 +130,36 @@ def download_temperature_data(folder: str, output1: str) -> None:
     df = df.sort_values(["station_id", "date"]).reset_index(drop=True)
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
 
-    local_file = "oregon_temperature_jan2026_raw.csv"
+    local_file = "oregon_temperature_feb2026_raw.csv"
     df.to_csv(local_file, index=False)
 
     faasr_log(f"Prepared Oregon temperature dataset: {len(df)} records across {df['station_id'].nunique()} stations")
 
     # --- CONTRACT: promises ---
-    if not os.path.exists("oregon_temperature_jan2026_raw.csv"):
+    if not os.path.exists(local_file):
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist after data generation and before S3 upload")
         raise SystemExit(1)
-    if not os.path.exists("oregon_temperature_jan2026_raw.csv") or os.path.getsize("oregon_temperature_jan2026_raw.csv") == 0:
+    if os.path.getsize(local_file) == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must contain at least a header row and temperature records")
         raise SystemExit(1)
     try:
         import csv as _csv
-        with open("oregon_temperature_jan2026_raw.csv", newline="") as _f:
+        with open(local_file, newline="") as _f:
+            next(_csv.reader(_f))
+    except Exception as _e:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file must be a valid CSV with columns: station_id, date, tmax, tmin, tavg: " + str(_e))
+        raise SystemExit(1)
+    # --- end promises ---
+    # --- CONTRACT: promises ---
+    if not os.path.exists("oregon_temperature_feb2026_raw.csv"):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist after data generation and before S3 upload")
+        raise SystemExit(1)
+    if not os.path.exists("oregon_temperature_feb2026_raw.csv") or os.path.getsize("oregon_temperature_feb2026_raw.csv") == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must contain at least a header row and temperature records")
+        raise SystemExit(1)
+    try:
+        import csv as _csv
+        with open("oregon_temperature_feb2026_raw.csv", newline="") as _f:
             next(_csv.reader(_f))
     except Exception as _e:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output file must be a valid CSV with columns: station_id, date, tmax, tmin, tavg: " + str(_e))
