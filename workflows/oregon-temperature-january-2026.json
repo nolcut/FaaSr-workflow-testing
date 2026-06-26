@@ -73,15 +73,17 @@
   },
   "PyPIPackageDownloads": {
     "download_temperature_data": [
-      "requests"
+      "requests",
+      "boto3"
     ],
     "compute_daily_averages": [
-      "pandas",
-      "numpy"
+      "boto3",
+      "pandas"
     ],
     "plot_temperature_chart": [
-      "matplotlib",
-      "numpy"
+      "boto3",
+      "pandas",
+      "matplotlib"
     ]
   }
 }
