@@ -1,95 +1,91 @@
 def plot_temperature_averages(folder: str, input1: str, output1: str) -> None:
     import pandas as pd
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
     import numpy as np
 
-    faasr_get_file(local_file="monthly_avg.csv", remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="monthly_averages.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
-    import os as _os
-    if not os.path.exists("monthly_avg.csv"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file monthly_avg.csv must be successfully downloaded from S3 before processing")
+    import os
+    if not os.path.exists("monthly_averages.csv"):
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file monthly_averages.csv must exist after download from S3")
         raise SystemExit(1)
-    if not os.path.exists("monthly_avg.csv") or os.path.getsize("monthly_avg.csv") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Downloaded monthly_avg.csv must not be empty")
+    if not os.path.exists("monthly_averages.csv") or os.path.getsize("monthly_averages.csv") == 0:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file monthly_averages.csv must not be empty")
         raise SystemExit(1)
     try:
-        import pandas as _pd; _pd.read_csv("monthly_avg.csv", nrows=1)
+        import pandas as _pd; _pd.read_csv("monthly_averages.csv", nrows=1)
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file monthly_avg.csv must be a valid parseable CSV ({_e})")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file monthly_averages.csv must be a valid CSV with at least one row and one column ({_e})")
         raise SystemExit(1)
-    # CUSTOM check skipped (non-Python predicate): 'has_column:month' — CSV must contain a 'month' column with numeric month values (1-12)
-    # CUSTOM check skipped (non-Python predicate): 'has_column:avg_temperature_c' — CSV must contain an 'avg_temperature_c' column with numeric temperature values
-    # CUSTOM check skipped (non-Python predicate): 'column_values_in_range:month:1:12' — All values in the 'month' column must be integers between 1 and 12 inclusive
-    # CUSTOM check skipped (non-Python predicate): 'column_is_numeric:avg_temperature_c' — All values in 'avg_temperature_c' column must be numeric (no NaN or non-numeric entries)
-    # CUSTOM check skipped (non-Python predicate): 'row_count_gte:1' — CSV must contain at least one row of data to produce a meaningful plot
     # --- end requires ---
-    faasr_log(f"Downloaded monthly average temperature CSV: {input1}")
+    faasr_log(f"Downloaded monthly averages file: {input1}")
 
-    df = pd.read_csv("monthly_avg.csv")
+    df = pd.read_csv("monthly_averages.csv")
     faasr_log(f"Loaded data with {len(df)} rows and columns: {list(df.columns)}")
 
-    month_names = {
-        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
-        5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
-        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
-    }
+    month_col = None
+    for col in df.columns:
+        if col.lower() in ("month", "month_name", "month_num", "date"):
+            month_col = col
+            break
+    if month_col is None:
+        month_col = df.columns[0]
 
-    df = df.sort_values("month")
-    df["month_label"] = df["month"].map(month_names)
+    tmax_col = None
+    tmin_col = None
+    tavg_col = None
+    for col in df.columns:
+        cl = col.lower()
+        if "tmax" in cl or "max" in cl:
+            tmax_col = col
+        elif "tmin" in cl or "min" in cl:
+            tmin_col = col
+        elif "tavg" in cl or "avg" in cl or "mean" in cl:
+            tavg_col = col
+
+    faasr_log(f"Using columns — month: {month_col}, tmax: {tmax_col}, tmin: {tmin_col}, tavg: {tavg_col}")
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(
-        df["month_label"],
-        df["avg_temperature_c"],
-        marker="o",
-        linewidth=2,
-        markersize=8,
-        color="#2196F3",
-        markerfacecolor="#1565C0",
-        markeredgecolor="white",
-        markeredgewidth=1.5
-    )
+    x = df[month_col].astype(str)
+    x_positions = np.arange(len(x))
 
-    for _, row in df.iterrows():
-        ax.annotate(
-            f"{row['avg_temperature_c']:.1f}°C",
-            xy=(row["month_label"], row["avg_temperature_c"]),
-            xytext=(0, 10),
-            textcoords="offset points",
-            ha="center",
-            fontsize=9,
-            color="#333333"
-        )
+    if tmax_col:
+        ax.plot(x_positions, df[tmax_col], marker="o", label="Avg High (°F)", color="#d62728", linewidth=2)
+    if tmin_col:
+        ax.plot(x_positions, df[tmin_col], marker="s", label="Avg Low (°F)", color="#1f77b4", linewidth=2)
+    if tavg_col:
+        ax.plot(x_positions, df[tavg_col], marker="^", label="Avg Mean (°F)", color="#2ca02c", linewidth=2, linestyle="--")
 
-    ax.set_xlabel("Month", fontsize=13, labelpad=10)
-    ax.set_ylabel("Average Temperature (°C)", fontsize=13, labelpad=10)
-    ax.set_title("Oregon Monthly Average Temperatures (January 2026)", fontsize=15, fontweight="bold", pad=15)
-
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(x, rotation=45, ha="right", fontsize=9)
+    ax.set_xlabel("Month", fontsize=12)
+    ax.set_ylabel("Temperature (°F)", fontsize=12)
+    ax.set_title("Oregon Monthly Average Temperatures — January 2026", fontsize=14)
+    ax.legend(fontsize=10)
     ax.grid(True, linestyle="--", alpha=0.5)
-    ax.set_ylim(df["avg_temperature_c"].min() - 2, df["avg_temperature_c"].max() + 3)
+    ax.yaxis.set_minor_locator(ticker.AutoMinorLocator())
 
     plt.tight_layout()
-    plt.savefig("temperature_plot.png", dpi=150, bbox_inches="tight")
+    plt.savefig("oregon_monthly_avg_temperatures.png", dpi=150)
     plt.close()
-    faasr_log("Generated temperature line plot PNG")
+    faasr_log("Generated line plot PNG")
 
     # --- CONTRACT: promises ---
     if hasattr(_faasr_log_buffer, "_entries") and any("error" in e.lower() for e in _faasr_log_buffer._entries):
         faasr_log("[PROMISE] CONTRACT VIOLATION: Execution log contains error messages — possible silent failure")
         raise SystemExit(1)
-    if not os.path.exists("temperature_plot.png"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output PNG file temperature_plot.png must exist locally after matplotlib savefig")
+    if not os.path.exists("oregon_monthly_avg_temperatures.png"):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output PNG file oregon_monthly_avg_temperatures.png must exist after plot generation")
         raise SystemExit(1)
-    if not os.path.exists("temperature_plot.png") or os.path.getsize("temperature_plot.png") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file oregon_temperature_monthly_avg_plot.png uploaded to S3 must not be empty")
+    if not os.path.exists("oregon_monthly_avg_temperatures.png") or os.path.getsize("oregon_monthly_avg_temperatures.png") == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output PNG file oregon_monthly_avg_temperatures.png must not be empty")
         raise SystemExit(1)
-    # FORMAT check for png on temperature_plot.png (not yet implemented)
-    # INPUTS_UNCHANGED: oregon_temperature_monthly_avg.csv (tracked at require time)
-    # CUSTOM check skipped (non-Python predicate): 'log_contains:Downloaded monthly average temperature CSV' — Log must confirm successful download of the input CSV
-    # CUSTOM check skipped (non-Python predicate): 'log_contains:Generated temperature line plot PNG' — Log must confirm that the temperature plot PNG was successfully generated
-    # CUSTOM check skipped (non-Python predicate): 'log_contains:Uploaded plot to S3' — Log must confirm successful upload of the plot PNG to S3
-    # CUSTOM check skipped (non-Python predicate): 'image_dimensions_gte:800x400' — Output PNG image should have dimensions consistent with figsize=(10,6) at dpi=150, approximately 1500x900 pixels
+    if hasattr(_faasr_log_buffer, "_entries") and any("error" in e.lower() for e in _faasr_log_buffer._entries):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: No error or Error messages should appear in faasr_log output during execution")
+        raise SystemExit(1)
+    # INPUTS_UNCHANGED: monthly_averages.csv (tracked at require time)
     # --- end promises ---
-    faasr_put_file(local_file="temperature_plot.png", remote_folder=folder, remote_file=output1)
-    faasr_log(f"Uploaded plot to S3: {output1}")
+    faasr_put_file(local_file="oregon_monthly_avg_temperatures.png", remote_folder=folder, remote_file=output1)
+    faasr_log(f"Uploaded chart to S3: {output1}")
