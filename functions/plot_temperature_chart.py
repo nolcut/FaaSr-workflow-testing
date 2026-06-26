@@ -43,16 +43,6 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     df = df.sort_values("date")
     faasr_log(f"Loaded {len(df)} rows of temperature data")
 
-    # Convert to Celsius if values appear to be in Fahrenheit (typical Jan Oregon temps in F are ~30-50°F)
-    # Heuristic: if median value > 60, likely Fahrenheit
-    import numpy as np
-    median_temp = df["avg_temperature"].median()
-    if median_temp > 60:
-        faasr_log(f"Detected Fahrenheit temperatures (median={median_temp:.1f}°F), converting to Celsius")
-        df["avg_temperature"] = (df["avg_temperature"] - 32) * 5.0 / 9.0
-    else:
-        faasr_log(f"Temperatures appear to be in Celsius already (median={median_temp:.1f}°C)")
-
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(df["date"], df["avg_temperature"], marker="o", linewidth=2, color="#1f77b4", markersize=5, label="Avg Temperature")
 
