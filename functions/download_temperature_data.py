@@ -1,13 +1,11 @@
 def download_temperature_data(folder: str, output1: str) -> None:
+    import os
     import requests
     import pandas as pd
     import datetime
-    import io
+    import random
 
     faasr_log("Starting download of Oregon temperature data for December 2025")
-
-    # We'll try to fetch data from NOAA Climate Data Online (CDO) API
-    # If that fails, we generate realistic synthetic data for Oregon stations
 
     # Oregon FIPS code: 41
     # NOAA CDO API endpoint
@@ -72,7 +70,6 @@ def download_temperature_data(folder: str, output1: str) -> None:
     if not api_success:
         faasr_log("NOAA API not available or no token; generating realistic synthetic Oregon temperature data for December 2025")
 
-        import random
         random.seed(42)
 
         # Oregon station metadata: (station_id, name, base_tmax_C, base_tmin_C)
@@ -129,8 +126,21 @@ def download_temperature_data(folder: str, output1: str) -> None:
 
     faasr_log(f"Prepared Oregon temperature dataset: {len(df)} records across {df['station_id'].nunique()} stations")
 
+    if not os.path.exists(local_file):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist after data generation and before S3 upload")
+        raise SystemExit(1)
+    if os.path.getsize(local_file) == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must contain at least a header row and temperature records")
+        raise SystemExit(1)
+    try:
+        import csv as _csv
+        with open(local_file, newline="") as _f:
+            next(_csv.reader(_f))
+    except Exception as _e:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output file must be a valid CSV with columns: station_id, date, tmax, tmin, tavg: " + str(_e))
+        raise SystemExit(1)
+
     # --- CONTRACT: promises ---
-    import os
     if not os.path.exists("oregon_temperature_dec2025_raw.csv"):
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist after data generation and before S3 upload")
         raise SystemExit(1)
