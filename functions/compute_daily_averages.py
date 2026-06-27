@@ -17,7 +17,6 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     except Exception as _e:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must be a valid CSV: " + str(_e))
         raise SystemExit(1)
-    # FORMAT check for has_column:date on raw_temperature.csv (not yet implemented)
     # --- end requires ---
     faasr_log("Downloaded raw temperature data from S3")
 
@@ -27,6 +26,11 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     df["date"] = pd.to_datetime(df["date"])
     dec2025_df = df[(df["date"].dt.year == 2025) & (df["date"].dt.month == 12)].copy()
     faasr_log(f"Filtered to December 2025: {len(dec2025_df)} rows remaining")
+
+    if dec2025_df.empty:
+        msg = "No records found for December 2025 in the raw temperature file"
+        faasr_log(msg)
+        raise RuntimeError(msg)
 
     if "tavg" in dec2025_df.columns:
         temp_col = "tavg"
@@ -44,7 +48,7 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         dec2025_df.groupby("date")[temp_col]
         .mean()
         .reset_index()
-        .rename(columns={"date": "date", temp_col: "avg_temperature"})
+        .rename(columns={temp_col: "avg_temperature"})
     )
     daily_avg["date"] = daily_avg["date"].dt.strftime("%Y-%m-%d")
     daily_avg = daily_avg.sort_values("date").reset_index(drop=True)
