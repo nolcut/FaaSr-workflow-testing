@@ -1,13 +1,10 @@
 def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
-    import os
     import pandas as pd
     import matplotlib.pyplot as plt
     import matplotlib.dates as mdates
+    import os
 
-    local_input = "oregon_daily_avg_temperature_dec2025.csv"
-    local_output = "oregon_temperature_chart_dec2025.png"
-
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="oregon_daily_avg_temperature_dec2025.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
     if not os.path.exists("oregon_daily_avg_temperature_dec2025.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input temperature CSV must exist after download from S3")
@@ -23,25 +20,15 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV with at least 'date' and 'avg_temperature' columns: " + str(_e))
         raise SystemExit(1)
     # --- end requires ---
-
-
     faasr_log("Downloaded daily average temperature CSV from S3")
 
-    df = pd.read_csv(local_input)
+    df = pd.read_csv("oregon_daily_avg_temperature_dec2025.csv")
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
     faasr_log(f"Loaded {len(df)} rows of temperature data")
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(
-        df["date"],
-        df["avg_temperature"],
-        marker="o",
-        linewidth=2,
-        color="#1f77b4",
-        markersize=5,
-        label="Avg Temperature",
-    )
+    ax.plot(df["date"], df["avg_temperature"], marker="o", linewidth=2, color="#1f77b4", markersize=5, label="Avg Temperature")
 
     ax.set_title("Daily Average Temperature in Oregon — December 2025", fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Date", fontsize=13)
@@ -55,10 +42,9 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     ax.legend(fontsize=11)
 
     plt.tight_layout()
-    plt.savefig(local_output, dpi=150, bbox_inches="tight")
+    plt.savefig("oregon_temperature_chart_dec2025.png", dpi=150, bbox_inches="tight")
     plt.close()
     faasr_log("Temperature line chart created and saved locally")
-
 
     # --- CONTRACT: promises ---
     if not os.path.exists("oregon_temperature_chart_dec2025.png"):
@@ -69,5 +55,5 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
         raise SystemExit(1)
     # INPUTS_UNCHANGED: oregon_daily_avg_temperature_dec2025.csv (tracked at require time)
     # --- end promises ---
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_put_file(local_file="oregon_temperature_chart_dec2025.png", remote_folder=folder, remote_file=output1)
     faasr_log("Uploaded temperature chart PNG to S3")
