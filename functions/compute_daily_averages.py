@@ -1,9 +1,9 @@
 def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
+    import os
     import pandas as pd
 
     faasr_get_file(local_file="raw_temperature.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
-    import os
     if not os.path.exists("raw_temperature.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must exist after download from S3")
         raise SystemExit(1)
@@ -17,7 +17,6 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     except Exception as _e:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must be a valid CSV: " + str(_e))
         raise SystemExit(1)
-    # FORMAT check for has_column:date on raw_temperature.csv (not yet implemented)
     # --- end requires ---
     faasr_log("Downloaded raw temperature data from S3")
 
@@ -25,31 +24,32 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     faasr_log(f"Loaded raw data with {len(df)} rows and columns: {list(df.columns)}")
 
     df["date"] = pd.to_datetime(df["date"])
-    mar2026_df = df[(df["date"].dt.year == 2026) & (df["date"].dt.month == 3)].copy()
-    faasr_log(f"Filtered to March 2026: {len(mar2026_df)} rows remaining")
+    dec2025_df = df[(df["date"].dt.year == 2025) & (df["date"].dt.month == 12)].copy()
+    faasr_log(f"Filtered to December 2025: {len(dec2025_df)} rows remaining")
 
-    if "tavg" in mar2026_df.columns:
+    if "tavg" in dec2025_df.columns:
         temp_col = "tavg"
-    elif "tmax" in mar2026_df.columns and "tmin" in mar2026_df.columns:
-        mar2026_df["tavg_computed"] = (mar2026_df["tmax"] + mar2026_df["tmin"]) / 2.0
+    elif "tmax" in dec2025_df.columns and "tmin" in dec2025_df.columns:
+        dec2025_df = dec2025_df.copy()
+        dec2025_df["tavg_computed"] = (dec2025_df["tmax"] + dec2025_df["tmin"]) / 2.0
         temp_col = "tavg_computed"
     else:
         faasr_log("No suitable temperature columns found; attempting to use first numeric column")
-        numeric_cols = mar2026_df.select_dtypes(include="number").columns.tolist()
+        numeric_cols = dec2025_df.select_dtypes(include="number").columns.tolist()
         if not numeric_cols:
             raise ValueError("No numeric temperature columns available in the dataset")
         temp_col = numeric_cols[0]
 
     daily_avg = (
-        mar2026_df.groupby("date")[temp_col]
+        dec2025_df.groupby("date")[temp_col]
         .mean()
         .reset_index()
-        .rename(columns={"date": "date", temp_col: "avg_temperature"})
+        .rename(columns={temp_col: "avg_temperature"})
     )
     daily_avg["date"] = daily_avg["date"].dt.strftime("%Y-%m-%d")
     daily_avg = daily_avg.sort_values("date").reset_index(drop=True)
 
-    faasr_log(f"Computed daily averages for {len(daily_avg)} days in March 2026")
+    faasr_log(f"Computed daily averages for {len(daily_avg)} days in December 2025")
 
     daily_avg.to_csv("daily_avg_temperature.csv", index=False)
 
