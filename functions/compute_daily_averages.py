@@ -17,6 +17,7 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     except Exception as _e:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must be a valid CSV: " + str(_e))
         raise SystemExit(1)
+    # FORMAT check for has_column:date on raw_temperature.csv (not yet implemented)
     # --- end requires ---
     faasr_log("Downloaded raw temperature data from S3")
 
