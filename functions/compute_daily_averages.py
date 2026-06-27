@@ -19,7 +19,6 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         raise SystemExit(1)
     # --- end requires ---
 
-
     faasr_log("Downloaded raw temperature data from S3")
 
     df = pd.read_csv("raw_temperature.csv")
@@ -50,29 +49,28 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         temp_col = numeric_cols[0]
         faasr_log(f"Using fallback numeric column: {temp_col}")
 
-    daily_avg = (
+    daily_median = (
         dec2025_df.groupby("date")[temp_col]
-        .mean()
+        .median()
         .reset_index()
-        .rename(columns={temp_col: "avg_temperature"})
+        .rename(columns={temp_col: "median_temperature"})
     )
-    daily_avg["date"] = daily_avg["date"].dt.strftime("%Y-%m-%d")
-    daily_avg = daily_avg.sort_values("date").reset_index(drop=True)
+    daily_median["date"] = daily_median["date"].dt.strftime("%Y-%m-%d")
+    daily_median = daily_median.sort_values("date").reset_index(drop=True)
 
-    faasr_log(f"Computed daily averages for {len(daily_avg)} days in December 2025")
+    faasr_log(f"Computed daily median temperatures for {len(daily_median)} days in December 2025")
 
-    local_out = "daily_avg_temperature.csv"
-    daily_avg.to_csv(local_out, index=False)
-
+    local_out = "daily_median_temperature.csv"
+    daily_median.to_csv(local_out, index=False)
 
     # --- CONTRACT: promises ---
-    if not os.path.exists("daily_avg_temperature.csv"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Daily averages output file must exist after computation")
+    if not os.path.exists("daily_median_temperature.csv"):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Daily median temperature output file must exist after computation")
         raise SystemExit(1)
-    if not os.path.exists("daily_avg_temperature.csv") or os.path.getsize("daily_avg_temperature.csv") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Daily averages output file must not be empty")
+    if not os.path.exists("daily_median_temperature.csv") or os.path.getsize("daily_median_temperature.csv") == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Daily median temperature output file must not be empty")
         raise SystemExit(1)
     # INPUTS_UNCHANGED: raw_temperature.csv (tracked at require time)
     # --- end promises ---
     faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log("Uploaded daily average temperature CSV to S3")
+    faasr_log("Uploaded daily median temperature CSV to S3")
