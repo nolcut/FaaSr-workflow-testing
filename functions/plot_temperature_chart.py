@@ -22,7 +22,7 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
         with open("oregon_daily_avg_temperature_dec2025.csv", newline="") as _f:
             next(_csv.reader(_f))
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV with at least 'date' and 'avg_temperature' columns: " + str(_e))
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file must be a valid CSV with at least 'date' and 'median_temperature' columns: " + str(_e))
         raise SystemExit(1)
     # --- end requires ---
 
@@ -37,17 +37,17 @@ def plot_temperature_chart(folder: str, input1: str, output1: str) -> None:
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(
         df["date"],
-        df["avg_temperature"],
+        df["median_temperature"],
         marker="o",
         linewidth=2,
         color="#1f77b4",
         markersize=5,
-        label="Avg Temperature",
+        label="Median Temperature",
     )
 
-    ax.set_title("Daily Average Temperature in Oregon — December 2025", fontsize=16, fontweight="bold", pad=15)
+    ax.set_title("Daily Median Temperature in Oregon — December 2025", fontsize=16, fontweight="bold", pad=15)
     ax.set_xlabel("Date", fontsize=13)
-    ax.set_ylabel("Average Temperature (°F)", fontsize=13)
+    ax.set_ylabel("Median Temperature (°C)", fontsize=13)
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
