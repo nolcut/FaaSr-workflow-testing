@@ -1,9 +1,9 @@
 def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
-    import os
     import pandas as pd
 
     faasr_get_file(local_file="raw_temperature.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
+    import os
     if not os.path.exists("raw_temperature.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must exist after download from S3")
         raise SystemExit(1)
@@ -30,7 +30,6 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     if "tavg" in dec2025_df.columns:
         temp_col = "tavg"
     elif "tmax" in dec2025_df.columns and "tmin" in dec2025_df.columns:
-        dec2025_df = dec2025_df.copy()
         dec2025_df["tavg_computed"] = (dec2025_df["tmax"] + dec2025_df["tmin"]) / 2.0
         temp_col = "tavg_computed"
     else:
@@ -44,7 +43,7 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         dec2025_df.groupby("date")[temp_col]
         .mean()
         .reset_index()
-        .rename(columns={temp_col: "avg_temperature"})
+        .rename(columns={"date": "date", temp_col: "avg_temperature"})
     )
     daily_avg["date"] = daily_avg["date"].dt.strftime("%Y-%m-%d")
     daily_avg = daily_avg.sort_values("date").reset_index(drop=True)
