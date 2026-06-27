@@ -1,9 +1,9 @@
 def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
+    import os
     import pandas as pd
 
     faasr_get_file(local_file="raw_temperature.csv", remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
-    import os
     if not os.path.exists("raw_temperature.csv"):
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must exist after download from S3")
         raise SystemExit(1)
@@ -18,6 +18,8 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         faasr_log("[REQUIRE] CONTRACT VIOLATION: Raw temperature input file must be a valid CSV: " + str(_e))
         raise SystemExit(1)
     # --- end requires ---
+
+
     faasr_log("Downloaded raw temperature data from S3")
 
     df = pd.read_csv("raw_temperature.csv")
@@ -27,22 +29,26 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
     dec2025_df = df[(df["date"].dt.year == 2025) & (df["date"].dt.month == 12)].copy()
     faasr_log(f"Filtered to December 2025: {len(dec2025_df)} rows remaining")
 
-    if dec2025_df.empty:
-        msg = "No records found for December 2025 in the raw temperature file"
-        faasr_log(msg)
-        raise RuntimeError(msg)
+    if len(dec2025_df) == 0:
+        err_msg = "No records found for December 2025 in the raw temperature data"
+        faasr_log(err_msg)
+        raise RuntimeError(err_msg)
 
-    if "tavg" in dec2025_df.columns:
+    # Prefer TAVG; fall back to mean of TMAX and TMIN; else first numeric column
+    if "tavg" in dec2025_df.columns and dec2025_df["tavg"].notna().any():
         temp_col = "tavg"
     elif "tmax" in dec2025_df.columns and "tmin" in dec2025_df.columns:
         dec2025_df["tavg_computed"] = (dec2025_df["tmax"] + dec2025_df["tmin"]) / 2.0
         temp_col = "tavg_computed"
+        faasr_log("TAVG not available; computing daily average as mean of TMAX and TMIN")
     else:
-        faasr_log("No suitable temperature columns found; attempting to use first numeric column")
         numeric_cols = dec2025_df.select_dtypes(include="number").columns.tolist()
         if not numeric_cols:
-            raise ValueError("No numeric temperature columns available in the dataset")
+            err_msg = "No numeric temperature columns available in the dataset"
+            faasr_log(err_msg)
+            raise ValueError(err_msg)
         temp_col = numeric_cols[0]
+        faasr_log(f"Using fallback numeric column: {temp_col}")
 
     daily_avg = (
         dec2025_df.groupby("date")[temp_col]
@@ -55,7 +61,9 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
 
     faasr_log(f"Computed daily averages for {len(daily_avg)} days in December 2025")
 
-    daily_avg.to_csv("daily_avg_temperature.csv", index=False)
+    local_out = "daily_avg_temperature.csv"
+    daily_avg.to_csv(local_out, index=False)
+
 
     # --- CONTRACT: promises ---
     if not os.path.exists("daily_avg_temperature.csv"):
@@ -66,5 +74,5 @@ def compute_daily_averages(folder: str, input1: str, output1: str) -> None:
         raise SystemExit(1)
     # INPUTS_UNCHANGED: raw_temperature.csv (tracked at require time)
     # --- end promises ---
-    faasr_put_file(local_file="daily_avg_temperature.csv", remote_folder=folder, remote_file=output1)
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
     faasr_log("Uploaded daily average temperature CSV to S3")
