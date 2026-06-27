@@ -38,7 +38,7 @@
       "Arguments": {
         "folder": "oregon_dec2025_temperature",
         "input1": "oregon_daily_avg_temperature_dec2025.csv",
-        "output1": "epic_output123.png"
+        "output1": "oregon_temperature_chart_dec2025.png"
       }
     }
   },
@@ -83,5 +83,8 @@
       "matplotlib",
       "pandas"
     ]
-  }
+  },
+  "Secrets": [
+    "NOAA_CDO_TOKEN"
+  ]
 }
