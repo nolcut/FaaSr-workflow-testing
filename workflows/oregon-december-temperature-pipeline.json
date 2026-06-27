@@ -1,0 +1,90 @@
+{
+  "FunctionInvoke": "download-temperature-data",
+  "WorkflowName": "oregon-december-temperature-pipeline",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "download-temperature-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "download_temperature_data",
+      "Arguments": {
+        "folder": "oregon_dec2025_temperature",
+        "output1": "oregon_temperature_dec2025_raw.csv"
+      },
+      "InvokeNext": [
+        "compute-daily-averages"
+      ]
+    },
+    "compute-daily-averages": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "compute_daily_averages",
+      "Arguments": {
+        "folder": "oregon_dec2025_temperature",
+        "input1": "oregon_temperature_dec2025_raw.csv",
+        "output1": "oregon_daily_avg_temperature_dec2025.csv"
+      },
+      "InvokeNext": [
+        "plot-temperature-chart"
+      ]
+    },
+    "plot-temperature-chart": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "plot_temperature_chart",
+      "Arguments": {
+        "folder": "oregon_dec2025_temperature",
+        "input1": "oregon_daily_avg_temperature_dec2025.csv",
+        "output1": "oregon_temperature_chart_dec2025.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "download-temperature-data": "ghcr.io/faasr/github-actions-python:latest",
+    "compute-daily-averages": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-temperature-chart": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "download_temperature_data": "nolcut/FaaSr-workflow-testing/main/functions/download_temperature_data.py",
+    "compute_daily_averages": "nolcut/FaaSr-workflow-testing/main/functions/compute_daily_averages.py",
+    "plot_temperature_chart": "nolcut/FaaSr-workflow-testing/main/functions/plot_temperature_chart.py"
+  },
+  "PyPIPackageDownloads": {
+    "download_temperature_data": [
+      "requests",
+      "pandas"
+    ],
+    "compute_daily_averages": [
+      "pandas"
+    ],
+    "plot_temperature_chart": [
+      "matplotlib",
+      "pandas"
+    ]
+  },
+  "Secrets": [
+    "NOAA_CDO_TOKEN"
+  ]
+}
