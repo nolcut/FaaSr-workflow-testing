@@ -1,15 +1,18 @@
 def download_temperature_data(folder: str, output1: str) -> None:
+    import os
+    import time
     import requests
     import pandas as pd
 
-    faasr_log("Starting download of Oregon temperature data for December 2025")
+    faasr_log("Starting download of Oregon December 2025 temperature data from NOAA CDO")
 
-    # Read NOAA Climate Data Online (CDO) API token — raises if secret is absent
+    # Raises if the secret is not configured — failing loudly is correct
     noaa_token = faasr_secret("NOAA_CDO_TOKEN")
 
     NOAA_BASE_URL = "https://www.ncdc.noaa.gov/cdo-web/api/v2/data"
+    headers = {"token": noaa_token}
 
-    # Known Oregon weather station IDs (GHCND network)
+    # Well-known Oregon GHCND weather stations
     oregon_stations = [
         "GHCND:USW00024229",  # Portland International Airport
         "GHCND:USW00024221",  # Eugene Airport
@@ -23,12 +26,12 @@ def download_temperature_data(folder: str, output1: str) -> None:
         "GHCND:USW00024227",  # Burns
     ]
 
-    headers = {"token": noaa_token}
     records = []
 
     for station in oregon_stations:
-        faasr_log(f"Fetching December 2025 data for station {station}")
+        faasr_log(f"Fetching December 2025 data for station: {station}")
         offset = 1
+
         while True:
             params = {
                 "datasetid": "GHCND",
@@ -41,19 +44,24 @@ def download_temperature_data(folder: str, output1: str) -> None:
                 "offset": offset,
             }
             resp = requests.get(NOAA_BASE_URL, headers=headers, params=params, timeout=30)
+
             if resp.status_code != 200:
-                msg = f"NOAA CDO API error for station {station}: HTTP {resp.status_code} — {resp.text[:200]}"
-                faasr_log(msg)
-                raise RuntimeError(msg)
+                err_msg = (
+                    f"NOAA CDO API returned HTTP {resp.status_code} for station "
+                    f"{station}: {resp.text[:300]}"
+                )
+                faasr_log(err_msg)
+                raise RuntimeError(err_msg)
 
             data = resp.json()
-            if "results" not in data:
-                # Station has no records for this period — acceptable; continue to next
-                faasr_log(f"No results for station {station} in December 2025")
+            result_list = data.get("results", [])
+
+            if not result_list:
+                # No (more) data for this station in the requested window
                 break
 
             daily = {}
-            for item in data["results"]:
+            for item in result_list:
                 date = item["date"][:10]
                 dtype = item["datatype"]
                 val = item["value"]
@@ -72,39 +80,43 @@ def download_temperature_data(folder: str, output1: str) -> None:
                     daily[key]["tmin"] = val
                 elif dtype == "TAVG":
                     daily[key]["tavg"] = val
+
             records.extend(daily.values())
 
-            # Paginate if there are more results
+            # Pagination: stop when we have consumed all reported results
             metadata = data.get("metadata", {}).get("resultset", {})
-            total = metadata.get("count", 0)
-            if offset + 1000 > total:
+            total_count = int(metadata.get("count", 0))
+            if offset + len(result_list) > total_count:
                 break
-            offset += 1000
+            offset += len(result_list)
+
+        # Respect NOAA CDO rate limit (5 requests/second)
+        time.sleep(0.25)
 
     if not records:
-        msg = "No temperature records retrieved from NOAA CDO API for Oregon in December 2025"
-        faasr_log(msg)
-        raise RuntimeError(msg)
+        err_msg = (
+            "No temperature records returned by NOAA CDO for Oregon December 2025. "
+            "Verify that NOAA_CDO_TOKEN is valid and the stations have data for that period."
+        )
+        faasr_log(err_msg)
+        raise RuntimeError(err_msg)
 
     df = pd.DataFrame(records, columns=["station_id", "date", "tmax", "tmin", "tavg"])
-
-    # Derive tavg from tmax/tmin for stations that do not report TAVG directly
-    mask = df["tavg"].isna() & df["tmax"].notna() & df["tmin"].notna()
-    df.loc[mask, "tavg"] = ((df.loc[mask, "tmax"] + df.loc[mask, "tmin"]) / 2.0).round(1)
-
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values(["station_id", "date"]).reset_index(drop=True)
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
 
+    faasr_log(
+        f"Retrieved {len(df)} daily records from "
+        f"{df['station_id'].nunique()} Oregon stations for December 2025"
+    )
+
     local_file = "oregon_temperature_dec2025_raw.csv"
     df.to_csv(local_file, index=False)
 
-    faasr_log(f"Retrieved {len(df)} records across {df['station_id'].nunique()} Oregon stations for December 2025")
-
     # --- CONTRACT: promises ---
-    import os
     if not os.path.exists("oregon_temperature_dec2025_raw.csv"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist after download and processing")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV file must exist locally before upload to S3")
         raise SystemExit(1)
     if not os.path.exists("oregon_temperature_dec2025_raw.csv") or os.path.getsize("oregon_temperature_dec2025_raw.csv") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Output CSV must contain at least one temperature record from Oregon stations")
