@@ -37,10 +37,10 @@ def reduce(folder: str, input1: str, output1: str) -> None:
     faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_input)
     # --- CONTRACT: requires ---
     if not os.path.exists("shuffled_{rank}.json"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file for this reducer rank must exist on S3 before reduce can run")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file for this reducer rank must exist in S3 before reduce can run")
         raise SystemExit(1)
     if not os.path.exists("shuffled_{rank}.json") or os.path.getsize("shuffled_{rank}.json") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file must not be empty; an empty file yields no word counts to aggregate")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file must not be empty; an empty file would yield no word counts")
         raise SystemExit(1)
     try:
         import json as _json; _json.loads(open("shuffled_{rank}.json").read())
@@ -50,7 +50,7 @@ def reduce(folder: str, input1: str, output1: str) -> None:
     # --- end requires ---
 
     if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
-        msg = f"reduce[{rank}]: input file {remote_input} is missing or empty"
+        msg = f"reduce[{rank}]: input file '{remote_input}' is missing or empty in S3 folder '{folder}'"
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
@@ -90,10 +90,10 @@ def reduce(folder: str, input1: str, output1: str) -> None:
     faasr_log(f"reduce[{rank}]: uploading {folder}/{remote_output}")
     # --- CONTRACT: promises ---
     if not os.path.exists("word_counts_{rank}.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduced word-count output file must exist on S3 after successful completion")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduce must upload the final word-count JSON file to S3 upon successful completion")
         raise SystemExit(1)
     if not os.path.exists("word_counts_{rank}.json") or os.path.getsize("word_counts_{rank}.json") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduced word-count output file must not be empty; it should contain at least one aggregated word entry")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Output word-count file must not be empty; it must contain at least one aggregated word entry")
         raise SystemExit(1)
     # INPUTS_UNCHANGED: shuffled_{rank}.json (tracked at require time)
     # --- end promises ---
