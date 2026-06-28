@@ -14,7 +14,7 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
     output1 : Template for per-chunk remote filenames (e.g. "chunk_{rank}.txt").
     output2 : Remote filename for the metadata JSON (e.g. "split_metadata.json").
     """
-    # Number of batches equals the fan-out to the ranked `map` successor (×3).
+    # Number of batches equals the fan-out to the ranked `map` successor (x3).
     N_BATCHES = 3
 
     # ------------------------------------------------------------------ #
@@ -25,12 +25,17 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
     faasr_get_file(local_file=local_corpus, remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
     if not os.path.exists("corpus.txt"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file must exist on S3 before splitting")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file must exist in S3 before splitting")
         raise SystemExit(1)
     if not os.path.exists("corpus.txt") or os.path.getsize("corpus.txt") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus must contain at least one word; empty corpus cannot be split")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file must not be empty — cannot split zero words")
         raise SystemExit(1)
     # --- end requires ---
+
+    if not os.path.exists(local_corpus) or os.path.getsize(local_corpus) == 0:
+        msg = f"split: corpus file '{input1}' is missing or empty in S3 folder '{folder}'"
+        faasr_log(msg)
+        raise ValueError(msg)
 
     # ------------------------------------------------------------------ #
     # 2. Read corpus and tokenise into words                               #
@@ -50,7 +55,7 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
 
     # ------------------------------------------------------------------ #
     # 3. Partition words into N_BATCHES roughly equal chunks               #
-    # Distribute any remainder across the first batches (±1 word).        #
+    # Distribute any remainder across the first batches (+/-1 word).      #
     # ------------------------------------------------------------------ #
     base_size = total_words // N_BATCHES
     remainder = total_words % N_BATCHES
@@ -81,13 +86,13 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
         )
     # --- CONTRACT: promises ---
     if not os.path.exists("chunk_1.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 1 must exist on S3 after splitting")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 1 must exist in S3 after splitting")
         raise SystemExit(1)
     if not os.path.exists("chunk_2.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 2 must exist on S3 after splitting")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 2 must exist in S3 after splitting")
         raise SystemExit(1)
     if not os.path.exists("chunk_3.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 3 must exist on S3 after splitting")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 3 must exist in S3 after splitting")
         raise SystemExit(1)
     if not os.path.exists("chunk_1.txt") or os.path.getsize("chunk_1.txt") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 1 must contain at least one word")
@@ -99,7 +104,7 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 3 must contain at least one word")
         raise SystemExit(1)
     if not os.path.exists("split_metadata.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata JSON file must exist on S3 after splitting")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata JSON file must exist in S3 after splitting")
         raise SystemExit(1)
     if not os.path.exists("split_metadata.json") or os.path.getsize("split_metadata.json") == 0:
         faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata JSON file must not be empty after splitting")
