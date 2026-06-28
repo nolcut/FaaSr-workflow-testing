@@ -32,6 +32,11 @@ def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
     faasr_log(f"shuffle: downloading metadata {folder}/{input2}")
     faasr_get_file(local_file=local_meta, remote_folder=folder, remote_file=input2)
 
+    if not os.path.exists(local_meta) or os.path.getsize(local_meta) == 0:
+        msg = f"shuffle: metadata file '{input2}' is missing or empty in S3 folder '{folder}'"
+        faasr_log(msg)
+        raise ValueError(msg)
+
     with open(local_meta, "r", encoding="utf-8") as fh:
         metadata = json.load(fh)
     os.remove(local_meta)
@@ -85,30 +90,35 @@ def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
         faasr_get_file(
     # --- CONTRACT: requires ---
     if not os.path.exists("split_metadata.json"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file split_metadata.json must exist in S3 before shuffle can run")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file 'split_metadata.json' must exist in S3 before shuffle runs")
         raise SystemExit(1)
     if not os.path.exists("split_metadata.json") or os.path.getsize("split_metadata.json") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file split_metadata.json must not be empty")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file 'split_metadata.json' must not be empty")
         raise SystemExit(1)
     try:
         import json as _json; _json.loads(open("split_metadata.json").read())
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file split_metadata.json must be valid JSON: " + str(_e))
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Metadata file 'split_metadata.json' must be valid JSON: " + str(_e))
         raise SystemExit(1)
     if not os.path.exists("partial_counts_{rank}.json"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: At least one partial_counts_{rank}.json file must exist in S3 for shuffle to merge")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: At least one partial-count file matching 'partial_counts_{rank}.json' must exist in the S3 folder")
         raise SystemExit(1)
     if not os.path.exists("partial_counts_{rank}.json") or os.path.getsize("partial_counts_{rank}.json") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Each discovered partial_counts file must not be empty")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Each partial-count file 'partial_counts_{rank}.json' must not be empty")
         raise SystemExit(1)
     try:
         import json as _json; _json.loads(open("partial_counts_{rank}.json").read())
     except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Each partial_counts_{rank}.json file must be valid JSON containing a word-count dictionary: " + str(_e))
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Each partial-count file 'partial_counts_{rank}.json' must be valid JSON: " + str(_e))
         raise SystemExit(1)
     # --- end requires ---
             local_file=local_part, remote_folder=folder, remote_file=filename
         )
+
+        if not os.path.exists(local_part) or os.path.getsize(local_part) == 0:
+            msg = f"shuffle: partial-count file '{filename}' is missing or empty"
+            faasr_log(msg)
+            raise ValueError(msg)
 
         with open(local_part, "r", encoding="utf-8") as fh:
             partial: dict = json.load(fh)
@@ -153,26 +163,14 @@ def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
             f"shuffle: uploading partition {rank} → {folder}/{shuffled_remote}"
         )
     # --- CONTRACT: promises ---
-    if not os.path.exists("shuffled_1.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition file for reducer 1 must be uploaded to S3")
+    if not os.path.exists("shuffled_{rank}.json"):
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Each shuffled partition file 'shuffled_{rank}.json' (ranks 1–5) must exist in S3 after shuffle completes")
         raise SystemExit(1)
-    if not os.path.exists("shuffled_2.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition file for reducer 2 must be uploaded to S3")
+    if not os.path.exists("shuffled_{rank}.json") or os.path.getsize("shuffled_{rank}.json") == 0:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Each shuffled partition file 'shuffled_{rank}.json' must not be empty after upload")
         raise SystemExit(1)
-    if not os.path.exists("shuffled_3.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition file for reducer 3 must be uploaded to S3")
-        raise SystemExit(1)
-    if not os.path.exists("shuffled_4.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition file for reducer 4 must be uploaded to S3")
-        raise SystemExit(1)
-    if not os.path.exists("shuffled_5.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition file for reducer 5 must be uploaded to S3")
-        raise SystemExit(1)
-    if not os.path.exists("shuffled_1.json") or os.path.getsize("shuffled_1.json") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Shuffled partition 1 must contain at least one word entry")
-        raise SystemExit(1)
-    # INPUTS_UNCHANGED: partial_counts_{rank}.json (tracked at require time)
     # INPUTS_UNCHANGED: split_metadata.json (tracked at require time)
+    # INPUTS_UNCHANGED: partial_counts_{rank}.json (tracked at require time)
     # --- end promises ---
         faasr_put_file(
             local_file=local_out,
