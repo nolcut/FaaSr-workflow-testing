@@ -5,137 +5,76 @@ import tempfile
 
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
-    if "corpus.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file 'corpus.txt' must exist in S3 before split can run")
+    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file 'input_text.txt' must exist in S3 before split can run")
         raise SystemExit(1)
 def _faasr_promises(folder):
     if "split_metadata.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Split must upload the metadata JSON describing batch count and filenames to S3")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Split metadata file 'split_metadata.json' was not found in S3 after split completed")
         raise SystemExit(1)
 # --- end contract helpers ---
 def split(folder: str, input1: str, output1: str, output2: str) -> None:
-    """
-    Reads the full corpus from S3, splits its words into N even batches (one per
-    parallel map worker), uploads each batch file, and uploads a JSON metadata file
-    that records N and the list of batch filenames.
+    """Read input text, split into 3 word-batches, upload each batch and a metadata JSON."""
 
-    Parameters
-    ----------
-    folder  : S3 folder (remote_folder) for all I/O
-    input1  : remote filename of the corpus (e.g. "corpus.txt")
-    output1 : remote filename template for batch files (e.g. "batch_{rank}.txt")
-    output2 : remote filename for the metadata JSON (e.g. "split_metadata.json")
-    """
-
-    # ------------------------------------------------------------------ #
-    # 1. Determine N — the number of parallel map workers                  #
-    # ------------------------------------------------------------------ #
+    # --- Download input text from S3 ---
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    rank_info = faasr_rank()
-    n_batches = rank_info.get("max_rank", 1)
-    faasr_log(f"split: will create {n_batches} batch(es) from '{input1}'")
+    local_input = tempfile.mktemp(suffix=".txt")
+    faasr_log(f"Downloading {input1} from folder {folder}")
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
 
-    # ------------------------------------------------------------------ #
-    # 2. Download the corpus                                               #
-    # ------------------------------------------------------------------ #
-    with tempfile.NamedTemporaryFile(
-        mode="r", suffix=".txt", delete=False
-    ) as tmp_in:
-        local_corpus = tmp_in.name
+    with open(local_input, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    os.remove(local_input)
 
-    try:
-        faasr_get_file(
-            local_file=local_corpus,
-            remote_folder=folder,
-            remote_file=input1,
-        )
+    words = text.split()
+    total_words = len(words)
+    faasr_log(f"Input contains {total_words} words")
 
-        if not os.path.exists(local_corpus) or os.path.getsize(local_corpus) == 0:
-            msg = f"split: corpus file '{input1}' is missing or empty in folder '{folder}'"
-            faasr_log(msg)
-            raise RuntimeError(msg)
+    if total_words == 0:
+        msg = f"Input file '{input1}' is empty or contains no words — cannot split"
+        faasr_log(f"ERROR: {msg}")
+        raise ValueError(msg)
 
-        with open(local_corpus, "r", encoding="utf-8") as fh:
-            words = fh.read().split()
+    # --- Split into exactly 3 batches (fan-out from CONTEXT.md; do NOT call faasr_rank()) ---
+    n_batches = 3
+    batch_size = (total_words + n_batches - 1) // n_batches  # ceiling division
 
-        faasr_log(f"split: corpus contains {len(words)} word(s)")
+    batch_filenames = []
 
-        if not words:
-            msg = f"split: corpus file '{input1}' contains no words"
-            faasr_log(msg)
-            raise RuntimeError(msg)
+    for i in range(1, n_batches + 1):
+        start = (i - 1) * batch_size
+        end = min(i * batch_size, total_words)
+        batch_words = words[start:end]
 
-        # ------------------------------------------------------------------ #
-        # 3. Partition words into n_batches chunks as evenly as possible       #
-        # ------------------------------------------------------------------ #
-        total = len(words)
-        # distribute remainder words across the first `remainder` batches
-        base_size, remainder = divmod(total, n_batches)
+        batch_remote_file = output1.replace("{rank}", str(i))
+        local_batch = tempfile.mktemp(suffix=".txt")
 
-        batch_filenames = []
-        offset = 0
+        with open(local_batch, "w", encoding="utf-8") as fh:
+            fh.write(" ".join(batch_words))
 
-        for rank in range(1, n_batches + 1):
-            chunk_size = base_size + (1 if rank <= remainder else 0)
-            chunk = words[offset: offset + chunk_size]
-            offset += chunk_size
+        faasr_log(f"Uploading batch {i} ({len(batch_words)} words) → {batch_remote_file}")
+        faasr_put_file(local_file=local_batch, remote_folder=folder, remote_file=batch_remote_file)
+        os.remove(local_batch)
 
-            # Resolve the output filename template for this rank
-            batch_remote = output1.replace("{rank}", str(rank))
-            batch_filenames.append(batch_remote)
+        batch_filenames.append(batch_remote_file)
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False, encoding="utf-8"
-            ) as tmp_batch:
-                local_batch = tmp_batch.name
-                tmp_batch.write("\n".join(chunk))
+    # --- Write and upload split metadata ---
+    metadata = {
+        "n_batches": n_batches,
+        "batch_files": batch_filenames,
+    }
 
-            try:
-                faasr_put_file(
-                    local_file=local_batch,
-                    remote_folder=folder,
-                    remote_file=batch_remote,
-                )
-                faasr_log(
-                    f"split: uploaded batch {rank}/{n_batches} "
-                    f"({chunk_size} word(s)) → '{batch_remote}'"
-                )
-            finally:
-                if os.path.exists(local_batch):
-                    os.remove(local_batch)
+    local_meta = tempfile.mktemp(suffix=".json")
+    with open(local_meta, "w", encoding="utf-8") as fh:
+        json.dump(metadata, fh)
 
-        # ------------------------------------------------------------------ #
-        # 4. Write and upload the metadata JSON                                #
-        # ------------------------------------------------------------------ #
-        metadata = {
-            "n_batches": n_batches,
-            "batch_files": batch_filenames,
-        }
+    faasr_log(f"Uploading metadata → {output2}")
+    faasr_put_file(local_file=local_meta, remote_folder=folder, remote_file=output2)
+    os.remove(local_meta)
 
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, encoding="utf-8"
-        ) as tmp_meta:
-            local_meta = tmp_meta.name
-            json.dump(metadata, tmp_meta, indent=2)
-
-        try:
-            faasr_put_file(
-                local_file=local_meta,
-                remote_folder=folder,
-                remote_file=output2,
-            )
-            faasr_log(f"split: uploaded metadata → '{output2}'")
-        finally:
-            if os.path.exists(local_meta):
-                os.remove(local_meta)
-
-        faasr_log("split: done")
-
-    finally:
-        if os.path.exists(local_corpus):
-            os.remove(local_corpus)
+    faasr_log(f"split complete: {n_batches} batches, metadata written to {output2}")
     # --- CONTRACT: promises ---
     _faasr_promises(folder)
     # --- end promises ---
