@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -6,179 +7,116 @@ import tempfile
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
     if "split_metadata.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Split metadata file must exist in S3 before shuffle can determine the number of map batches")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: split_metadata.json must exist in S3 before shuffle can determine the number of map batches")
         raise SystemExit(1)
 # --- end contract helpers ---
 def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Reads all N partial word-count JSON files produced by the map phase and the
-    split_metadata.json to discover N. Merges word counts into a per-word
-    structure and partitions words across M=5 reducer buckets. Writes M
-    shuffle output JSON files (shuffle_bucket_1.json … shuffle_bucket_M.json),
-    each containing a dict mapping words to their list of partial counts.
-
-    Parameters
-    ----------
-    folder  : S3 folder (remote_folder) for all I/O
-    input1  : remote filename template for map results, e.g. "map_result_{rank}.json"
-    input2  : remote filename for split metadata, e.g. "split_metadata.json"
-    output1 : remote filename template for shuffle buckets, e.g. "shuffle_bucket_{rank}.json"
+    Read all partial word count JSON files from map workers, merge them,
+    partition words into M=5 reducer buckets by deterministic hash, and write
+    one shuffle_bucket_{rank}.json per bucket containing word -> [count1, count2, ...]
+    for words assigned to that bucket.
     """
 
-    # ------------------------------------------------------------------ #
-    # 1. Read split_metadata.json to discover N (number of map batches)   #
-    # ------------------------------------------------------------------ #
+    # Fan-out to reduce is ×5 (hardcoded per CONTEXT.md — do NOT call faasr_rank() here)
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, encoding="utf-8"
-    ) as tmp_meta:
-        local_meta = tmp_meta.name
+    M = 5
 
-    try:
-        faasr_get_file(
-            local_file=local_meta,
-            remote_folder=folder,
-            remote_file=input2,
-        )
+    # --- Download and parse split metadata ---
+    faasr_log(f"shuffle: downloading split metadata '{input2}' from folder {folder}")
+    local_meta = tempfile.mktemp(suffix=".json")
+    faasr_get_file(local_file=local_meta, remote_folder=folder, remote_file=input2)
 
-        if not os.path.exists(local_meta) or os.path.getsize(local_meta) == 0:
-            msg = f"shuffle: metadata file '{input2}' is missing or empty in folder '{folder}'"
-            faasr_log(msg)
-            raise RuntimeError(msg)
-
-        with open(local_meta, "r", encoding="utf-8") as fh:
-            metadata = json.load(fh)
-    finally:
-        if os.path.exists(local_meta):
-            os.remove(local_meta)
+    with open(local_meta, "r", encoding="utf-8") as fh:
+        metadata = json.load(fh)
+    os.remove(local_meta)
 
     n_batches = metadata.get("n_batches")
     if n_batches is None:
-        msg = f"shuffle: 'n_batches' key missing from metadata file '{input2}'"
-        faasr_log(msg)
-        raise RuntimeError(msg)
+        msg = (
+            f"shuffle: required key 'n_batches' missing from '{input2}' — "
+            f"got keys: {list(metadata.keys())}"
+        )
+        faasr_log(f"ERROR: {msg}")
+        raise KeyError(msg)
 
-    faasr_log(f"shuffle: metadata reports {n_batches} map batch(es)")
+    faasr_log(f"shuffle: split stage produced {n_batches} map batch(es)")
 
-    # ------------------------------------------------------------------ #
-    # 2. Discover all map result files via faasr_get_folder_list           #
-    # ------------------------------------------------------------------ #
-    # The map outputs follow the template input1 (e.g. "map_result_{rank}.json").
-    # Derive the prefix and suffix to filter the folder listing.
-    map_prefix = input1.split("{rank}")[0]   # "map_result_"
-    map_suffix = input1.split("{rank}")[-1]   # ".json"
+    # --- Discover partial count files written by map workers ---
+    # Use faasr_get_folder_list to dynamically find all partial_counts_*.json files;
+    # never assume a fixed count or use boto3.
+    faasr_log(f"shuffle: listing partial count files in folder {folder}")
+    all_names = faasr_get_folder_list(prefix=f"{folder}/partial_counts_")
 
-    all_names = faasr_get_folder_list(prefix=folder)
-
-    # faasr_get_folder_list may return "folder/filename" paths — take the basename
-    map_result_files = sorted(
+    # Strip any folder prefix from returned names and keep only partial_counts_*.json
+    partial_files = sorted([
         name.rsplit("/", 1)[-1]
         for name in all_names
-        if name.rsplit("/", 1)[-1].startswith(map_prefix)
-        and name.rsplit("/", 1)[-1].endswith(map_suffix)
-    )
+        if name.rsplit("/", 1)[-1].startswith("partial_counts_")
+        and name.rsplit("/", 1)[-1].endswith(".json")
+    ])
 
-    if not map_result_files:
-        msg = (
-            f"shuffle: no map result files matching pattern '{input1}' "
-            f"found in folder '{folder}'"
-        )
-        faasr_log(msg)
-        raise RuntimeError(msg)
-
-    if len(map_result_files) != n_batches:
-        faasr_log(
-            f"shuffle: WARNING — expected {n_batches} map result file(s) from metadata "
-            f"but discovered {len(map_result_files)}: {map_result_files}"
-        )
-
-    faasr_log(f"shuffle: discovered {len(map_result_files)} map result file(s): {map_result_files}")
-
-    # ------------------------------------------------------------------ #
-    # 3. Read all map result files and aggregate per-word partial counts   #
-    # ------------------------------------------------------------------ #
-    # Each map_result_{rank}.json is a dict {word: count (int)}.
-    # We build {word: [count_from_mapper_a, count_from_mapper_b, ...]}
-    word_partial_counts: dict = {}
-
-    for map_file in map_result_files:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, encoding="utf-8"
-        ) as tmp_map:
-            local_map = tmp_map.name
-
-        try:
-            faasr_get_file(
-                local_file=local_map,
-                remote_folder=folder,
-                remote_file=map_file,
-            )
-
-            if not os.path.exists(local_map) or os.path.getsize(local_map) == 0:
-                msg = f"shuffle: map result file '{map_file}' is missing or empty in folder '{folder}'"
-                faasr_log(msg)
-                raise RuntimeError(msg)
-
-            with open(local_map, "r", encoding="utf-8") as fh:
-                partial_counts = json.load(fh)
-
-            faasr_log(
-                f"shuffle: read {len(partial_counts)} unique word(s) from '{map_file}'"
-            )
-
-            for word, count in partial_counts.items():
-                if word not in word_partial_counts:
-                    word_partial_counts[word] = []
-                word_partial_counts[word].append(count)
-
-        finally:
-            if os.path.exists(local_map):
-                os.remove(local_map)
+    if not partial_files:
+        msg = f"shuffle: no 'partial_counts_*.json' files found in folder {folder}"
+        faasr_log(f"ERROR: {msg}")
+        raise FileNotFoundError(msg)
 
     faasr_log(
-        f"shuffle: aggregated {len(word_partial_counts)} unique word(s) across all mappers"
+        f"shuffle: discovered {len(partial_files)} partial count file(s): {partial_files}"
     )
 
-    # ------------------------------------------------------------------ #
-    # 4. Partition words across M reducer buckets                          #
-    # ------------------------------------------------------------------ #
-    # M is fixed by the workflow fan-out to the reduce step (5 parallel instances).
-    # Use consistent hash partitioning within this process:
-    #   bucket_rank = hash(word) % n_reducers + 1  (Python % is always non-negative)
-    n_reducers = 5
+    # --- Read all partial counts and partition words into M buckets ---
+    # Each bucket maps: word -> list of counts (one entry per map worker that saw the word)
+    buckets: list[dict] = [{} for _ in range(M)]
 
-    buckets: dict = {rank: {} for rank in range(1, n_reducers + 1)}
+    for pc_filename in partial_files:
+        faasr_log(f"shuffle: downloading {pc_filename} from folder {folder}")
+        local_pc = tempfile.mktemp(suffix=".json")
+        faasr_get_file(local_file=local_pc, remote_folder=folder, remote_file=pc_filename)
 
-    for word, counts in word_partial_counts.items():
-        bucket_rank = (hash(word) % n_reducers) + 1
-        buckets[bucket_rank][word] = counts
+        with open(local_pc, "r", encoding="utf-8") as fh:
+            word_counts = json.load(fh)
+        os.remove(local_pc)
 
-    for rank in range(1, n_reducers + 1):
-        faasr_log(f"shuffle: bucket {rank} contains {len(buckets[rank])} unique word(s)")
-
-    # ------------------------------------------------------------------ #
-    # 5. Write and upload each shuffle bucket file                         #
-    # ------------------------------------------------------------------ #
-    for rank in range(1, n_reducers + 1):
-        remote_output = output1.replace("{rank}", str(rank))
-
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, encoding="utf-8"
-        ) as tmp_out:
-            local_output = tmp_out.name
-            json.dump(buckets[rank], tmp_out, indent=2)
-
-        try:
-            faasr_put_file(
-                local_file=local_output,
-                remote_folder=folder,
-                remote_file=remote_output,
+        if not isinstance(word_counts, dict):
+            msg = (
+                f"shuffle: '{pc_filename}' is not a JSON object — "
+                f"expected dict{{word: count}}, got {type(word_counts).__name__}"
             )
-            faasr_log(f"shuffle: uploaded bucket {rank}/{n_reducers} → '{remote_output}'")
-        finally:
-            if os.path.exists(local_output):
-                os.remove(local_output)
+            faasr_log(f"ERROR: {msg}")
+            raise ValueError(msg)
 
-    faasr_log("shuffle: done")
+        faasr_log(
+            f"shuffle: partitioning {len(word_counts)} word(s) from {pc_filename}"
+        )
+
+        for word, count in word_counts.items():
+            # Deterministic bucket assignment: MD5 hex digest modulo M
+            bucket_idx = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % M
+            if word not in buckets[bucket_idx]:
+                buckets[bucket_idx][word] = []
+            buckets[bucket_idx][word].append(count)
+
+    # --- Write and upload one shuffle bucket file per reducer instance ---
+    for i in range(1, M + 1):
+        bucket_data = buckets[i - 1]
+        remote_output = output1.replace("{rank}", str(i))
+
+        local_out = tempfile.mktemp(suffix=".json")
+        with open(local_out, "w", encoding="utf-8") as fh:
+            json.dump(bucket_data, fh)
+
+        faasr_log(
+            f"shuffle: uploading bucket {i}/{M} "
+            f"({len(bucket_data)} unique word(s)) → {remote_output}"
+        )
+        faasr_put_file(
+            local_file=local_out, remote_folder=folder, remote_file=remote_output
+        )
+        os.remove(local_out)
+
+    faasr_log(
+        f"shuffle: complete — wrote {M} shuffle buckets to folder {folder} for reduce"
+    )
