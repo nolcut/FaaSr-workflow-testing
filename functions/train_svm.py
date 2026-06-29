@@ -2,112 +2,157 @@ import json
 import os
 import tempfile
 
+import joblib
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, classification_report
 
 
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
     if "classification_dataset.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input classification dataset CSV must exist in S3 before SVM training can begin")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input dataset 'classification_dataset.csv' must exist in S3 before SVM training can begin")
         raise SystemExit(1)
 
 
 def _faasr_promises(folder):
+    if "svm_model.joblib" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Trained SVM model bundle 'svm_model.joblib' must be present in S3 after training completes")
+        raise SystemExit(1)
     if "svm_metrics.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: SVM metrics JSON output must exist in S3 after training and evaluation completes")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Performance metrics JSON 'svm_metrics.json' must be present in S3 after training completes")
         raise SystemExit(1)
 # --- end contract helpers ---
 
 
-def train_svm(folder: str, input1: str, output1: str) -> None:
+def train_svm(folder: str, input1: str, output1: str, output2: str) -> None:
+    """Read the generated classification dataset CSV from S3, train an SVM
+    classifier, evaluate its accuracy, and save the trained model (joblib)
+    and performance metrics (JSON) back to S3.
+
+    Args:
+        folder:  Remote S3 folder used for all faasr_get/put_file calls.
+        input1:  Remote filename of the input CSV (e.g. "classification_dataset.csv").
+        output1: Remote filename for the serialised SVM model (e.g. "svm_model.joblib").
+        output2: Remote filename for the metrics JSON (e.g. "svm_metrics.json").
     """
-    Download the classification dataset CSV from S3, train an SVM classifier,
-    evaluate it on a held-out test split, and save accuracy, precision, recall,
-    and F1 score as a JSON file back to S3.
-    """
+    # ------------------------------------------------------------------ #
+    # 1. Download the dataset CSV from S3 to a local temp file            #
+    # ------------------------------------------------------------------ #
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    faasr_log("train_svm: starting SVM training")
+    tmp_csv_fd, tmp_csv_path = tempfile.mkstemp(suffix=".csv")
+    os.close(tmp_csv_fd)
 
-    # --- Download dataset from S3 ---
-    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp_in:
-        local_csv = tmp_in.name
+    tmp_model_fd, tmp_model_path = tempfile.mkstemp(suffix=".joblib")
+    os.close(tmp_model_fd)
+
+    tmp_metrics_fd, tmp_metrics_path = tempfile.mkstemp(suffix=".json")
+    os.close(tmp_metrics_fd)
 
     try:
-        faasr_log(f"train_svm: fetching {input1} from {folder}")
-        faasr_get_file(
-            local_file=local_csv,
-            remote_folder=folder,
-            remote_file=input1,
-        )
+        faasr_log(f"train_svm: Downloading '{input1}' from folder '{folder}'")
+        faasr_get_file(local_file=tmp_csv_path, remote_folder=folder, remote_file=input1)
 
-        # --- Load CSV ---
-        df = pd.read_csv(local_csv)
-        faasr_log(f"train_svm: loaded dataset with shape {df.shape}")
+        # ------------------------------------------------------------------ #
+        # 2. Load and validate the dataset                                    #
+        # ------------------------------------------------------------------ #
+        df = pd.read_csv(tmp_csv_path)
+        faasr_log(f"train_svm: Loaded dataset with shape={df.shape}, columns={list(df.columns)}")
 
-        if "label" not in df.columns:
-            faasr_log("train_svm: ERROR — 'label' column missing from dataset")
-            raise ValueError("Required 'label' column not found in classification_dataset.csv")
+        if "target" not in df.columns:
+            msg = f"train_svm: ERROR — 'target' column not found in {input1}; columns are {list(df.columns)}"
+            faasr_log(msg)
+            raise ValueError(msg)
 
-        feature_cols = [c for c in df.columns if c != "label"]
+        feature_cols = [c for c in df.columns if c != "target"]
+        if not feature_cols:
+            msg = "train_svm: ERROR — no feature columns found in the dataset"
+            faasr_log(msg)
+            raise ValueError(msg)
+
         X = df[feature_cols].values
-        y = df["label"].values
+        y = df["target"].values
+        faasr_log(f"train_svm: Features={len(feature_cols)}, Samples={len(y)}, Classes={sorted(set(y.tolist()))}")
 
-        # --- Train / test split (80 / 20, fixed seed for reproducibility) ---
+        # ------------------------------------------------------------------ #
+        # 3. Train / test split                                               #
+        # ------------------------------------------------------------------ #
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42, stratify=y
         )
         faasr_log(
-            f"train_svm: split → train={len(X_train)} samples, test={len(X_test)} samples"
+            f"train_svm: Split — train_size={len(y_train)}, test_size={len(y_test)}"
         )
 
-        # --- Train SVM ---
-        faasr_log("train_svm: fitting SVC (RBF kernel)")
-        clf = SVC(kernel="rbf", random_state=42)
-        clf.fit(X_train, y_train)
+        # ------------------------------------------------------------------ #
+        # 4. Feature scaling (important for SVM)                             #
+        # ------------------------------------------------------------------ #
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
 
-        # --- Evaluate on held-out test set ---
-        y_pred = clf.predict(X_test)
+        # ------------------------------------------------------------------ #
+        # 5. Train SVM classifier                                             #
+        # ------------------------------------------------------------------ #
+        faasr_log("train_svm: Training SVM classifier (RBF kernel, C=1.0, gamma='scale')")
+        clf = SVC(kernel="rbf", C=1.0, gamma="scale", random_state=42)
+        clf.fit(X_train_scaled, y_train)
+        faasr_log("train_svm: Training complete")
 
+        # ------------------------------------------------------------------ #
+        # 6. Evaluate                                                         #
+        # ------------------------------------------------------------------ #
+        y_pred = clf.predict(X_test_scaled)
+        accuracy = float(accuracy_score(y_test, y_pred))
+        report = classification_report(y_test, y_pred, output_dict=True)
+        faasr_log(f"train_svm: Test accuracy={accuracy:.4f}")
+
+        # ------------------------------------------------------------------ #
+        # 7. Bundle model + scaler together so the scaler travels with it     #
+        # ------------------------------------------------------------------ #
+        model_bundle = {"classifier": clf, "scaler": scaler, "feature_cols": feature_cols}
+
+        # ------------------------------------------------------------------ #
+        # 8. Serialise model to joblib temp file and upload                   #
+        # ------------------------------------------------------------------ #
+        joblib.dump(model_bundle, tmp_model_path)
+        faasr_log(f"train_svm: Uploading model '{output1}' to folder '{folder}'")
+        faasr_put_file(local_file=tmp_model_path, remote_folder=folder, remote_file=output1)
+
+        # ------------------------------------------------------------------ #
+        # 9. Write metrics JSON temp file and upload                          #
+        # ------------------------------------------------------------------ #
         metrics = {
-            "classifier": "SVM",
-            "accuracy": accuracy_score(y_test, y_pred),
-            "precision": precision_score(y_test, y_pred, average="weighted", zero_division=0),
-            "recall": recall_score(y_test, y_pred, average="weighted", zero_division=0),
-            "f1": f1_score(y_test, y_pred, average="weighted", zero_division=0),
+            "model": "SVM",
+            "kernel": "rbf",
+            "C": 1.0,
+            "gamma": "scale",
+            "accuracy": accuracy,
+            "train_size": int(len(y_train)),
+            "test_size": int(len(y_test)),
+            "n_features": int(len(feature_cols)),
+            "classification_report": report,
         }
+        with open(tmp_metrics_path, "w", encoding="utf-8") as fh:
+            json.dump(metrics, fh, indent=2)
+
+        faasr_log(f"train_svm: Uploading metrics '{output2}' to folder '{folder}'")
+        faasr_put_file(local_file=tmp_metrics_path, remote_folder=folder, remote_file=output2)
+
         faasr_log(
-            f"train_svm: metrics — accuracy={metrics['accuracy']:.4f}, "
-            f"precision={metrics['precision']:.4f}, recall={metrics['recall']:.4f}, "
-            f"f1={metrics['f1']:.4f}"
+            f"train_svm: Done — accuracy={accuracy:.4f}, "
+            f"model='{output1}', metrics='{output2}'"
         )
-
-        # --- Write metrics JSON and upload to S3 ---
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp_out:
-            local_json = tmp_out.name
-            json.dump(metrics, tmp_out, indent=2)
-
-        try:
-            faasr_log(f"train_svm: uploading {output1} to {folder}")
-            faasr_put_file(
-                local_file=local_json,
-                remote_folder=folder,
-                remote_file=output1,
-            )
-            faasr_log("train_svm: upload complete")
-        finally:
-            if os.path.exists(local_json):
-                os.remove(local_json)
 
     finally:
-        if os.path.exists(local_csv):
-            os.remove(local_csv)
+        for p in (tmp_csv_path, tmp_model_path, tmp_metrics_path):
+            if os.path.exists(p):
+                os.remove(p)
     # --- CONTRACT: promises ---
     _faasr_promises(folder)
     # --- end promises ---
