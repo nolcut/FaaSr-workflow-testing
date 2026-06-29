@@ -12,9 +12,9 @@
       "FunctionName": "split",
       "Arguments": {
         "folder": "word_count",
-        "input1": "corpus.txt",
-        "output1": "chunk_{rank}.txt",
-        "output2": "split_metadata.json"
+        "input1": "input_text.txt",
+        "output1": "batch_{rank}.txt",
+        "output2": "split_manifest.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -26,7 +26,8 @@
       "FunctionName": "map",
       "Arguments": {
         "folder": "word_count",
-        "input1": "chunk_{rank}.txt",
+        "input1": "batch_{rank}.txt",
+        "input2": "split_manifest.json",
         "output1": "partial_counts_{rank}.json"
       },
       "InvokeNext": [
@@ -40,8 +41,8 @@
       "Arguments": {
         "folder": "word_count",
         "input1": "partial_counts_{rank}.json",
-        "input2": "split_metadata.json",
-        "output1": "shuffled_{rank}.json"
+        "input2": "split_manifest.json",
+        "output1": "shuffled_counts.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -53,8 +54,8 @@
       "FunctionName": "reduce",
       "Arguments": {
         "folder": "word_count",
-        "input1": "shuffled_{rank}.json",
-        "output1": "word_counts_{rank}.json"
+        "input1": "shuffled_counts.json",
+        "output1": "final_counts_{rank}.json"
       }
     }
   },
