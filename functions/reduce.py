@@ -1,103 +1,106 @@
-import json
 import os
+import json
 import tempfile
 
 
 def reduce(folder: str, input1: str, output1: str) -> None:
     """
-    Reduce phase of MapReduce word count.
+    Ranked reduce step (5 parallel instances).
 
-    Reads the shuffled partition file for this reducer instance, sums all
-    partial counts per word, and writes the final word frequency JSON file.
-
-    Parameters
-    ----------
-    folder  : S3 folder (prefix) for all FaaSr I/O.
-    input1  : Filename template for shuffled partition files,
-              e.g. "shuffled_{rank}.json".
-    output1 : Filename template for final word-count output,
-              e.g. "word_counts_{rank}.json".
+    Each instance:
+      1. Resolves its shard number from faasr_rank().
+      2. Downloads shuffle_result_{rank}.json — a JSON object mapping each
+         assigned word to a list of partial counts (one per mapper that saw it).
+      3. Sums the partial counts for every word in the shard.
+      4. Uploads reduce_result_{rank}.json — a JSON object mapping each word
+         to its total occurrence count across the entire input corpus.
     """
-    # ------------------------------------------------------------------ #
-    # 1. Determine this instance's rank                                    #
-    # ------------------------------------------------------------------ #
+
+    # ── Determine this instance's rank ────────────────────────────────────────
     r = faasr_rank()
     rank = r["rank"]
-    faasr_log(f"reduce[{rank}]: starting (max_rank={r['max_rank']})")
+    faasr_log(f"reduce[{rank}/{r['max_rank']}]: starting")
 
-    # Substitute rank into the filename templates
-    remote_input = input1.format(rank=rank)
-    remote_output = output1.format(rank=rank)
+    # ── Resolve shard-specific filenames ──────────────────────────────────────
+    input_file = input1.format(rank=rank)
+    output_file = output1.format(rank=rank)
 
-    # ------------------------------------------------------------------ #
-    # 2. Download the shuffled partition for this reducer                  #
-    # ------------------------------------------------------------------ #
-    local_in = tempfile.mktemp(suffix=".json")
-    faasr_log(f"reduce[{rank}]: downloading {folder}/{remote_input}")
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_input)
+    faasr_log(f"reduce[{rank}]: input='{input_file}', output='{output_file}'")
+
+    # ── Download the shuffle shard for this reducer ───────────────────────────
+    tmp_dir = tempfile.mkdtemp(prefix="faasr_reduce_")
+    local_input = os.path.join(tmp_dir, input_file)
+
+    faasr_log(f"reduce[{rank}]: downloading '{input_file}' from folder '{folder}'")
+    faasr_get_file(
     # --- CONTRACT: requires ---
-    if not os.path.exists("shuffled_{rank}.json"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file for this reducer rank must exist in S3 before reduce can run")
+    if "shuffle_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffle shard file shuffle_result_{rank}.json must exist in S3 before reduce can run")
         raise SystemExit(1)
-    if not os.path.exists("shuffled_{rank}.json") or os.path.getsize("shuffled_{rank}.json") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file must not be empty; an empty file would yield no word counts")
-        raise SystemExit(1)
-    try:
-        import json as _json; _json.loads(open("shuffled_{rank}.json").read())
-    except Exception as _e:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffled partition file must be valid JSON mapping words to lists of partial counts: " + str(_e))
+    if "shuffle_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffle shard file shuffle_result_{rank}.json must be non-empty — an empty file cannot be parsed as a valid word-to-counts JSON object")
         raise SystemExit(1)
     # --- end requires ---
-
-    if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
-        msg = f"reduce[{rank}]: input file '{remote_input}' is missing or empty in S3 folder '{folder}'"
-        faasr_log(msg)
-        raise FileNotFoundError(msg)
-
-    with open(local_in, "r", encoding="utf-8") as fh:
-        shuffled: dict = json.load(fh)
-    os.remove(local_in)
-
-    faasr_log(f"reduce[{rank}]: loaded {len(shuffled)} unique word(s) from {remote_input}")
-
-    # ------------------------------------------------------------------ #
-    # 3. Sum partial counts for each word                                  #
-    # shuffled[word] = [count_from_mapper_1, count_from_mapper_2, ...]     #
-    # ------------------------------------------------------------------ #
-    word_totals: dict = {}
-    for word, counts in shuffled.items():
-        if not isinstance(counts, list):
-            msg = (
-                f"reduce[{rank}]: unexpected value type for word '{word}': "
-                f"expected list, got {type(counts).__name__}"
-            )
-            faasr_log(msg)
-            raise TypeError(msg)
-        word_totals[word] = sum(counts)
-
-    faasr_log(
-        f"reduce[{rank}]: aggregated {len(word_totals)} word(s); "
-        f"total tokens = {sum(word_totals.values())}"
+        local_file=local_input,
+        remote_folder=folder,
+        remote_file=input_file,
     )
 
-    # ------------------------------------------------------------------ #
-    # 4. Write and upload the final word-frequency JSON                    #
-    # ------------------------------------------------------------------ #
-    local_out = tempfile.mktemp(suffix=".json")
-    with open(local_out, "w", encoding="utf-8") as fh:
-        json.dump(word_totals, fh, indent=2, sort_keys=True)
+    # ── Load and validate ─────────────────────────────────────────────────────
+    with open(local_input, "r", encoding="utf-8") as fh:
+        shard: dict = json.load(fh)
 
-    faasr_log(f"reduce[{rank}]: uploading {folder}/{remote_output}")
+    if not isinstance(shard, dict):
+        msg = (
+            f"reduce[{rank}]: '{input_file}' must be a JSON object "
+            f"(word → list of counts), got {type(shard)}"
+        )
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    os.remove(local_input)
+    faasr_log(f"reduce[{rank}]: loaded {len(shard)} words from '{input_file}'")
+
+    # ── Aggregate partial counts ──────────────────────────────────────────────
+    result: dict[str, int] = {}
+
+    for word, partial_counts in shard.items():
+        if not isinstance(partial_counts, list):
+            msg = (
+                f"reduce[{rank}]: expected a list of counts for word '{word}', "
+                f"got {type(partial_counts)}"
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+        result[word] = sum(int(c) for c in partial_counts)
+
+    faasr_log(
+        f"reduce[{rank}]: aggregated {len(result)} words, "
+        f"total tokens = {sum(result.values())}"
+    )
+
+    # ── Write and upload the result ───────────────────────────────────────────
+    local_output = os.path.join(tmp_dir, output_file)
+
+    with open(local_output, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False)
+
+    faasr_put_file(
     # --- CONTRACT: promises ---
-    if not os.path.exists("word_counts_{rank}.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduce must upload the final word-count JSON file to S3 upon successful completion")
+    if "reduce_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduce output file reduce_result_{rank}.json must exist in S3 after the reducer completes")
         raise SystemExit(1)
-    if not os.path.exists("word_counts_{rank}.json") or os.path.getsize("word_counts_{rank}.json") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output word-count file must not be empty; it must contain at least one aggregated word entry")
+    if "reduce_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Reduce output file reduce_result_{rank}.json must be non-empty — it should contain the aggregated word counts for this shard")
         raise SystemExit(1)
-    # INPUTS_UNCHANGED: shuffled_{rank}.json (tracked at require time)
     # --- end promises ---
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_output)
-    os.remove(local_out)
+        local_file=local_output,
+        remote_folder=folder,
+        remote_file=output_file,
+    )
+    faasr_log(f"reduce[{rank}]: uploaded '{output_file}' → folder '{folder}'")
 
-    faasr_log(f"reduce[{rank}]: complete → {remote_output}")
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+    os.remove(local_output)
+    os.rmdir(tmp_dir)
+    faasr_log(f"reduce[{rank}]: complete")
