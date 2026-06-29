@@ -11,13 +11,13 @@
       "Type": "Python",
       "FunctionName": "split",
       "Arguments": {
-        "folder": "map_reduce_word_count",
+        "folder": "workflow_data",
         "input1": "input_text.txt",
         "output1": "batch_{rank}.txt",
         "output2": "manifest.json"
       },
       "InvokeNext": [
-        "map(3)"
+        "map(4)"
       ]
     },
     "map": {
@@ -25,7 +25,7 @@
       "Type": "Python",
       "FunctionName": "map",
       "Arguments": {
-        "folder": "map_reduce_word_count",
+        "folder": "workflow_data",
         "input1": "batch_{rank}.txt",
         "output1": "map_result_{rank}.json"
       },
@@ -38,7 +38,7 @@
       "Type": "Python",
       "FunctionName": "shuffle",
       "Arguments": {
-        "folder": "map_reduce_word_count",
+        "folder": "workflow_data",
         "input1": "map_result_{rank}.json",
         "input2": "manifest.json",
         "output1": "shuffle_shard_{rank}.json"
@@ -52,7 +52,7 @@
       "Type": "Python",
       "FunctionName": "reduce",
       "Arguments": {
-        "folder": "map_reduce_word_count",
+        "folder": "workflow_data",
         "input1": "shuffle_shard_{rank}.json",
         "output1": "reduce_result_{rank}.json"
       }
