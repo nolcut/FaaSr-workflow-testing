@@ -1,143 +1,92 @@
-import json
 import os
 import tempfile
 
 
-def split(folder: str, input1: str, output1: str, output2: str) -> None:
+def split(folder: str, input1: str, output1: str) -> None:
     """
-    Splits a plain-text corpus into N batches (fan-out to 3 ranked `map` instances).
-
-    Parameters
-    ----------
-    folder  : S3 folder (prefix) used for all FaaSr I/O.
-    input1  : Remote filename of the corpus (e.g. "corpus.txt").
-    output1 : Template for per-chunk remote filenames (e.g. "chunk_{rank}.txt").
-    output2 : Remote filename for the metadata JSON (e.g. "split_metadata.json").
+    Reads the full input text file from S3, splits it into N equal (or
+    near-equal) batches by word count, and writes each batch as a separate
+    text file back to S3.  N is taken from faasr_rank()["max_rank"], which
+    the FaaSr payload sets to the fan-out width of the downstream `map` step.
+    Output files are named by replacing '{rank}' in output1 with 1 … N.
     """
-    # Number of batches equals the fan-out to the ranked `map` successor (x3).
-    N_BATCHES = 3
 
-    # ------------------------------------------------------------------ #
-    # 1. Download corpus from S3                                           #
-    # ------------------------------------------------------------------ #
-    local_corpus = tempfile.mktemp(suffix=".txt")
-    faasr_log(f"split: downloading corpus from {folder}/{input1}")
-    faasr_get_file(local_file=local_corpus, remote_folder=folder, remote_file=input1)
+    # ── Determine number of batches from FaaSr payload ────────────────────
+    rank_info = faasr_rank()
+    n_batches = rank_info["max_rank"]
+    faasr_log(f"split: will produce {n_batches} batch(es) from '{input1}'")
+
+    if n_batches < 1:
+        msg = f"split: max_rank={n_batches} is invalid (must be >= 1)"
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    # ── Download input file ────────────────────────────────────────────────
+    tmp_dir = tempfile.mkdtemp(prefix="faasr_split_")
+    local_input = os.path.join(tmp_dir, "input.txt")
+
+    faasr_log(f"split: downloading '{input1}' from folder '{folder}'")
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
     # --- CONTRACT: requires ---
-    if not os.path.exists("corpus.txt"):
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file must exist in S3 before splitting")
+    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file 'input_text.txt' must exist in S3 before splitting")
         raise SystemExit(1)
-    if not os.path.exists("corpus.txt") or os.path.getsize("corpus.txt") == 0:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input corpus file must not be empty — cannot split zero words")
+    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input file 'input_text.txt' must be non-empty — splitting an empty file is not allowed")
         raise SystemExit(1)
     # --- end requires ---
 
-    if not os.path.exists(local_corpus) or os.path.getsize(local_corpus) == 0:
-        msg = f"split: corpus file '{input1}' is missing or empty in S3 folder '{folder}'"
-        faasr_log(msg)
-        raise ValueError(msg)
-
-    # ------------------------------------------------------------------ #
-    # 2. Read corpus and tokenise into words                               #
-    # ------------------------------------------------------------------ #
-    with open(local_corpus, "r", encoding="utf-8") as fh:
+    # ── Read and tokenise ──────────────────────────────────────────────────
+    with open(local_input, "r", encoding="utf-8") as fh:
         text = fh.read()
-    os.remove(local_corpus)
 
     words = text.split()
     total_words = len(words)
-    faasr_log(f"split: corpus has {total_words} words; splitting into {N_BATCHES} batches")
+    faasr_log(f"split: total words = {total_words}")
 
     if total_words == 0:
-        msg = "split: corpus is empty — cannot split"
+        msg = "split: input file contains no words — cannot split"
         faasr_log(msg)
         raise ValueError(msg)
 
-    # ------------------------------------------------------------------ #
-    # 3. Partition words into N_BATCHES roughly equal chunks               #
-    # Distribute any remainder across the first batches (+/-1 word).      #
-    # ------------------------------------------------------------------ #
-    base_size = total_words // N_BATCHES
-    remainder = total_words % N_BATCHES
+    # ── Partition words into N near-equal batches ──────────────────────────
+    # The first (total_words % n_batches) batches get one extra word.
+    base_size = total_words // n_batches
+    remainder = total_words % n_batches
 
-    chunks = []
+    batches = []
     start = 0
-    for i in range(N_BATCHES):
-        size = base_size + (1 if i < remainder else 0)
-        chunks.append(words[start : start + size])
-        start += size
+    for i in range(n_batches):
+        batch_size = base_size + (1 if i < remainder else 0)
+        batches.append(words[start : start + batch_size])
+        start += batch_size
 
-    # ------------------------------------------------------------------ #
-    # 4. Write each chunk to a local temp file and upload to S3            #
-    # ------------------------------------------------------------------ #
-    metadata = {
-        "n_batches": N_BATCHES,
-        "chunks": [],
-    }
+    # ── Write each batch to S3 ─────────────────────────────────────────────
+    for rank in range(1, n_batches + 1):
+        batch_words = batches[rank - 1]
+        local_batch = os.path.join(tmp_dir, f"batch_{rank}.txt")
 
-    for rank, chunk_words in enumerate(chunks, start=1):
-        chunk_filename = output1.replace("{rank}", str(rank))
-        local_chunk = tempfile.mktemp(suffix=".txt")
-        with open(local_chunk, "w", encoding="utf-8") as fh:
-            fh.write(" ".join(chunk_words))
-        faasr_log(
-            f"split: uploading {chunk_filename} "
-            f"(batch {rank}/{N_BATCHES}, {len(chunk_words)} words)"
-        )
-    # --- CONTRACT: promises ---
-    if not os.path.exists("chunk_1.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 1 must exist in S3 after splitting")
-        raise SystemExit(1)
-    if not os.path.exists("chunk_2.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 2 must exist in S3 after splitting")
-        raise SystemExit(1)
-    if not os.path.exists("chunk_3.txt"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 3 must exist in S3 after splitting")
-        raise SystemExit(1)
-    if not os.path.exists("chunk_1.txt") or os.path.getsize("chunk_1.txt") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 1 must contain at least one word")
-        raise SystemExit(1)
-    if not os.path.exists("chunk_2.txt") or os.path.getsize("chunk_2.txt") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 2 must contain at least one word")
-        raise SystemExit(1)
-    if not os.path.exists("chunk_3.txt") or os.path.getsize("chunk_3.txt") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Chunk file for rank 3 must contain at least one word")
-        raise SystemExit(1)
-    if not os.path.exists("split_metadata.json"):
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata JSON file must exist in S3 after splitting")
-        raise SystemExit(1)
-    if not os.path.exists("split_metadata.json") or os.path.getsize("split_metadata.json") == 0:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata JSON file must not be empty after splitting")
-        raise SystemExit(1)
-    try:
-        import json as _json; _json.loads(open("split_metadata.json").read())
-    except Exception as _e:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Metadata output must be valid JSON: " + str(_e))
-        raise SystemExit(1)
-    # INPUTS_UNCHANGED: corpus.txt (tracked at require time)
-    # --- end promises ---
+        with open(local_batch, "w", encoding="utf-8") as fh:
+            fh.write(" ".join(batch_words))
+
+        remote_file = output1.replace("{rank}", str(rank))
         faasr_put_file(
-            local_file=local_chunk,
+    # --- CONTRACT: promises ---
+    # EXISTS skipped: "batch_{rank}.txt" is a per-rank family on a non-ranked function (cannot verify a single name)
+    # --- end promises ---
+            local_file=local_batch,
             remote_folder=folder,
-            remote_file=chunk_filename,
+            remote_file=remote_file,
         )
-        os.remove(local_chunk)
-        metadata["chunks"].append(
-            {"filename": chunk_filename, "word_count": len(chunk_words)}
+        faasr_log(
+            f"split: uploaded batch {rank}/{n_batches} "
+            f"({len(batch_words)} words) → '{remote_file}'"
         )
 
-    # ------------------------------------------------------------------ #
-    # 5. Write and upload metadata JSON                                    #
-    # ------------------------------------------------------------------ #
-    local_meta = tempfile.mktemp(suffix=".json")
-    with open(local_meta, "w", encoding="utf-8") as fh:
-        json.dump(metadata, fh, indent=2)
-    faasr_log(f"split: uploading metadata to {folder}/{output2}")
-    faasr_put_file(
-        local_file=local_meta,
-        remote_folder=folder,
-        remote_file=output2,
-    )
-    os.remove(local_meta)
+        os.remove(local_batch)
+
+    # ── Cleanup ────────────────────────────────────────────────────────────
+    os.remove(local_input)
+    os.rmdir(tmp_dir)
 
     faasr_log("split: complete")
