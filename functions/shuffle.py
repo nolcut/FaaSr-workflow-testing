@@ -6,23 +6,14 @@ import tempfile
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
     if "manifest.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: manifest.json must be present in S3 before shuffle can run — it provides the number of mapper batches")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: manifest.json must be present in S3 before shuffle can run")
         raise SystemExit(1)
 def _faasr_promises(folder):
     if "shuffle_shard_1.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_1.json was not found in S3 after shuffle completed — reducer shard 1 was not uploaded")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_1.json was not found in S3 after shuffle completed")
         raise SystemExit(1)
     if "shuffle_shard_2.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_2.json was not found in S3 after shuffle completed — reducer shard 2 was not uploaded")
-        raise SystemExit(1)
-    if "shuffle_shard_3.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_3.json was not found in S3 after shuffle completed — reducer shard 3 was not uploaded")
-        raise SystemExit(1)
-    if "shuffle_shard_4.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_4.json was not found in S3 after shuffle completed — reducer shard 4 was not uploaded")
-        raise SystemExit(1)
-    if "shuffle_shard_5.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_5.json was not found in S3 after shuffle completed — reducer shard 5 was not uploaded")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_2.json was not found in S3 after shuffle completed")
         raise SystemExit(1)
 # --- end contract helpers ---
 def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
@@ -30,12 +21,12 @@ def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
     Reads all intermediate word count JSON files produced by all mapper instances
     from S3. Merges them into a grouped structure keyed by word where each value is
     a list of partial counts (one per mapper), then partitions this grouped structure
-    into 5 reducer shards and writes one shuffle shard file per reducer to S3.
+    into 2 reducer shards and writes one shuffle shard file per reducer to S3.
     """
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    NUM_REDUCERS = 5  # fan-out to reduce (×5); THIS function is unranked — hardcode 5
+    NUM_REDUCERS = 2  # fan-out to reduce (×2); THIS function is unranked — hardcode 2
 
     # ── 1. Download and parse manifest ───────────────────────────────────────
     local_manifest = tempfile.mktemp(suffix=".json")
@@ -47,33 +38,30 @@ def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
     os.unlink(local_manifest)
 
     num_batches = manifest.get("num_batches")
-
-    # ── 2. Determine map result files to fetch ───────────────────────────────
-    # Primary: use num_batches from manifest to fetch exactly the right files.
-    # Fallback: discover via folder listing when manifest lacks the count.
     if num_batches is not None:
-        faasr_log(f"Manifest reports {num_batches} mapper batch(es); fetching ranks 1..{num_batches}")
-        map_result_files = [
-            input1.replace("{rank}", str(i)) for i in range(1, num_batches + 1)
-        ]
-        faasr_log(f"Map result files to fetch: {map_result_files}")
+        faasr_log(f"Manifest reports {num_batches} mapper batch(es)")
     else:
         faasr_log(
-            f"Manifest does not contain 'num_batches'; "
-            f"discovering map result files via folder listing in '{folder}'"
+            "Manifest does not contain 'num_batches'; will discover map result files "
+            "via folder listing"
         )
-        all_files = faasr_get_folder_list(prefix=folder)
-        map_result_files = sorted(
-            f.rsplit("/", 1)[-1]
-            for f in all_files
-            if f.rsplit("/", 1)[-1].startswith("map_result_")
-            and f.rsplit("/", 1)[-1].endswith(".json")
-        )
-        faasr_log(f"Discovered {len(map_result_files)} map result file(s): {map_result_files}")
+
+    # ── 2. Discover all map_result_*.json files via folder listing ────────────
+    faasr_log(f"Listing files in folder '{folder}' to find map result files")
+    all_files = faasr_get_folder_list(prefix=folder)
+
+    map_result_files = sorted(
+        f.rsplit("/", 1)[-1]
+        for f in all_files
+        if f.rsplit("/", 1)[-1].startswith("map_result_")
+        and f.rsplit("/", 1)[-1].endswith(".json")
+    )
+
+    faasr_log(f"Found {len(map_result_files)} map result file(s): {map_result_files}")
 
     if not map_result_files:
         msg = (
-            f"No map_result_*.json files to process for folder '{folder}' — "
+            f"No map_result_*.json files found in folder '{folder}' — "
             "cannot shuffle; ensure all map instances have completed"
         )
         faasr_log(msg)
