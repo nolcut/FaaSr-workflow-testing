@@ -16,14 +16,14 @@ def _faasr_promises(folder):
 def split(folder: str, input1: str, output1: str, output2: str) -> None:
     """
     Reads the full input text from S3, tokenises it into words, partitions the
-    words into 3 approximately equal batches for parallel map processing, uploads
+    words into 4 approximately equal batches for parallel map processing, uploads
     each batch as a separate file, and writes a manifest JSON describing the
     batches for the downstream shuffle step.
     """
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    num_batches = 3  # hard-coded: map runs as 3 parallel instances
+    num_batches = 4  # hard-coded: map runs as 4 parallel instances
 
     # ── 1. Download input text ────────────────────────────────────────────────
     local_input = tempfile.mktemp(suffix=".txt")
