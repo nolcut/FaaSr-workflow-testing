@@ -1,0 +1,92 @@
+{
+  "FunctionInvoke": "split",
+  "WorkflowName": "word-count-mapreduce",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "split": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "split",
+      "Arguments": {
+        "folder": "workflow_data2",
+        "input1": "input_text.txt",
+        "output1": "batch_{rank}.txt",
+        "output2": "manifest.json"
+      },
+      "InvokeNext": [
+        "map(2)"
+      ]
+    },
+    "map": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "map",
+      "Arguments": {
+        "folder": "workflow_data2",
+        "input1": "batch_{rank}.txt",
+        "output1": "map_result_{rank}.json"
+      },
+      "InvokeNext": [
+        "shuffle"
+      ]
+    },
+    "shuffle": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "shuffle",
+      "Arguments": {
+        "folder": "workflow_data2",
+        "input1": "map_result_{rank}.json",
+        "input2": "manifest.json",
+        "output1": "shuffle_shard_{rank}.json"
+      },
+      "InvokeNext": [
+        "reduce(2)"
+      ]
+    },
+    "reduce": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "reduce",
+      "Arguments": {
+        "folder": "workflow_data2",
+        "input1": "shuffle_shard_{rank}.json",
+        "output1": "reduce_result_{rank}.json"
+      }
+    }
+  },
+  "ActionContainers": {
+    "split": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
+    "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
+    "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
+    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py"
+  }
+}
