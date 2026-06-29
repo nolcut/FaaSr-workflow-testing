@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import tempfile
@@ -6,117 +5,124 @@ import tempfile
 
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
-    if "split_metadata.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: split_metadata.json must exist in S3 before shuffle can determine the number of map batches")
+    if "manifest.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: manifest.json must be present in S3 before shuffle can run")
+        raise SystemExit(1)
+def _faasr_promises(folder):
+    if "shuffle_shard_1.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_1.json was not found in S3 after shuffle completed")
+        raise SystemExit(1)
+    if "shuffle_shard_2.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_2.json was not found in S3 after shuffle completed")
+        raise SystemExit(1)
+    if "shuffle_shard_3.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_3.json was not found in S3 after shuffle completed")
+        raise SystemExit(1)
+    if "shuffle_shard_4.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_4.json was not found in S3 after shuffle completed")
+        raise SystemExit(1)
+    if "shuffle_shard_5.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_5.json was not found in S3 after shuffle completed")
         raise SystemExit(1)
 # --- end contract helpers ---
 def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Read all partial word count JSON files from map workers, merge them,
-    partition words into M=5 reducer buckets by deterministic hash, and write
-    one shuffle_bucket_{rank}.json per bucket containing word -> [count1, count2, ...]
-    for words assigned to that bucket.
+    Reads all intermediate word count JSON files produced by all mapper instances
+    from S3. Merges them into a grouped structure keyed by word where each value is
+    a list of partial counts (one per mapper), then partitions this grouped structure
+    into 5 reducer shards and writes one shuffle shard file per reducer to S3.
     """
-
-    # Fan-out to reduce is ×5 (hardcoded per CONTEXT.md — do NOT call faasr_rank() here)
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    M = 5
+    NUM_REDUCERS = 5  # fan-out to reduce (×5); THIS function is unranked — hardcode 5
 
-    # --- Download and parse split metadata ---
-    faasr_log(f"shuffle: downloading split metadata '{input2}' from folder {folder}")
-    local_meta = tempfile.mktemp(suffix=".json")
-    faasr_get_file(local_file=local_meta, remote_folder=folder, remote_file=input2)
+    # ── 1. Download and parse manifest ───────────────────────────────────────
+    local_manifest = tempfile.mktemp(suffix=".json")
+    faasr_log(f"Downloading manifest '{input2}' from folder '{folder}'")
+    faasr_get_file(local_file=local_manifest, remote_folder=folder, remote_file=input2)
 
-    with open(local_meta, "r", encoding="utf-8") as fh:
-        metadata = json.load(fh)
-    os.remove(local_meta)
+    with open(local_manifest, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    os.unlink(local_manifest)
 
-    n_batches = metadata.get("n_batches")
-    if n_batches is None:
-        msg = (
-            f"shuffle: required key 'n_batches' missing from '{input2}' — "
-            f"got keys: {list(metadata.keys())}"
+    num_batches = manifest.get("num_batches")
+    if num_batches is not None:
+        faasr_log(f"Manifest reports {num_batches} mapper batch(es)")
+    else:
+        faasr_log(
+            "Manifest does not contain 'num_batches'; will discover map result files "
+            "via folder listing"
         )
-        faasr_log(f"ERROR: {msg}")
-        raise KeyError(msg)
 
-    faasr_log(f"shuffle: split stage produced {n_batches} map batch(es)")
+    # ── 2. Discover all map_result_*.json files via folder listing ────────────
+    faasr_log(f"Listing files in folder '{folder}' to find map result files")
+    all_files = faasr_get_folder_list(prefix=folder)
 
-    # --- Discover partial count files written by map workers ---
-    # Use faasr_get_folder_list to dynamically find all partial_counts_*.json files;
-    # never assume a fixed count or use boto3.
-    faasr_log(f"shuffle: listing partial count files in folder {folder}")
-    all_names = faasr_get_folder_list(prefix=f"{folder}/partial_counts_")
-
-    # Strip any folder prefix from returned names and keep only partial_counts_*.json
-    partial_files = sorted([
-        name.rsplit("/", 1)[-1]
-        for name in all_names
-        if name.rsplit("/", 1)[-1].startswith("partial_counts_")
-        and name.rsplit("/", 1)[-1].endswith(".json")
-    ])
-
-    if not partial_files:
-        msg = f"shuffle: no 'partial_counts_*.json' files found in folder {folder}"
-        faasr_log(f"ERROR: {msg}")
-        raise FileNotFoundError(msg)
-
-    faasr_log(
-        f"shuffle: discovered {len(partial_files)} partial count file(s): {partial_files}"
+    map_result_files = sorted(
+        f.rsplit("/", 1)[-1]
+        for f in all_files
+        if f.rsplit("/", 1)[-1].startswith("map_result_")
+        and f.rsplit("/", 1)[-1].endswith(".json")
     )
 
-    # --- Read all partial counts and partition words into M buckets ---
-    # Each bucket maps: word -> list of counts (one entry per map worker that saw the word)
-    buckets: list[dict] = [{} for _ in range(M)]
+    faasr_log(f"Found {len(map_result_files)} map result file(s): {map_result_files}")
 
-    for pc_filename in partial_files:
-        faasr_log(f"shuffle: downloading {pc_filename} from folder {folder}")
-        local_pc = tempfile.mktemp(suffix=".json")
-        faasr_get_file(local_file=local_pc, remote_folder=folder, remote_file=pc_filename)
-
-        with open(local_pc, "r", encoding="utf-8") as fh:
-            word_counts = json.load(fh)
-        os.remove(local_pc)
-
-        if not isinstance(word_counts, dict):
-            msg = (
-                f"shuffle: '{pc_filename}' is not a JSON object — "
-                f"expected dict{{word: count}}, got {type(word_counts).__name__}"
-            )
-            faasr_log(f"ERROR: {msg}")
-            raise ValueError(msg)
-
-        faasr_log(
-            f"shuffle: partitioning {len(word_counts)} word(s) from {pc_filename}"
+    if not map_result_files:
+        msg = (
+            f"No map_result_*.json files found in folder '{folder}' — "
+            "cannot shuffle; ensure all map instances have completed"
         )
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    # ── 3. Download and merge all mapper outputs ──────────────────────────────
+    # merged: { word: [count_from_mapper_A, count_from_mapper_B, ...] }
+    merged: dict = {}
+
+    for map_file in map_result_files:
+        local_map = tempfile.mktemp(suffix=".json")
+        faasr_log(f"Downloading '{map_file}' from folder '{folder}'")
+        faasr_get_file(local_file=local_map, remote_folder=folder, remote_file=map_file)
+
+        with open(local_map, "r", encoding="utf-8") as fh:
+            word_counts = json.load(fh)
+        os.unlink(local_map)
 
         for word, count in word_counts.items():
-            # Deterministic bucket assignment: MD5 hex digest modulo M
-            bucket_idx = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % M
-            if word not in buckets[bucket_idx]:
-                buckets[bucket_idx][word] = []
-            buckets[bucket_idx][word].append(count)
-
-    # --- Write and upload one shuffle bucket file per reducer instance ---
-    for i in range(1, M + 1):
-        bucket_data = buckets[i - 1]
-        remote_output = output1.replace("{rank}", str(i))
-
-        local_out = tempfile.mktemp(suffix=".json")
-        with open(local_out, "w", encoding="utf-8") as fh:
-            json.dump(bucket_data, fh)
-
-        faasr_log(
-            f"shuffle: uploading bucket {i}/{M} "
-            f"({len(bucket_data)} unique word(s)) → {remote_output}"
-        )
-        faasr_put_file(
-            local_file=local_out, remote_folder=folder, remote_file=remote_output
-        )
-        os.remove(local_out)
+            if word not in merged:
+                merged[word] = []
+            merged[word].append(count)
 
     faasr_log(
-        f"shuffle: complete — wrote {M} shuffle buckets to folder {folder} for reduce"
+        f"Merged {len(merged)} unique word(s) from {len(map_result_files)} mapper(s)"
     )
+
+    # ── 4. Partition words into NUM_REDUCERS shards ───────────────────────────
+    # Use Python's built-in hash for consistent within-process word assignment.
+    # Each word maps to exactly one shard; shards are disjoint and cover all words.
+    shards: list = [{} for _ in range(NUM_REDUCERS)]
+    for word, counts in merged.items():
+        shard_idx = hash(word) % NUM_REDUCERS
+        shards[shard_idx][word] = counts
+
+    for idx, shard in enumerate(shards, start=1):
+        faasr_log(f"Shard {idx}: {len(shard)} word(s)")
+
+    # ── 5. Write and upload each reducer shard ────────────────────────────────
+    for i in range(1, NUM_REDUCERS + 1):
+        local_shard = tempfile.mktemp(suffix=".json")
+        with open(local_shard, "w", encoding="utf-8") as fh:
+            json.dump(shards[i - 1], fh, indent=2, sort_keys=True)
+
+        remote_shard = output1.replace("{rank}", str(i))
+        faasr_log(f"Uploading shuffle shard '{remote_shard}' to folder '{folder}'")
+        faasr_put_file(
+            local_file=local_shard, remote_folder=folder, remote_file=remote_shard
+        )
+        os.unlink(local_shard)
+
+    faasr_log("shuffle complete")
+    # --- CONTRACT: promises ---
+    _faasr_promises(folder)
+    # --- end promises ---
