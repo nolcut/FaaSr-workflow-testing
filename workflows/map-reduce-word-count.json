@@ -11,10 +11,10 @@
       "Type": "Python",
       "FunctionName": "split",
       "Arguments": {
-        "folder": "word_count",
-        "input1": "input_text.txt",
+        "folder": "map_reduce_word_count",
+        "input1": "corpus.txt",
         "output1": "batch_{rank}.txt",
-        "output2": "split_manifest.json"
+        "output2": "split_metadata.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -25,10 +25,9 @@
       "Type": "Python",
       "FunctionName": "map",
       "Arguments": {
-        "folder": "word_count",
+        "folder": "map_reduce_word_count",
         "input1": "batch_{rank}.txt",
-        "input2": "split_manifest.json",
-        "output1": "partial_counts_{rank}.json"
+        "output1": "map_result_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -39,10 +38,10 @@
       "Type": "Python",
       "FunctionName": "shuffle",
       "Arguments": {
-        "folder": "word_count",
-        "input1": "partial_counts_{rank}.json",
-        "input2": "split_manifest.json",
-        "output1": "shuffled_counts.json"
+        "folder": "map_reduce_word_count",
+        "input1": "map_result_{rank}.json",
+        "input2": "split_metadata.json",
+        "output1": "shuffle_bucket_{rank}.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -53,9 +52,9 @@
       "Type": "Python",
       "FunctionName": "reduce",
       "Arguments": {
-        "folder": "word_count",
-        "input1": "shuffled_counts.json",
-        "output1": "final_counts_{rank}.json"
+        "folder": "map_reduce_word_count",
+        "input1": "shuffle_bucket_{rank}.json",
+        "output1": "reduce_result_{rank}.json"
       }
     }
   },
