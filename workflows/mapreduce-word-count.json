@@ -13,7 +13,8 @@
       "Arguments": {
         "folder": "mapreduce_word_count",
         "input1": "input_text.txt",
-        "output1": "batch_{rank}.txt"
+        "output1": "batch_{rank}.txt",
+        "output2": "split_metadata.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -26,7 +27,7 @@
       "Arguments": {
         "folder": "mapreduce_word_count",
         "input1": "batch_{rank}.txt",
-        "output1": "map_result_{rank}.json"
+        "output1": "partial_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -38,8 +39,9 @@
       "FunctionName": "shuffle",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "map_result_{rank}.json",
-        "output1": "shuffle_result_{rank}.json"
+        "input1": "partial_counts_{rank}.json",
+        "input2": "split_metadata.json",
+        "output1": "shuffle_bucket_{rank}.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -51,8 +53,8 @@
       "FunctionName": "reduce",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "shuffle_result_{rank}.json",
-        "output1": "reduce_result_{rank}.json"
+        "input1": "shuffle_bucket_{rank}.json",
+        "output1": "word_counts_{rank}.json"
       }
     }
   },
