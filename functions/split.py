@@ -14,13 +14,13 @@ def split(folder: str, input1: str, output1: str, output2: str) -> None:
     os.close(fd)
     try:
         faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
-    # --- CONTRACT: requires ---
-    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file input_text.txt must exist in S3 before split can run")
-        raise SystemExit(1)
-    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file input_text.txt must be non-empty; split requires at least one word to partition")
-        raise SystemExit(1)
+        # --- CONTRACT: requires ---
+        if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+            faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file input_text.txt must exist in S3 before split can run")
+            raise SystemExit(1)
+        if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(faasr_prefix=folder)]:
+            faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file input_text.txt must be non-empty; split requires at least one word to partition")
+            raise SystemExit(1)
     # --- end requires ---
     except Exception as e:
         faasr_log(f"split: ERROR — could not retrieve {input1} from S3: {e}")
