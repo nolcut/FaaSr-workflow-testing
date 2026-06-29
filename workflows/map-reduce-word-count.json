@@ -12,9 +12,9 @@
       "FunctionName": "split",
       "Arguments": {
         "folder": "map_reduce_word_count",
-        "input1": "corpus.txt",
+        "input1": "input_text.txt",
         "output1": "batch_{rank}.txt",
-        "output2": "split_metadata.json"
+        "output2": "manifest.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -40,8 +40,8 @@
       "Arguments": {
         "folder": "map_reduce_word_count",
         "input1": "map_result_{rank}.json",
-        "input2": "split_metadata.json",
-        "output1": "shuffle_bucket_{rank}.json"
+        "input2": "manifest.json",
+        "output1": "shuffle_shard_{rank}.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -53,7 +53,7 @@
       "FunctionName": "reduce",
       "Arguments": {
         "folder": "map_reduce_word_count",
-        "input1": "shuffle_bucket_{rank}.json",
+        "input1": "shuffle_shard_{rank}.json",
         "output1": "reduce_result_{rank}.json"
       }
     }
