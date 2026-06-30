@@ -16,7 +16,7 @@
       },
       "InvokeNext": [
         "train-svm",
-        "train-rf"
+        "train-random-forest"
       ]
     },
     "train-svm": {
@@ -26,25 +26,26 @@
       "Arguments": {
         "folder": "ml_training_pipeline",
         "input1": "classification_dataset.csv",
-        "output1": "svm_model.joblib",
-        "output2": "svm_metrics.json"
+        "output1": "svm_metrics.json",
+        "output2": "svm_model.joblib"
       }
     },
-    "train-rf": {
+    "train-random-forest": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_rf",
+      "FunctionName": "train_random_forest",
       "Arguments": {
         "folder": "ml_training_pipeline",
         "input1": "classification_dataset.csv",
-        "output1": "rf_metrics.json"
+        "output1": "random_forest_metrics.json",
+        "output2": "random_forest_model.joblib"
       }
     }
   },
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "train-svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train-rf": "ghcr.io/faasr/github-actions-python:latest"
+    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -68,7 +69,7 @@
   "FunctionGitRepo": {
     "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
     "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
-    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py"
+    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py"
   },
   "PyPIPackageDownloads": {
     "gen": [
@@ -82,9 +83,10 @@
       "numpy",
       "joblib"
     ],
-    "train_rf": [
+    "train_random_forest": [
       "scikit-learn",
-      "pandas"
+      "pandas",
+      "joblib"
     ]
   }
 }
