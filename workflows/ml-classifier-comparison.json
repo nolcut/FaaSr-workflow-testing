@@ -1,0 +1,115 @@
+{
+  "FunctionInvoke": "gen",
+  "WorkflowName": "ml-classifier-comparison",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "gen": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "gen",
+      "Arguments": {
+        "folder": "workflow_data",
+        "output1": "classification_dataset.csv"
+      },
+      "InvokeNext": [
+        "train-svm",
+        "train-random-forest"
+      ]
+    },
+    "train-svm": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_svm",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "classification_dataset.csv",
+        "output1": "svm_metrics.json",
+        "output2": "svm_model.joblib"
+      },
+      "InvokeNext": [
+        "visualize"
+      ]
+    },
+    "train-random-forest": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_random_forest",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "classification_dataset.csv",
+        "output1": "random_forest_metrics.json",
+        "output2": "random_forest_model.joblib"
+      },
+      "InvokeNext": [
+        "visualize"
+      ]
+    },
+    "visualize": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "svm_metrics.json",
+        "input2": "random_forest_metrics.json",
+        "output1": "classifier_comparison.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "gen": "ghcr.io/faasr/github-actions-python:latest",
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest",
+    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
+    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py",
+    "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
+  },
+  "PyPIPackageDownloads": {
+    "gen": [
+      "scikit-learn",
+      "pandas",
+      "numpy"
+    ],
+    "train_svm": [
+      "scikit-learn",
+      "pandas",
+      "numpy",
+      "joblib"
+    ],
+    "train_random_forest": [
+      "scikit-learn",
+      "pandas",
+      "joblib"
+    ],
+    "visualize": [
+      "matplotlib",
+      "numpy"
+    ]
+  }
+}
