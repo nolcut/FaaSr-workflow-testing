@@ -12,7 +12,6 @@
       "FunctionName": "gen",
       "Arguments": {
         "folder": "workflow_data",
-        "input1": "gen_config.json",
         "output1": "classification_dataset.csv"
       },
       "InvokeNext": [
