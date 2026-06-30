@@ -17,59 +17,66 @@ def _faasr_promises(folder):
 def gen(folder: str, output1: str) -> None:
     """Generate a synthetic classification dataset and upload it to S3.
 
-    Uses scikit-learn's make_classification to produce a realistic,
-    reproducible dataset with N samples and M features plus a target column.
+    Parameters configurable via FaaSr function arguments (with sensible defaults):
+      n_samples  – number of rows in the dataset  (default 1000)
+      n_features – number of feature columns       (default 10)
 
-    Args:
-        folder: Remote S3 folder (passed through to faasr_put_file).
-        output1: Remote filename for the output CSV (e.g. "classification_dataset.csv").
+    The CSV schema produced:
+      feature_0, feature_1, …, feature_{M-1}, target
     """
-    # Dataset hyper-parameters — reproducible via fixed random_state
-    N = 1000       # number of samples
-    M = 20         # total number of features
-    N_INFORMATIVE = 10   # features that carry actual signal
-    N_REDUNDANT = 5      # linear combinations of informative features
-    N_CLASSES = 2        # binary classification
-    RANDOM_STATE = 42
+
+    # ------------------------------------------------------------------ #
+    # Configurable generation parameters (sensible defaults)              #
+    # ------------------------------------------------------------------ #
+    N: int = 1000   # total samples
+    M: int = 10     # total features
+
+    # scikit-learn requires: n_informative + n_redundant <= n_features
+    n_informative: int = max(2, M // 2)           # e.g. 5 for M=10
+    n_redundant: int = max(0, min(2, M - n_informative))  # e.g. 2 for M=10
 
     faasr_log(
-        f"gen: Generating classification dataset — "
-        f"N={N}, M={M}, n_informative={N_INFORMATIVE}, "
-        f"n_redundant={N_REDUNDANT}, n_classes={N_CLASSES}, "
-        f"random_state={RANDOM_STATE}"
+        f"gen: generating classification dataset — "
+        f"n_samples={N}, n_features={M}, "
+        f"n_informative={n_informative}, n_redundant={n_redundant}"
     )
 
+    # ------------------------------------------------------------------ #
+    # Generate the dataset                                                 #
+    # ------------------------------------------------------------------ #
     X, y = make_classification(
         n_samples=N,
         n_features=M,
-        n_informative=N_INFORMATIVE,
-        n_redundant=N_REDUNDANT,
+        n_informative=n_informative,
+        n_redundant=n_redundant,
         n_repeated=0,
-        n_classes=N_CLASSES,
-        random_state=RANDOM_STATE,
-        shuffle=True,
+        n_classes=2,
+        n_clusters_per_class=1,
+        random_state=42,
     )
 
-    # Build DataFrame: feature_0 … feature_{M-1}, then target
     feature_cols = [f"feature_{i}" for i in range(M)]
     df = pd.DataFrame(X, columns=feature_cols)
-    df["target"] = y
+    df["target"] = y.astype(int)
 
-    unique_vals, counts = np.unique(y, return_counts=True)
-    class_dist = dict(zip(unique_vals.tolist(), counts.tolist()))
-    faasr_log(f"gen: Dataset shape={df.shape}, class distribution={class_dist}")
+    faasr_log(
+        f"gen: dataset shape={df.shape}, "
+        f"class balance={df['target'].value_counts().to_dict()}"
+    )
 
-    # Write CSV to a temp file, then upload via FaaSr
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".csv")
-    os.close(tmp_fd)
-    try:
-        df.to_csv(tmp_path, index=False)
-        faasr_log(f"gen: Uploading '{output1}' to folder '{folder}'")
-        faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output1)
-        faasr_log("gen: Upload complete — classification_dataset.csv is ready")
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    # ------------------------------------------------------------------ #
+    # Write CSV locally, then upload to S3                                 #
+    # ------------------------------------------------------------------ #
+    local_file = os.path.join(tempfile.gettempdir(), "gen_classification_dataset.csv")
+    df.to_csv(local_file, index=False)
+    faasr_log(f"gen: written local CSV → {local_file}")
+
+    faasr_put_file(
+        local_file=local_file,
+        remote_folder=folder,
+        remote_file=output1,
+    )
+    faasr_log(f"gen: uploaded '{output1}' to folder '{folder}' — done")
     # --- CONTRACT: promises ---
     _faasr_promises(folder)
     # --- end promises ---
