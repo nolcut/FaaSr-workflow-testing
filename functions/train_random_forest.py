@@ -3,146 +3,128 @@ import os
 import tempfile
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
     if "classification_dataset.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input classification dataset CSV must exist in S3 before training can begin")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input classification dataset 'classification_dataset.csv' must exist in S3 before training can begin")
         raise SystemExit(1)
 
 
 def _faasr_promises(folder):
     if "random_forest_metrics.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Random Forest evaluation metrics JSON was not uploaded to S3 after training")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Training metrics JSON 'random_forest_metrics.json' was not found in S3 after training completed")
         raise SystemExit(1)
     if "random_forest_model.joblib" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Serialized Random Forest model was not uploaded to S3 after training")
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Serialised Random Forest model 'random_forest_model.joblib' was not found in S3 after training completed")
         raise SystemExit(1)
 # --- end contract helpers ---
 
 
 def train_random_forest(folder: str, input1: str, output1: str, output2: str) -> None:
-    """
-    Download the classification dataset CSV from S3, train a Random Forest
-    classifier, evaluate it on a held-out test split, serialize the model,
-    and save evaluation metrics as a JSON file back to S3.
+    """Train a Random Forest classifier on the generated classification dataset.
 
-    Args:
-        folder:  S3 folder prefix for all I/O.
-        input1:  Remote filename of the classification dataset CSV
-                 (e.g. "classification_dataset.csv").
-        output1: Remote filename for the metrics JSON
-                 (e.g. "random_forest_metrics.json").
-        output2: Remote filename for the serialized model
-                 (e.g. "random_forest_model.joblib").
+    Parameters
+    ----------
+    folder  : S3 folder where inputs live and outputs will be written.
+    input1  : remote filename of the classification CSV (produced by gen).
+    output1 : remote filename for the JSON metrics file.
+    output2 : remote filename for the serialised joblib model.
     """
+
+    # ------------------------------------------------------------------ #
+    # 1. Download the dataset CSV from S3                                  #
+    # ------------------------------------------------------------------ #
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    faasr_log("train_random_forest: starting Random Forest training")
+    local_csv = os.path.join(tempfile.gettempdir(), "train_rf_input.csv")
+    faasr_log(f"train_random_forest: downloading '{input1}' from folder '{folder}'")
+    faasr_get_file(local_file=local_csv, remote_folder=folder, remote_file=input1)
 
-    # --- Download dataset from S3 ---
-    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp_in:
-        local_csv = tmp_in.name
+    # ------------------------------------------------------------------ #
+    # 2. Load and validate the dataset                                     #
+    # ------------------------------------------------------------------ #
+    faasr_log("train_random_forest: loading dataset")
+    df = pd.read_csv(local_csv)
 
-    local_json = None
-    local_model = None
-
-    try:
-        faasr_log(f"train_random_forest: fetching {input1} from {folder}")
-        faasr_get_file(
-            local_file=local_csv,
-            remote_folder=folder,
-            remote_file=input1,
+    if "target" not in df.columns:
+        msg = (
+            f"train_random_forest: expected column 'target' not found in CSV "
+            f"(columns: {list(df.columns)})"
         )
+        faasr_log(msg)
+        raise ValueError(msg)
 
-        # --- Load CSV ---
-        df = pd.read_csv(local_csv)
-        faasr_log(f"train_random_forest: loaded dataset with shape {df.shape}")
+    feature_cols = [c for c in df.columns if c != "target"]
+    X = df[feature_cols].values.astype(np.float64)
+    y = df["target"].values
 
-        if "label" not in df.columns:
-            msg = "train_random_forest: ERROR — 'label' column missing from dataset"
-            faasr_log(msg)
-            raise ValueError(
-                "Required 'label' column not found in classification_dataset.csv"
-            )
+    faasr_log(
+        f"train_random_forest: dataset loaded — shape={df.shape}, "
+        f"features={len(feature_cols)}, "
+        f"class balance={dict(zip(*np.unique(y, return_counts=True)))}"
+    )
 
-        feature_cols = [c for c in df.columns if c != "label"]
-        X = df[feature_cols].values
-        y = df["label"].values
+    # ------------------------------------------------------------------ #
+    # 3. Train / test split                                                #
+    # ------------------------------------------------------------------ #
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    faasr_log(
+        f"train_random_forest: split — train={len(X_train)}, test={len(X_test)}"
+    )
 
-        # --- Train / test split (80 / 20, fixed seed for reproducibility) ---
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-        faasr_log(
-            f"train_random_forest: split → train={len(X_train)} samples, "
-            f"test={len(X_test)} samples"
-        )
+    # ------------------------------------------------------------------ #
+    # 4. Train the Random Forest                                           #
+    # ------------------------------------------------------------------ #
+    faasr_log("train_random_forest: fitting RandomForestClassifier(n_estimators=100)")
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    clf.fit(X_train, y_train)
 
-        # --- Train Random Forest ---
-        faasr_log("train_random_forest: fitting RandomForestClassifier")
-        clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        clf.fit(X_train, y_train)
+    # ------------------------------------------------------------------ #
+    # 5. Evaluate                                                          #
+    # ------------------------------------------------------------------ #
+    y_pred = clf.predict(X_test)
+    acc = float(accuracy_score(y_test, y_pred))
+    report = classification_report(y_test, y_pred, output_dict=True)
 
-        # --- Evaluate on held-out test set ---
-        y_pred = clf.predict(X_test)
+    faasr_log(f"train_random_forest: accuracy={acc:.4f}")
 
-        metrics = {
-            "classifier": "RandomForest",
-            "accuracy": accuracy_score(y_test, y_pred),
-            "precision": precision_score(
-                y_test, y_pred, average="weighted", zero_division=0
-            ),
-            "recall": recall_score(
-                y_test, y_pred, average="weighted", zero_division=0
-            ),
-            "f1": f1_score(y_test, y_pred, average="weighted", zero_division=0),
-        }
-        faasr_log(
-            f"train_random_forest: metrics — accuracy={metrics['accuracy']:.4f}, "
-            f"precision={metrics['precision']:.4f}, "
-            f"recall={metrics['recall']:.4f}, "
-            f"f1={metrics['f1']:.4f}"
-        )
+    # ------------------------------------------------------------------ #
+    # 6. Save metrics JSON                                                 #
+    # ------------------------------------------------------------------ #
+    metrics = {
+        "accuracy": acc,
+        "classification_report": report,
+    }
+    local_metrics = os.path.join(tempfile.gettempdir(), "train_rf_metrics.json")
+    with open(local_metrics, "w") as fh:
+        json.dump(metrics, fh, indent=2)
+    faasr_log(f"train_random_forest: metrics written locally → {local_metrics}")
 
-        # --- Write metrics JSON and upload to S3 ---
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as tmp_out:
-            local_json = tmp_out.name
-            json.dump(metrics, tmp_out, indent=2)
+    # ------------------------------------------------------------------ #
+    # 7. Save model with joblib                                            #
+    # ------------------------------------------------------------------ #
+    local_model = os.path.join(tempfile.gettempdir(), "train_rf_model.joblib")
+    joblib.dump(clf, local_model)
+    faasr_log(f"train_random_forest: model serialised → {local_model}")
 
-        faasr_log(f"train_random_forest: uploading {output1} to {folder}")
-        faasr_put_file(
-            local_file=local_json,
-            remote_folder=folder,
-            remote_file=output1,
-        )
-        faasr_log("train_random_forest: metrics upload complete")
+    # ------------------------------------------------------------------ #
+    # 8. Upload both artefacts to S3                                       #
+    # ------------------------------------------------------------------ #
+    faasr_put_file(local_file=local_metrics, remote_folder=folder, remote_file=output1)
+    faasr_log(f"train_random_forest: uploaded metrics → '{output1}' in folder '{folder}'")
 
-        # --- Serialize model with joblib and upload to S3 ---
-        with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as tmp_model:
-            local_model = tmp_model.name
-
-        joblib.dump(clf, local_model)
-        faasr_log(f"train_random_forest: uploading {output2} to {folder}")
-        faasr_put_file(
-            local_file=local_model,
-            remote_folder=folder,
-            remote_file=output2,
-        )
-        faasr_log("train_random_forest: model upload complete")
-
-    finally:
-        for path in (local_csv, local_json, local_model):
-            if path and os.path.exists(path):
-                os.remove(path)
+    faasr_put_file(local_file=local_model, remote_folder=folder, remote_file=output2)
+    faasr_log(f"train_random_forest: uploaded model → '{output2}' in folder '{folder}'")
 
     faasr_log("train_random_forest: done")
     # --- CONTRACT: promises ---
