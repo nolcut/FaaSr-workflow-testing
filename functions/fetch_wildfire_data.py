@@ -125,13 +125,28 @@ def fetch_wildfire_data(folder: str, output1: str) -> None:
         for feat in features:
             attrs = feat.get("attributes", {})
 
+            # Keep only actual wildfire incidents (IncidentTypeCategory == "WF").
+            # This excludes prescribed burns ("RX"), complexes ("CX"), and any
+            # other non-wildfire incident types recorded in WFIGS.
+            incident_type_cat = attrs.get("IncidentTypeCategory")
+            if incident_type_cat != "WF":
+                continue
+
             # Prefer IncidentSize (GIS/final acreage); fall back to FinalAcres
-            # then DiscoveryAcres if the others are absent.
-            acres = (
-                attrs.get("IncidentSize")
-                or attrs.get("FinalAcres")
-                or attrs.get("DiscoveryAcres")
-            )
+            # then DiscoveryAcres only when the higher-priority field is truly
+            # absent (None/missing).  A legitimate zero must be preserved — do
+            # NOT use Python's 'or' operator here, which treats 0 as falsy.
+            incident_size = attrs.get("IncidentSize")
+            final_acres = attrs.get("FinalAcres")
+            discovery_acres = attrs.get("DiscoveryAcres")
+            if incident_size is not None:
+                acres = incident_size
+            elif final_acres is not None:
+                acres = final_acres
+            elif discovery_acres is not None:
+                acres = discovery_acres
+            else:
+                acres = None
 
             records.append(
                 {
