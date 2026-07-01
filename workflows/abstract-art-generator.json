@@ -1,0 +1,128 @@
+{
+  "FunctionInvoke": "fetch-weather-data",
+  "WorkflowName": "abstract-art-generator",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "fetch-weather-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fetch_weather_data",
+      "Arguments": {
+        "folder": "abstract_art",
+        "output1": "weather_data.json"
+      },
+      "InvokeNext": [
+        "fetch-astronomy-data",
+        "fetch-financial-data",
+        "fuse-data-into-art-params"
+      ]
+    },
+    "fetch-astronomy-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fetch_astronomy_data",
+      "Arguments": {
+        "folder": "abstract_art",
+        "output1": "astronomy_data.json"
+      },
+      "InvokeNext": [
+        "fuse-data-into-art-params"
+      ]
+    },
+    "fetch-financial-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fetch_financial_data",
+      "Arguments": {
+        "folder": "abstract_art",
+        "output1": "financial_data.json"
+      },
+      "InvokeNext": [
+        "fuse-data-into-art-params"
+      ]
+    },
+    "fuse-data-into-art-params": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fuse_data_into_art_params",
+      "Arguments": {
+        "folder": "abstract_art",
+        "input1": "weather_data.json",
+        "input2": "astronomy_data.json",
+        "input3": "financial_data.json",
+        "output1": "art_params.json"
+      },
+      "InvokeNext": [
+        "generate-abstract-image"
+      ]
+    },
+    "generate-abstract-image": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_abstract_image",
+      "Arguments": {
+        "folder": "abstract_art",
+        "input1": "art_params.json",
+        "output1": "abstract_art.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "fetch-weather-data": "ghcr.io/faasr/github-actions-python:latest",
+    "fetch-astronomy-data": "ghcr.io/faasr/github-actions-python:latest",
+    "fetch-financial-data": "ghcr.io/faasr/github-actions-python:latest",
+    "fuse-data-into-art-params": "ghcr.io/faasr/github-actions-python:latest",
+    "generate-abstract-image": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "fetch_weather_data": "nolcut/FaaSr-workflow-testing/main/functions/fetch_weather_data.py",
+    "fetch_astronomy_data": "nolcut/FaaSr-workflow-testing/main/functions/fetch_astronomy_data.py",
+    "fetch_financial_data": "nolcut/FaaSr-workflow-testing/main/functions/fetch_financial_data.py",
+    "fuse_data_into_art_params": "nolcut/FaaSr-workflow-testing/main/functions/fuse_data_into_art_params.py",
+    "generate_abstract_image": "nolcut/FaaSr-workflow-testing/main/functions/generate_abstract_image.py"
+  },
+  "PyPIPackageDownloads": {
+    "fetch_weather_data": [
+      "requests"
+    ],
+    "fetch_astronomy_data": [
+      "ephem"
+    ],
+    "fetch_financial_data": [
+      "requests",
+      "yfinance",
+      "numpy"
+    ],
+    "fuse_data_into_art_params": [
+      "numpy"
+    ],
+    "generate_abstract_image": [
+      "Pillow",
+      "numpy",
+      "matplotlib",
+      "scipy"
+    ]
+  }
+}
