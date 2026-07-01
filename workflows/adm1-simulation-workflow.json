@@ -1,0 +1,98 @@
+{
+  "FunctionInvoke": "load-inputs",
+  "WorkflowName": "adm1-simulation-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "load-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "load_inputs",
+      "Arguments": {
+        "folder": "adm1_workflow",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "validated_influent.csv",
+        "output2": "validated_initial.csv"
+      },
+      "InvokeNext": [
+        "run-adm1-model"
+      ]
+    },
+    "run-adm1-model": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "run_adm1_model",
+      "Arguments": {
+        "folder": "adm1_workflow",
+        "input1": "validated_influent.csv",
+        "input2": "validated_initial.csv",
+        "output1": "adm1_simulation_results.csv"
+      },
+      "InvokeNext": [
+        "visualize-results"
+      ]
+    },
+    "visualize-results": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_results",
+      "Arguments": {
+        "folder": "adm1_workflow",
+        "input1": "adm1_simulation_results.csv",
+        "output1": "biogas_production_rate.png",
+        "output2": "methane_composition.png",
+        "output3": "effluent_concentrations.png",
+        "output4": "ph_alkalinity.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "load-inputs": "ghcr.io/faasr/github-actions-python:latest",
+    "run-adm1-model": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-results": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "load_inputs": "nolcut/FaaSr-workflow-testing/main/functions/load_inputs.py",
+    "run_adm1_model": "nolcut/FaaSr-workflow-testing/main/functions/run_adm1_model.py",
+    "visualize_results": "nolcut/FaaSr-workflow-testing/main/functions/visualize_results.py"
+  },
+  "PyPIPackageDownloads": {
+    "load_inputs": [
+      "pandas",
+      "numpy"
+    ],
+    "run_adm1_model": [
+      "numpy",
+      "scipy",
+      "pandas"
+    ],
+    "visualize_results": [
+      "matplotlib",
+      "pandas",
+      "numpy"
+    ]
+  }
+}
