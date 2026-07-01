@@ -1,0 +1,93 @@
+{
+  "FunctionInvoke": "generate-synthetic-data",
+  "WorkflowName": "pyadm1-synthetic-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-synthetic-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_synthetic_data",
+      "Arguments": {
+        "folder": "pyadm1_workflow",
+        "output1": "digester_influent.csv",
+        "output2": "digester_initial.csv"
+      },
+      "InvokeNext": [
+        "pyadm1"
+      ]
+    },
+    "pyadm1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "pyadm1",
+      "Arguments": {
+        "folder": "pyadm1_workflow",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "dynamic_out.csv"
+      },
+      "InvokeNext": [
+        "visualize-results"
+      ]
+    },
+    "visualize-results": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_results",
+      "Arguments": {
+        "folder": "pyadm1_workflow",
+        "input1": "dynamic_out.csv",
+        "output1": "adm1_results.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "generate-synthetic-data": "ghcr.io/faasr/github-actions-python:latest",
+    "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-results": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_synthetic_data": "nolcut/FaaSr-workflow-testing/main/functions/generate_synthetic_data.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
+    "visualize_results": "nolcut/FaaSr-workflow-testing/main/functions/visualize_results.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_synthetic_data": [
+      "numpy",
+      "pandas"
+    ],
+    "pyadm1": [
+      "numpy",
+      "scipy",
+      "pandas",
+      "matplotlib"
+    ],
+    "visualize_results": [
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
