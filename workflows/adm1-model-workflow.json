@@ -1,0 +1,92 @@
+{
+  "FunctionInvoke": "generate-adm1-inputs",
+  "WorkflowName": "adm1-model-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-adm1-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_adm1_inputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "output1": "adm1_feed_characteristics.csv",
+        "output2": "adm1_config.json"
+      },
+      "InvokeNext": [
+        "run-adm1-model"
+      ]
+    },
+    "run-adm1-model": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "run_adm1_model",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "adm1_feed_characteristics.csv",
+        "input2": "adm1_config.json",
+        "output1": "adm1_model_output.csv"
+      },
+      "InvokeNext": [
+        "visualize-adm1-results"
+      ]
+    },
+    "visualize-adm1-results": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_adm1_results",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "adm1_model_output.csv",
+        "output1": "adm1_results_plot.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-adm1-inputs": "ghcr.io/faasr/github-actions-python:latest",
+    "run-adm1-model": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-adm1-results": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_adm1_inputs": "nolcut/FaaSr-workflow-testing/main/functions/generate_adm1_inputs.py",
+    "run_adm1_model": "nolcut/FaaSr-workflow-testing/main/functions/run_adm1_model.py",
+    "visualize_adm1_results": "nolcut/FaaSr-workflow-testing/main/functions/visualize_adm1_results.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_adm1_inputs": [
+      "numpy",
+      "pandas"
+    ],
+    "run_adm1_model": [
+      "numpy",
+      "scipy",
+      "pandas"
+    ],
+    "visualize_adm1_results": [
+      "pandas",
+      "matplotlib"
+    ]
+  }
+}
