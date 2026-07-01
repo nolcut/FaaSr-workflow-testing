@@ -1,482 +1,566 @@
+import os
+import tempfile
+import numpy as np
+import pandas as pd
+from scipy.integrate import solve_ivp
+from scipy.interpolate import interp1d
+
+
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
-    if "adm1_feed_characteristics.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Influent feed characteristics CSV 'adm1_feed_characteristics.csv' must exist in S3 before running the ADM1 simulation")
+    if "validated_influent.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Validated influent CSV must be present in S3 before running the ADM1 model")
         raise SystemExit(1)
-    if "adm1_config.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: ADM1 configuration JSON 'adm1_config.json' with initial state and parameters must exist in S3 before running the simulation")
+    if "validated_initial.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Validated initial conditions CSV must be present in S3 before running the ADM1 model")
         raise SystemExit(1)
 
 
 def _faasr_promises(folder):
-    if "adm1_model_output.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: ADM1 model output time-series 'adm1_model_output.csv' must be produced in S3 after the simulation completes")
+    if "adm1_simulation_results.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: ADM1 simulation results CSV must be uploaded to S3 after successful ODE integration")
         raise SystemExit(1)
 # --- end contract helpers ---
 
 
 def run_adm1_model(folder: str, input1: str, input2: str, output1: str) -> None:
+    """Run the ADM1 anaerobic digestion ODE model (BSM2 implementation).
+
+    Parameters
+    ----------
+    folder  : S3 folder (remote_folder for FaaSr calls)
+    input1  : validated influent CSV filename (remote)
+    input2  : validated initial conditions CSV filename (remote)
+    output1 : output simulation results CSV filename (remote)
     """
-    Execute the Anaerobic Digestion Model No. 1 (ADM1) simulation following the
-    BSM2 benchmark implementation of Rosen & Jeppsson (2006), "Aspects on ADM1
-    Implementation within the BSM2 Framework", Lund University.
 
-    Reads
-    -----
-    input1 : CSV of time-varying influent feed characteristics (time, the 26 ADM1
-             soluble/particulate influent components, flow Q, temperature T_op).
-    input2 : JSON with the default initial state vector and the full ADM1
-             kinetic/stoichiometric/physiochemical/physical parameter set.
-
-    Writes
-    ------
-    output1 : CSV time-series (one row per simulation time step) of the 35 ADM1
-              state variables plus derived outputs (pH, biogas flow rate q_gas,
-              CH4/CO2 partial pressures and volume fractions).
-
-    The full 35-state ODE system (equations 1-35 in the reference) is integrated
-    with a stiff solver; S_H+ (and hence pH) is obtained algebraically from the
-    charge balance at every evaluation.
-    """
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    import os
-    import json
-    import math
-    import numpy as np
-    import pandas as pd
-    from scipy.integrate import solve_ivp
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_influent = os.path.join(tmpdir, "validated_influent.csv")
+        local_initial  = os.path.join(tmpdir, "validated_initial.csv")
+        local_output   = os.path.join(tmpdir, "adm1_simulation_results.csv")
 
-    faasr_log("run_adm1_model: starting ADM1 (BSM2) simulation")
+        # ------------------------------------------------------------------
+        # 1. Download inputs
+        # ------------------------------------------------------------------
+        faasr_log(f"Downloading influent '{input1}' from folder '{folder}'")
+        faasr_get_file(local_file=local_influent, remote_folder=folder, remote_file=input1)
 
-    # ------------------------------------------------------------------
-    # 1) Download inputs from S3
-    # ------------------------------------------------------------------
-    local_feed = "adm1_feed_characteristics.csv"
-    local_config = "adm1_config.json"
+        faasr_log(f"Downloading initial conditions '{input2}' from folder '{folder}'")
+        faasr_get_file(local_file=local_initial, remote_folder=folder, remote_file=input2)
 
-    faasr_get_file(local_file=local_feed, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=local_config, remote_folder=folder, remote_file=input2)
+        # ------------------------------------------------------------------
+        # 2. Parse CSVs
+        # ------------------------------------------------------------------
+        faasr_log("Parsing influent CSV")
+        try:
+            df_inf = pd.read_csv(local_influent)
+        except Exception as e:
+            faasr_log(f"ERROR: failed to parse influent CSV: {e}")
+            raise
 
-    if not os.path.exists(local_feed) or os.path.getsize(local_feed) == 0:
-        faasr_log(f"ERROR: feed characteristics '{input1}' missing or empty after download")
-        raise RuntimeError(f"Required input '{input1}' could not be retrieved from S3")
-    if not os.path.exists(local_config) or os.path.getsize(local_config) == 0:
-        faasr_log(f"ERROR: configuration '{input2}' missing or empty after download")
-        raise RuntimeError(f"Required input '{input2}' could not be retrieved from S3")
+        faasr_log(f"Influent shape: {df_inf.shape}, columns: {df_inf.columns.tolist()}")
 
-    feed_df = pd.read_csv(local_feed)
-    with open(local_config, "r") as f:
-        config = json.load(f)
+        faasr_log("Parsing initial conditions CSV")
+        try:
+            df_init = pd.read_csv(local_initial)
+        except Exception as e:
+            faasr_log(f"ERROR: failed to parse initial conditions CSV: {e}")
+            raise
 
-    faasr_log(f"Loaded feed ({len(feed_df)} rows, {feed_df.shape[1]} cols) and configuration")
+        faasr_log(f"Initial conditions shape: {df_init.shape}")
 
-    # ------------------------------------------------------------------
-    # 2) Unpack configuration (fail loudly on any missing required block)
-    # ------------------------------------------------------------------
-    try:
-        init = config["initial_state"]
-        params = config["parameters"]
-        st = params["stoichiometric"]
-        bio = params["biochemical"]
-        phy = params["physiochemical"]
-        phys = params["physical"]
-    except (KeyError, TypeError) as e:
-        faasr_log(f"ERROR: configuration JSON is missing required ADM1 blocks: {e}")
-        raise RuntimeError("adm1_config.json does not contain a valid ADM1 parameter set") from e
+        # ------------------------------------------------------------------
+        # 3. BSM2 ADM1 Parameters (Rosen & Jeppsson 2006)
+        # ------------------------------------------------------------------
 
-    # 35 integrated state variables, in the ODE order of the reference (eqs 1-35)
-    STATE_NAMES = [
-        "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
-        "S_IC", "S_IN", "S_I",
-        "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4", "X_pro",
-        "X_ac", "X_h2", "X_I",
-        "S_cat", "S_an",
-        "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion", "S_nh3",
-        "S_gas_h2", "S_gas_ch4", "S_gas_co2",
-    ]
+        # --- Stoichiometric parameters ---
+        f_sI_xc = 0.1;   f_xI_xc = 0.2;   f_ch_xc = 0.2
+        f_pr_xc = 0.2;   f_li_xc = 0.3
+        N_xc    = 0.0376/14.0;  N_I = 0.06/14.0;   N_aa  = 0.007
+        N_bac   = 0.08/14.0
+        C_xc    = 0.02786; C_sI = 0.03;   C_ch  = 0.0313; C_pr  = 0.03
+        C_li    = 0.022;   C_xI = 0.03;   C_su  = 0.0313; C_aa  = 0.03
+        C_fa    = 0.0217;  C_bu = 0.025;  C_pro = 0.0268; C_ac  = 0.0313
+        C_bac   = 0.0313;  C_va = 0.024;  C_ch4 = 0.0156
 
-    missing = [k for k in STATE_NAMES if k not in init]
-    if missing:
-        faasr_log(f"ERROR: initial_state missing state variables: {missing}")
-        raise RuntimeError("adm1_config.json initial_state is incomplete")
+        f_fa_li  = 0.95
+        f_h2_su  = 0.19;  f_bu_su  = 0.13;  f_pro_su = 0.27;  f_ac_su  = 0.41
+        f_h2_aa  = 0.06;  f_va_aa  = 0.23;  f_bu_aa  = 0.26
+        f_pro_aa = 0.05;  f_ac_aa  = 0.40
+        Y_su  = 0.10;  Y_aa  = 0.08;  Y_fa  = 0.06;  Y_c4  = 0.06
+        Y_pro = 0.04;  Y_ac  = 0.05;  Y_h2  = 0.06
 
-    y0 = np.array([float(init[k]) for k in STATE_NAMES], dtype=float)
+        # --- Biochemical kinetic parameters ---
+        k_dis    = 0.5
+        k_hyd_ch = 10.0;  k_hyd_pr = 10.0;  k_hyd_li = 10.0
+        K_S_IN   = 1e-4
+        k_m_su   = 30.0;  K_S_su   = 0.5
+        k_m_aa   = 50.0;  K_S_aa   = 0.3
+        k_m_fa   = 6.0;   K_S_fa   = 0.4;   K_Ih2_fa  = 5e-6
+        k_m_c4   = 20.0;  K_S_c4   = 0.2;   K_Ih2_c4  = 1e-5
+        k_m_pro  = 13.0;  K_S_pro  = 0.1;   K_Ih2_pro = 3.5e-6
+        k_m_ac   = 8.0;   K_S_ac   = 0.15;  K_I_nh3   = 0.0018
+        k_m_h2   = 35.0;  K_S_h2   = 7e-6
+        k_dec    = 0.02   # uniform decay for all biomass
 
-    # ------------------------------------------------------------------
-    # 3) Influent characteristics from the feed CSV
-    #    Only the 26 water-phase components (states 0..25) have influent terms.
-    #    Ion states (26..31) and gas states (32..34) have no influent.
-    # ------------------------------------------------------------------
-    if "time" not in feed_df.columns:
-        faasr_log("ERROR: feed CSV has no 'time' column")
-        raise RuntimeError("adm1_feed_characteristics.csv must contain a 'time' column")
+        # pH inhibition limits
+        pH_UL_aa = 5.5;  pH_LL_aa = 4.0
+        pH_UL_ac = 7.0;  pH_LL_ac = 6.0
+        pH_UL_h2 = 6.0;  pH_LL_h2 = 5.0
 
-    feed_df = feed_df.sort_values("time").reset_index(drop=True)
-    t_feed = feed_df["time"].to_numpy(dtype=float)
+        # Acid-base rate coefficients (M^-1 d^-1)
+        k_A_B = 1e10
 
-    influent_names = STATE_NAMES[:26]  # S_su .. S_an
-    for name in influent_names:
-        if name not in feed_df.columns:
-            faasr_log(f"ERROR: feed CSV missing influent column '{name}'")
-            raise RuntimeError(f"adm1_feed_characteristics.csv missing required column '{name}'")
-    if "Q" not in feed_df.columns:
-        faasr_log("ERROR: feed CSV missing flow column 'Q'")
-        raise RuntimeError("adm1_feed_characteristics.csv missing required column 'Q'")
+        # Fixed (not T-dependent) acid dissociation constants
+        K_a_va  = 10.0**(-4.86)
+        K_a_bu  = 10.0**(-4.82)
+        K_a_pro = 10.0**(-4.88)
+        K_a_ac  = 10.0**(-4.76)
 
-    influent_arr = feed_df[influent_names].to_numpy(dtype=float)  # (n_feed, 26)
-    q_arr = feed_df["Q"].to_numpy(dtype=float)                    # (n_feed,)
+        # Physical parameters
+        V_liq = 3400.0;  V_gas = 300.0
+        R_gas = 0.083145   # bar M^-1 K^-1
+        T_base = 298.15    # K
+        P_atm  = 1.013     # bar
+        k_p    = 5e4       # m^3 d^-1 bar^-1
+        k_La   = 200.0     # d^-1
 
-    def interp_col(t, col_values):
-        # constant extrapolation outside the tabulated range
-        return float(np.interp(t, t_feed, col_values))
+        # --- IC carbon balance stoichiometric sums (for dS_IC/dt) ---
+        s1  = -C_xc + f_sI_xc*C_sI + f_ch_xc*C_ch + f_pr_xc*C_pr + f_li_xc*C_li + f_xI_xc*C_xI
+        s2  = -C_ch + C_su
+        s3  = -C_pr + C_aa
+        s4  = -C_li + (1.0 - f_fa_li)*C_su + f_fa_li*C_fa
+        s5  = -C_su  + (1.0-Y_su)*(f_bu_su*C_bu  + f_pro_su*C_pro  + f_ac_su*C_ac)  + Y_su*C_bac
+        s6  = -C_aa  + (1.0-Y_aa)*(f_va_aa*C_va  + f_bu_aa*C_bu   + f_pro_aa*C_pro + f_ac_aa*C_ac) + Y_aa*C_bac
+        s7  = -C_fa  + (1.0-Y_fa)*0.7*C_ac  + Y_fa*C_bac
+        s8  = -C_va  + (1.0-Y_c4)*0.54*C_pro + (1.0-Y_c4)*0.31*C_ac + Y_c4*C_bac
+        s9  = -C_bu  + (1.0-Y_c4)*0.8*C_ac   + Y_c4*C_bac
+        s10 = -C_pro + (1.0-Y_pro)*0.57*C_ac  + Y_pro*C_bac
+        s11 = -C_ac  + (1.0-Y_ac)*C_ch4  + Y_ac*C_bac
+        s12 = (1.0-Y_h2)*C_ch4 + Y_h2*C_bac
+        s13 = -C_bac + C_xc
 
-    def influent_at(t):
-        return np.array([interp_col(t, influent_arr[:, j]) for j in range(26)], dtype=float)
+        # ------------------------------------------------------------------
+        # 4. Helper: temperature-dependent physicochemical parameters
+        # ------------------------------------------------------------------
+        def compute_temp_params(T_op_K):
+            fac = (1.0/T_base - 1.0/T_op_K) / (100.0 * R_gas)
+            K_w       = 1e-14 * np.exp(55900.0 * fac)
+            K_a_co2   = 10.0**(-6.35)  * np.exp(7646.0  * fac)
+            K_a_IN_T  = 10.0**(-9.25)  * np.exp(51965.0 * fac)
+            p_h2o     = 0.0313 * np.exp(5290.0 * (1.0/T_base - 1.0/T_op_K))
+            K_H_co2   = 0.035   * np.exp(-19410.0 * (1.0/T_base - 1.0/T_op_K) / (100.0*R_gas))
+            K_H_ch4   = 0.0014  * np.exp(-14240.0 * (1.0/T_base - 1.0/T_op_K) / (100.0*R_gas))
+            K_H_h2    = 7.8e-4  * np.exp(-4180.0  * (1.0/T_base - 1.0/T_op_K) / (100.0*R_gas))
+            return K_w, K_a_co2, K_a_IN_T, p_h2o, K_H_co2, K_H_ch4, K_H_h2
 
-    def q_at(t):
-        return interp_col(t, q_arr)
+        # ------------------------------------------------------------------
+        # 5. Algebraic pH solver (charge balance, BSM2 Theta formula)
+        # ------------------------------------------------------------------
+        def solve_pH_algebraic(S_cat, S_an, S_va_ion, S_bu_ion, S_pro_ion,
+                               S_ac_ion, S_hco3_ion, S_IN, S_nh3, K_w):
+            """Compute S_H+ from charge balance (BSM2 Theta formula, p.10)."""
+            S_nh4 = max(S_IN - S_nh3, 0.0)
+            Theta = (S_cat + S_nh4
+                     - S_hco3_ion
+                     - S_ac_ion  / 64.0
+                     - S_pro_ion / 112.0
+                     - S_bu_ion  / 160.0
+                     - S_va_ion  / 208.0
+                     - S_an)
+            disc = Theta**2 + 4.0 * K_w
+            S_H = -Theta / 2.0 + 0.5 * np.sqrt(max(disc, 0.0))
+            return max(S_H, 1e-14)
 
-    # ------------------------------------------------------------------
-    # 4) Parameters
-    # ------------------------------------------------------------------
-    def g(d, key):
-        if key not in d:
-            faasr_log(f"ERROR: parameter '{key}' missing from configuration")
-            raise RuntimeError(f"adm1_config.json missing required parameter '{key}'")
-        return float(d[key])
+        # ------------------------------------------------------------------
+        # 6. Build influent interpolators
+        # ------------------------------------------------------------------
+        t_inf = df_inf['time'].values.astype(float)
+        t_start = float(t_inf[0])
+        t_end   = float(t_inf[-1])
+        faasr_log(f"Simulation time: {t_start:.4f} to {t_end:.4f} days ({len(t_inf)} points)")
 
-    # Stoichiometric
-    f_sI_xc = g(st, "f_sI_xc"); f_xI_xc = g(st, "f_xI_xc"); f_ch_xc = g(st, "f_ch_xc")
-    f_pr_xc = g(st, "f_pr_xc"); f_li_xc = g(st, "f_li_xc")
-    N_xc = g(st, "N_xc"); N_I = g(st, "N_I"); N_aa = g(st, "N_aa")
-    C_xc = g(st, "C_xc"); C_sI = g(st, "C_sI"); C_ch = g(st, "C_ch"); C_pr = g(st, "C_pr")
-    C_li = g(st, "C_li"); C_xI = g(st, "C_xI"); C_su = g(st, "C_su"); C_aa = g(st, "C_aa")
-    f_fa_li = g(st, "f_fa_li"); C_fa = g(st, "C_fa")
-    f_h2_su = g(st, "f_h2_su"); f_bu_su = g(st, "f_bu_su"); f_pro_su = g(st, "f_pro_su")
-    f_ac_su = g(st, "f_ac_su"); N_bac = g(st, "N_bac")
-    C_bu = g(st, "C_bu"); C_pro = g(st, "C_pro"); C_ac = g(st, "C_ac"); C_bac = g(st, "C_bac")
-    Y_su = g(st, "Y_su")
-    f_h2_aa = g(st, "f_h2_aa"); f_va_aa = g(st, "f_va_aa"); f_bu_aa = g(st, "f_bu_aa")
-    f_pro_aa = g(st, "f_pro_aa"); f_ac_aa = g(st, "f_ac_aa"); C_va = g(st, "C_va")
-    Y_aa = g(st, "Y_aa"); Y_fa = g(st, "Y_fa"); Y_c4 = g(st, "Y_c4"); Y_pro = g(st, "Y_pro")
-    C_ch4 = g(st, "C_ch4"); Y_ac = g(st, "Y_ac"); Y_h2 = g(st, "Y_h2")
+        INF_COLS = [
+            "S_su","S_aa","S_fa","S_va","S_bu","S_pro","S_ac",
+            "S_h2","S_ch4","S_IC","S_IN","S_I",
+            "X_xc","X_ch","X_pr","X_li",
+            "X_su","X_aa","X_fa","X_c4","X_pro","X_ac","X_h2","X_I",
+            "S_cation","S_anion",
+        ]
+        Q_COL = "Q"
+        T_COL = "T (C)"
 
-    # Biochemical
-    k_dis = g(bio, "k_dis")
-    k_hyd_ch = g(bio, "k_hyd_ch"); k_hyd_pr = g(bio, "k_hyd_pr"); k_hyd_li = g(bio, "k_hyd_li")
-    K_S_IN = g(bio, "K_S_IN")
-    k_m_su = g(bio, "k_m_su"); K_S_su = g(bio, "K_S_su")
-    pH_UL_aa = g(bio, "pH_UL_aa"); pH_LL_aa = g(bio, "pH_LL_aa")
-    k_m_aa = g(bio, "k_m_aa"); K_S_aa = g(bio, "K_S_aa")
-    k_m_fa = g(bio, "k_m_fa"); K_S_fa = g(bio, "K_S_fa"); K_I_h2_fa = g(bio, "K_I_h2_fa")
-    k_m_c4 = g(bio, "k_m_c4"); K_S_c4 = g(bio, "K_S_c4"); K_I_h2_c4 = g(bio, "K_I_h2_c4")
-    k_m_pro = g(bio, "k_m_pro"); K_S_pro = g(bio, "K_S_pro"); K_I_h2_pro = g(bio, "K_I_h2_pro")
-    k_m_ac = g(bio, "k_m_ac"); K_S_ac = g(bio, "K_S_ac"); K_I_nh3 = g(bio, "K_I_nh3")
-    pH_UL_ac = g(bio, "pH_UL_ac"); pH_LL_ac = g(bio, "pH_LL_ac")
-    k_m_h2 = g(bio, "k_m_h2"); K_S_h2 = g(bio, "K_S_h2")
-    pH_UL_h2 = g(bio, "pH_UL_h2"); pH_LL_h2 = g(bio, "pH_LL_h2")
-    k_dec_Xsu = g(bio, "k_dec_Xsu"); k_dec_Xaa = g(bio, "k_dec_Xaa"); k_dec_Xfa = g(bio, "k_dec_Xfa")
-    k_dec_Xc4 = g(bio, "k_dec_Xc4"); k_dec_Xpro = g(bio, "k_dec_Xpro")
-    k_dec_Xac = g(bio, "k_dec_Xac"); k_dec_Xh2 = g(bio, "k_dec_Xh2")
+        def _make_interp(col, df, default):
+            if col in df.columns:
+                vals = df[col].values.astype(float)
+                return interp1d(t_inf, vals, kind='linear', bounds_error=False,
+                                fill_value=(vals[0], vals[-1]))
+            faasr_log(f"WARNING: influent column '{col}' missing; using default {default}")
+            return lambda t, _d=default: _d
 
-    # Physiochemical
-    R = g(phy, "R"); T_op = g(phy, "T_op")
-    K_w = g(phy, "K_w")
-    K_a_va = g(phy, "K_a_va"); K_a_bu = g(phy, "K_a_bu"); K_a_pro = g(phy, "K_a_pro")
-    K_a_ac = g(phy, "K_a_ac"); K_a_co2 = g(phy, "K_a_co2"); K_a_IN = g(phy, "K_a_IN")
-    k_A_Bva = g(phy, "k_A_Bva"); k_A_Bbu = g(phy, "k_A_Bbu"); k_A_Bpro = g(phy, "k_A_Bpro")
-    k_A_Bac = g(phy, "k_A_Bac"); k_A_Bco2 = g(phy, "k_A_Bco2"); k_A_BIN = g(phy, "k_A_BIN")
-    P_atm = g(phy, "P_atm"); p_gas_h2o = g(phy, "p_gas_h2o")
-    k_p = g(phy, "k_p"); k_L_a = g(phy, "k_L_a")
-    K_H_co2 = g(phy, "K_H_co2"); K_H_ch4 = g(phy, "K_H_ch4"); K_H_h2 = g(phy, "K_H_h2")
+        inf_interps = {c: _make_interp(c, df_inf, 0.0) for c in INF_COLS}
+        q_interp    = _make_interp(Q_COL, df_inf, 170.0)
+        T_interp    = _make_interp(T_COL, df_inf, 35.0)
 
-    # Physical
-    V_liq = g(phys, "V_liq"); V_gas = g(phys, "V_gas")
+        # ------------------------------------------------------------------
+        # 7. Initial conditions (35-state ODE vector)
+        # State indices:
+        #  0-11 : S_su..S_I       (soluble)
+        # 12-23 : X_xc..X_I      (particulate)
+        # 24-25 : S_cation,S_anion
+        # 26-31 : S_va_ion,S_bu_ion,S_pro_ion,S_ac_ion,S_hco3_ion,S_nh3
+        # 32-34 : S_gas_h2,S_gas_ch4,S_gas_co2
+        # ------------------------------------------------------------------
+        CORE_COLS = [
+            "S_su","S_aa","S_fa","S_va","S_bu","S_pro","S_ac",
+            "S_h2","S_ch4","S_IC","S_IN","S_I",
+            "X_xc","X_ch","X_pr","X_li",
+            "X_su","X_aa","X_fa","X_c4","X_pro","X_ac","X_h2","X_I",
+            "S_cation","S_anion",
+        ]
+        ION_ODE_COLS = ["S_va_ion","S_bu_ion","S_pro_ion","S_ac_ion","S_hco3_ion","S_nh3"]
+        GAS_ODE_COLS = ["S_gas_h2","S_gas_ch4","S_gas_co2"]
 
-    # pH-inhibition Hill exponents (hydrogen-ion based function; BSM2 choice)
-    n_aa = 3.0 / (pH_UL_aa - pH_LL_aa)
-    n_ac = 3.0 / (pH_UL_ac - pH_LL_ac)
-    n_h2 = 3.0 / (pH_UL_h2 - pH_LL_h2)
-    K_pH_aa = 10.0 ** (-(pH_LL_aa + pH_UL_aa) / 2.0)
-    K_pH_ac = 10.0 ** (-(pH_LL_ac + pH_UL_ac) / 2.0)
-    K_pH_h2 = 10.0 ** (-(pH_LL_h2 + pH_UL_h2) / 2.0)
+        init_row = df_init.iloc[0]
+        y0 = np.array(
+            [float(init_row[c]) for c in CORE_COLS]
+          + [float(init_row[c]) for c in ION_ODE_COLS]
+          + [float(init_row[c]) for c in GAS_ODE_COLS],
+            dtype=float
+        )
+        y0 = np.maximum(y0, 0.0)
+        faasr_log(f"Initial state vector: {y0.shape[0]} states")
 
-    # Carbon-balance stoichiometric coefficients (s1..s13, eq. 10)
-    s1 = -C_xc + f_sI_xc * C_sI + f_ch_xc * C_ch + f_pr_xc * C_pr + f_li_xc * C_li + f_xI_xc * C_xI
-    s2 = -C_ch + C_su
-    s3 = -C_pr + C_aa
-    s4 = -C_li + (1.0 - f_fa_li) * C_su + f_fa_li * C_fa
-    s5 = -C_su + (1.0 - Y_su) * (f_bu_su * C_bu + f_pro_su * C_pro + f_ac_su * C_ac) + Y_su * C_bac
-    s6 = -C_aa + (1.0 - Y_aa) * (f_va_aa * C_va + f_bu_aa * C_bu + f_pro_aa * C_pro + f_ac_aa * C_ac) + Y_aa * C_bac
-    s7 = -C_fa + (1.0 - Y_fa) * 0.7 * C_ac + Y_fa * C_bac
-    s8 = -C_va + (1.0 - Y_c4) * 0.54 * C_pro + (1.0 - Y_c4) * 0.31 * C_ac + Y_c4 * C_bac
-    s9 = -C_bu + (1.0 - Y_c4) * 0.8 * C_ac + Y_c4 * C_bac
-    s10 = -C_pro + (1.0 - Y_pro) * 0.57 * C_ac + Y_pro * C_bac
-    s11 = -C_ac + (1.0 - Y_ac) * C_ch4 + Y_ac * C_bac
-    s12 = (1.0 - Y_h2) * C_ch4 + Y_h2 * C_bac
-    s13 = -C_bac + C_xc
+        # ------------------------------------------------------------------
+        # 8. ODE right-hand side
+        # ------------------------------------------------------------------
+        def adm1_ode(t, y):
+            # --- Unpack and clip state ---
+            y = np.maximum(y, 0.0)
+            S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac = y[0:7]
+            S_h2, S_ch4, S_IC, S_IN, S_I               = y[7:12]
+            X_xc, X_ch, X_pr, X_li                     = y[12:16]
+            X_su, X_aa, X_fa, X_c4, X_pro_bac, X_ac, X_h2_bac, X_I = y[16:24]
+            S_cat, S_an                                 = y[24], y[25]
+            S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3 = y[26:32]
+            S_gas_h2, S_gas_ch4, S_gas_co2              = y[32], y[33], y[34]
 
-    # ------------------------------------------------------------------
-    # 5) ODE right-hand side
-    # ------------------------------------------------------------------
-    def adm1_rhs(t, y):
-        (S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I,
-         X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I,
-         S_cat, S_an, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3,
-         S_gas_h2, S_gas_ch4, S_gas_co2) = y
+            # --- Temperature-dependent parameters ---
+            T_C   = float(T_interp(t))
+            T_op  = T_C + 273.15
+            K_w, K_a_co2, K_a_IN_T, p_h2o, K_H_co2, K_H_ch4, K_H_h2 = compute_temp_params(T_op)
 
-        Sin = influent_at(t)
-        q_in = q_at(t)
-        D = q_in / V_liq
+            # --- Algebraic pH ---
+            S_H_ion = solve_pH_algebraic(
+                S_cat, S_an, S_va_ion, S_bu_ion, S_pro_ion,
+                S_ac_ion, S_hco3_ion, S_IN, S_nh3, K_w
+            )
 
-        # --- Algebraic pH from charge balance ---
-        S_nh4_ion = S_IN - S_nh3
-        Theta = (S_cat + S_nh4_ion - S_hco3_ion
-                 - S_ac_ion / 64.0 - S_pro_ion / 112.0 - S_bu_ion / 160.0
-                 - S_va_ion / 208.0 - S_an)
-        S_H_ion = -Theta / 2.0 + 0.5 * math.sqrt(Theta * Theta + 4.0 * K_w)
-        if S_H_ion <= 0.0:
-            S_H_ion = 1.0e-12
-        S_co2 = S_IC - S_hco3_ion
+            # --- Algebraic derived quantities ---
+            S_co2     = max(S_IC - S_hco3_ion, 0.0)
+            S_nh4_ion = max(S_IN - S_nh3,      0.0)
 
-        # --- Inhibition factors ---
-        I_pH_aa = K_pH_aa ** n_aa / (S_H_ion ** n_aa + K_pH_aa ** n_aa)
-        I_pH_ac = K_pH_ac ** n_ac / (S_H_ion ** n_ac + K_pH_ac ** n_ac)
-        I_pH_h2 = K_pH_h2 ** n_h2 / (S_H_ion ** n_h2 + K_pH_h2 ** n_h2)
-        I_IN_lim = 1.0 / (1.0 + K_S_IN / S_IN) if S_IN > 0.0 else 0.0
-        I_h2_fa = 1.0 / (1.0 + S_h2 / K_I_h2_fa)
-        I_h2_c4 = 1.0 / (1.0 + S_h2 / K_I_h2_c4)
-        I_h2_pro = 1.0 / (1.0 + S_h2 / K_I_h2_pro)
-        I_nh3 = 1.0 / (1.0 + S_nh3 / K_I_nh3)
+            # --- pH inhibition (BSM2: Hill function on S_H+, Expression 3) ---
+            pHLim_aa = 10.0 ** (-(pH_UL_aa + pH_LL_aa) / 2.0)
+            pHLim_ac = 10.0 ** (-(pH_UL_ac + pH_LL_ac) / 2.0)
+            pHLim_h2 = 10.0 ** (-(pH_UL_h2 + pH_LL_h2) / 2.0)
+            n_aa = 3.0 / (pH_UL_aa - pH_LL_aa)
+            n_ac = 3.0 / (pH_UL_ac - pH_LL_ac)
+            n_h2 = 3.0 / (pH_UL_h2 - pH_LL_h2)
+            I_pH_aa = (pHLim_aa**n_aa) / (S_H_ion**n_aa + pHLim_aa**n_aa)
+            I_pH_ac = (pHLim_ac**n_ac) / (S_H_ion**n_ac + pHLim_ac**n_ac)
+            I_pH_h2 = (pHLim_h2**n_h2) / (S_H_ion**n_h2 + pHLim_h2**n_h2)
 
-        I5 = I_pH_aa * I_IN_lim
-        I6 = I5
-        I7 = I_pH_aa * I_IN_lim * I_h2_fa
-        I8 = I_pH_aa * I_IN_lim * I_h2_c4
-        I9 = I8
-        I10 = I_pH_aa * I_IN_lim * I_h2_pro
-        I11 = I_pH_ac * I_IN_lim * I_nh3
-        I12 = I_pH_h2 * I_IN_lim
+            # --- Other inhibition terms ---
+            I_IN_lim = 1.0 / (1.0 + K_S_IN / max(S_IN, 1e-20))
+            I_h2_fa  = 1.0 / (1.0 + S_h2 / K_Ih2_fa)
+            I_h2_c4  = 1.0 / (1.0 + S_h2 / K_Ih2_c4)
+            I_h2_pro = 1.0 / (1.0 + S_h2 / K_Ih2_pro)
+            I_nh3    = 1.0 / (1.0 + S_nh3 / K_I_nh3)
 
-        # --- Biochemical process rates rho1..rho19 ---
-        r1 = k_dis * X_xc
-        r2 = k_hyd_ch * X_ch
-        r3 = k_hyd_pr * X_pr
-        r4 = k_hyd_li * X_li
-        r5 = k_m_su * (S_su / (K_S_su + S_su)) * X_su * I5 if (K_S_su + S_su) > 0 else 0.0
-        r6 = k_m_aa * (S_aa / (K_S_aa + S_aa)) * X_aa * I6 if (K_S_aa + S_aa) > 0 else 0.0
-        r7 = k_m_fa * (S_fa / (K_S_fa + S_fa)) * X_fa * I7 if (K_S_fa + S_fa) > 0 else 0.0
-        r8 = k_m_c4 * (S_va / (K_S_c4 + S_va)) * X_c4 * (S_va / (S_bu + S_va + 1.0e-6)) * I8 if (K_S_c4 + S_va) > 0 else 0.0
-        r9 = k_m_c4 * (S_bu / (K_S_c4 + S_bu)) * X_c4 * (S_bu / (S_va + S_bu + 1.0e-6)) * I9 if (K_S_c4 + S_bu) > 0 else 0.0
-        r10 = k_m_pro * (S_pro / (K_S_pro + S_pro)) * X_pro * I10 if (K_S_pro + S_pro) > 0 else 0.0
-        r11 = k_m_ac * (S_ac / (K_S_ac + S_ac)) * X_ac * I11 if (K_S_ac + S_ac) > 0 else 0.0
-        r12 = k_m_h2 * (S_h2 / (K_S_h2 + S_h2)) * X_h2 * I12 if (K_S_h2 + S_h2) > 0 else 0.0
-        r13 = k_dec_Xsu * X_su
-        r14 = k_dec_Xaa * X_aa
-        r15 = k_dec_Xfa * X_fa
-        r16 = k_dec_Xc4 * X_c4
-        r17 = k_dec_Xpro * X_pro
-        r18 = k_dec_Xac * X_ac
-        r19 = k_dec_Xh2 * X_h2
-        r_dec_sum = r13 + r14 + r15 + r16 + r17 + r18 + r19
+            I5  = I_pH_aa * I_IN_lim
+            I6  = I_pH_aa * I_IN_lim
+            I7  = I_pH_aa * I_IN_lim * I_h2_fa
+            I8  = I_pH_aa * I_IN_lim * I_h2_c4
+            I9  = I_pH_aa * I_IN_lim * I_h2_c4
+            I10 = I_pH_aa * I_IN_lim * I_h2_pro
+            I11 = I_pH_ac * I_IN_lim * I_nh3
+            I12 = I_pH_h2 * I_IN_lim
 
-        # --- Acid-base rates ---
-        rA4 = k_A_Bva * (S_va_ion * (K_a_va + S_H_ion) - K_a_va * S_va)
-        rA5 = k_A_Bbu * (S_bu_ion * (K_a_bu + S_H_ion) - K_a_bu * S_bu)
-        rA6 = k_A_Bpro * (S_pro_ion * (K_a_pro + S_H_ion) - K_a_pro * S_pro)
-        rA7 = k_A_Bac * (S_ac_ion * (K_a_ac + S_H_ion) - K_a_ac * S_ac)
-        rA10 = k_A_Bco2 * (S_hco3_ion * (K_a_co2 + S_H_ion) - K_a_co2 * S_IC)
-        rA11 = k_A_BIN * (S_nh3 * (K_a_IN + S_H_ion) - K_a_IN * S_IN)
+            # --- Biochemical process rates (rho 1-19) ---
+            rho1  = k_dis    * X_xc
+            rho2  = k_hyd_ch * X_ch
+            rho3  = k_hyd_pr * X_pr
+            rho4  = k_hyd_li * X_li
+            rho5  = k_m_su  * S_su  / (K_S_su  + S_su)  * X_su      * I5
+            rho6  = k_m_aa  * S_aa  / (K_S_aa  + S_aa)  * X_aa      * I6
+            rho7  = k_m_fa  * S_fa  / (K_S_fa  + S_fa)  * X_fa      * I7
+            rho8  = k_m_c4  * S_va  / (K_S_c4  + S_va)  * X_c4      * (S_va / (S_bu + S_va + 1e-6)) * I8
+            rho9  = k_m_c4  * S_bu  / (K_S_c4  + S_bu)  * X_c4      * (S_bu / (S_va + S_bu + 1e-6)) * I9
+            rho10 = k_m_pro * S_pro / (K_S_pro + S_pro) * X_pro_bac * I10
+            rho11 = k_m_ac  * S_ac  / (K_S_ac  + S_ac)  * X_ac      * I11
+            rho12 = k_m_h2  * S_h2  / (K_S_h2  + S_h2)  * X_h2_bac * I12
+            rho13 = k_dec * X_su
+            rho14 = k_dec * X_aa
+            rho15 = k_dec * X_fa
+            rho16 = k_dec * X_c4
+            rho17 = k_dec * X_pro_bac
+            rho18 = k_dec * X_ac
+            rho19 = k_dec * X_h2_bac
+            sum_dec = rho13 + rho14 + rho15 + rho16 + rho17 + rho18 + rho19
 
-        # --- Gas partial pressures and transfer rates ---
-        p_gas_h2 = S_gas_h2 * R * T_op / 16.0
-        p_gas_ch4 = S_gas_ch4 * R * T_op / 64.0
-        p_gas_co2 = S_gas_co2 * R * T_op
-        P_gas = p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_gas_h2o
-        q_gas = k_p * (P_gas - P_atm)
-        if q_gas < 0.0:
-            q_gas = 0.0
+            # --- Gas partial pressures and flow (BSM2 overpressure formula) ---
+            p_gas_h2  = S_gas_h2  * R_gas * T_op / 16.0
+            p_gas_ch4 = S_gas_ch4 * R_gas * T_op / 64.0
+            p_gas_co2 = S_gas_co2 * R_gas * T_op
+            P_gas = p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_h2o
+            q_gas = max(k_p * (P_gas - P_atm) * (P_gas / P_atm), 0.0)
 
-        rT8 = k_L_a * (S_h2 - 16.0 * K_H_h2 * p_gas_h2)
-        rT9 = k_L_a * (S_ch4 - 64.0 * K_H_ch4 * p_gas_ch4)
-        rT10 = k_L_a * (S_co2 - K_H_co2 * p_gas_co2)
+            # --- Liquid-gas transfer rates ---
+            rho_T8  = k_La * (S_h2  - 16.0 * K_H_h2  * p_gas_h2)
+            rho_T9  = k_La * (S_ch4 - 64.0 * K_H_ch4 * p_gas_ch4)
+            rho_T10 = k_La * (S_co2 -        K_H_co2 * p_gas_co2)
 
-        # --- Carbon balance sum for S_IC (eq. 10) ---
-        carbon_sum = (s1 * r1 + s2 * r2 + s3 * r3 + s4 * r4 + s5 * r5 + s6 * r6
-                      + s7 * r7 + s8 * r8 + s9 * r9 + s10 * r10 + s11 * r11
-                      + s12 * r12 + s13 * r_dec_sum)
+            # --- Acid-base rates ---
+            rho_A4  = k_A_B * (S_va_ion   * (K_a_va  + S_H_ion) - K_a_va  * S_va)
+            rho_A5  = k_A_B * (S_bu_ion   * (K_a_bu  + S_H_ion) - K_a_bu  * S_bu)
+            rho_A6  = k_A_B * (S_pro_ion  * (K_a_pro + S_H_ion) - K_a_pro * S_pro)
+            rho_A7  = k_A_B * (S_ac_ion   * (K_a_ac  + S_H_ion) - K_a_ac  * S_ac)
+            rho_A10 = k_A_B * (S_hco3_ion * (K_a_co2 + S_H_ion) - K_a_co2 * S_IC)
+            rho_A11 = k_A_B * (S_nh3      * (K_a_IN_T + S_H_ion) - K_a_IN_T * S_IN)
 
-        dydt = np.empty(35, dtype=float)
+            # --- Influent at time t ---
+            q_in = float(q_interp(t))
+            dil  = q_in / V_liq
 
-        # Soluble matter (eqs 1-12)
-        dydt[0] = D * (Sin[0] - S_su) + r2 + (1.0 - f_fa_li) * r4 - r5
-        dydt[1] = D * (Sin[1] - S_aa) + r3 - r6
-        dydt[2] = D * (Sin[2] - S_fa) + f_fa_li * r4 - r7
-        dydt[3] = D * (Sin[3] - S_va) + (1.0 - Y_aa) * f_va_aa * r6 - r8
-        dydt[4] = D * (Sin[4] - S_bu) + (1.0 - Y_su) * f_bu_su * r5 + (1.0 - Y_aa) * f_bu_aa * r6 - r9
-        dydt[5] = (D * (Sin[5] - S_pro) + (1.0 - Y_su) * f_pro_su * r5
-                   + (1.0 - Y_aa) * f_pro_aa * r6 + (1.0 - Y_c4) * 0.54 * r8 - r10)
-        dydt[6] = (D * (Sin[6] - S_ac) + (1.0 - Y_su) * f_ac_su * r5
-                   + (1.0 - Y_aa) * f_ac_aa * r6 + (1.0 - Y_fa) * 0.7 * r7
-                   + (1.0 - Y_c4) * 0.31 * r8 + (1.0 - Y_c4) * 0.8 * r9
-                   + (1.0 - Y_pro) * 0.57 * r10 - r11)
-        dydt[7] = (D * (Sin[7] - S_h2) + (1.0 - Y_su) * f_h2_su * r5
-                   + (1.0 - Y_aa) * f_h2_aa * r6 + (1.0 - Y_fa) * 0.3 * r7
-                   + (1.0 - Y_c4) * 0.15 * r8 + (1.0 - Y_c4) * 0.2 * r9
-                   + (1.0 - Y_pro) * 0.43 * r10 - r12 - rT8)
-        dydt[8] = D * (Sin[8] - S_ch4) + (1.0 - Y_ac) * r11 + (1.0 - Y_h2) * r12 - rT9
-        dydt[9] = D * (Sin[9] - S_IC) - carbon_sum - rT10
-        dydt[10] = (D * (Sin[10] - S_IN)
-                    - Y_su * N_bac * r5
-                    + (N_aa - Y_aa * N_bac) * r6
-                    - Y_fa * N_bac * r7
-                    - Y_c4 * N_bac * r8
-                    - Y_c4 * N_bac * r9
-                    - Y_pro * N_bac * r10
-                    - Y_ac * N_bac * r11
-                    - Y_h2 * N_bac * r12
-                    + (N_bac - N_xc) * r_dec_sum
-                    + (N_xc - f_xI_xc * N_I - f_sI_xc * N_I - f_pr_xc * N_aa) * r1)
-        dydt[11] = D * (Sin[11] - S_I) + f_sI_xc * r1
+            S_su_in   = float(inf_interps["S_su"](t))
+            S_aa_in   = float(inf_interps["S_aa"](t))
+            S_fa_in   = float(inf_interps["S_fa"](t))
+            S_va_in   = float(inf_interps["S_va"](t))
+            S_bu_in   = float(inf_interps["S_bu"](t))
+            S_pro_in  = float(inf_interps["S_pro"](t))
+            S_ac_in   = float(inf_interps["S_ac"](t))
+            S_h2_in   = float(inf_interps["S_h2"](t))
+            S_ch4_in  = float(inf_interps["S_ch4"](t))
+            S_IC_in   = float(inf_interps["S_IC"](t))
+            S_IN_in   = float(inf_interps["S_IN"](t))
+            S_I_in    = float(inf_interps["S_I"](t))
+            X_xc_in   = float(inf_interps["X_xc"](t))
+            X_ch_in   = float(inf_interps["X_ch"](t))
+            X_pr_in   = float(inf_interps["X_pr"](t))
+            X_li_in   = float(inf_interps["X_li"](t))
+            X_su_in   = float(inf_interps["X_su"](t))
+            X_aa_in   = float(inf_interps["X_aa"](t))
+            X_fa_in   = float(inf_interps["X_fa"](t))
+            X_c4_in   = float(inf_interps["X_c4"](t))
+            X_pro_in  = float(inf_interps["X_pro"](t))
+            X_ac_in   = float(inf_interps["X_ac"](t))
+            X_h2_in   = float(inf_interps["X_h2"](t))
+            X_I_in    = float(inf_interps["X_I"](t))
+            S_cat_in  = float(inf_interps["S_cation"](t))
+            S_an_in   = float(inf_interps["S_anion"](t))
 
-        # Particulate matter (eqs 13-24)
-        dydt[12] = D * (Sin[12] - X_xc) - r1 + r_dec_sum
-        dydt[13] = D * (Sin[13] - X_ch) + f_ch_xc * r1 - r2
-        dydt[14] = D * (Sin[14] - X_pr) + f_pr_xc * r1 - r3
-        dydt[15] = D * (Sin[15] - X_li) + f_li_xc * r1 - r4
-        dydt[16] = D * (Sin[16] - X_su) + Y_su * r5 - r13
-        dydt[17] = D * (Sin[17] - X_aa) + Y_aa * r6 - r14
-        dydt[18] = D * (Sin[18] - X_fa) + Y_fa * r7 - r15
-        dydt[19] = D * (Sin[19] - X_c4) + Y_c4 * r8 + Y_c4 * r9 - r16
-        dydt[20] = D * (Sin[20] - X_pro) + Y_pro * r10 - r17
-        dydt[21] = D * (Sin[21] - X_ac) + Y_ac * r11 - r18
-        dydt[22] = D * (Sin[22] - X_h2) + Y_h2 * r12 - r19
-        dydt[23] = D * (Sin[23] - X_I) + f_xI_xc * r1
+            # --- IC carbon balance sum ---
+            sum_C = (s1*rho1  + s2*rho2   + s3*rho3   + s4*rho4
+                   + s5*rho5  + s6*rho6   + s7*rho7   + s8*rho8
+                   + s9*rho9  + s10*rho10 + s11*rho11 + s12*rho12
+                   + s13*sum_dec)
 
-        # Cations and anions (eqs 25-26)
-        dydt[24] = D * (Sin[24] - S_cat)
-        dydt[25] = D * (Sin[25] - S_an)
+            # ------------------------------------------------------------------
+            # Water-phase ODEs (Eqs 1-12 in paper)
+            # ------------------------------------------------------------------
+            dS_su  = dil*(S_su_in  - S_su)  + rho2 + (1.0-f_fa_li)*rho4 - rho5
+            dS_aa  = dil*(S_aa_in  - S_aa)  + rho3 - rho6
+            dS_fa  = dil*(S_fa_in  - S_fa)  + f_fa_li*rho4 - rho7
+            dS_va  = dil*(S_va_in  - S_va)  + (1.0-Y_aa)*f_va_aa*rho6 - rho8
+            dS_bu  = (dil*(S_bu_in  - S_bu)
+                      + (1.0-Y_su)*f_bu_su*rho5
+                      + (1.0-Y_aa)*f_bu_aa*rho6 - rho9)
+            dS_pro = (dil*(S_pro_in - S_pro)
+                      + (1.0-Y_su)*f_pro_su*rho5
+                      + (1.0-Y_aa)*f_pro_aa*rho6
+                      + (1.0-Y_c4)*0.54*rho8 - rho10)
+            dS_ac  = (dil*(S_ac_in  - S_ac)
+                      + (1.0-Y_su)*f_ac_su*rho5
+                      + (1.0-Y_aa)*f_ac_aa*rho6
+                      + (1.0-Y_fa)*0.7*rho7
+                      + (1.0-Y_c4)*0.31*rho8
+                      + (1.0-Y_c4)*0.8*rho9
+                      + (1.0-Y_pro)*0.57*rho10 - rho11)
+            dS_h2  = (dil*(S_h2_in  - S_h2)
+                      + (1.0-Y_su)*f_h2_su*rho5
+                      + (1.0-Y_aa)*f_h2_aa*rho6
+                      + (1.0-Y_fa)*0.3*rho7
+                      + (1.0-Y_c4)*0.15*rho8
+                      + (1.0-Y_c4)*0.2*rho9
+                      + (1.0-Y_pro)*0.43*rho10 - rho12 - rho_T8)
+            dS_ch4 = (dil*(S_ch4_in - S_ch4)
+                      + (1.0-Y_ac)*rho11 + (1.0-Y_h2)*rho12 - rho_T9)
+            dS_IC  = dil*(S_IC_in   - S_IC)  + sum_C - rho_T10
+            dS_IN  = (dil*(S_IN_in  - S_IN)
+                      - Y_su*N_bac*rho5
+                      + (N_aa - Y_aa*N_bac)*rho6
+                      - Y_fa*N_bac*rho7
+                      - Y_c4*N_bac*(rho8 + rho9)
+                      - Y_pro*N_bac*rho10
+                      - Y_ac*N_bac*rho11
+                      - Y_h2*N_bac*rho12
+                      + (N_bac - N_xc)*sum_dec
+                      + (N_xc - f_xI_xc*N_I - f_sI_xc*N_I - f_pr_xc*N_aa)*rho1)
+            dS_I   = dil*(S_I_in    - S_I)   + f_sI_xc*rho1
 
-        # Ion states (eqs 27-32) — no dilution term
-        dydt[26] = -rA4
-        dydt[27] = -rA5
-        dydt[28] = -rA6
-        dydt[29] = -rA7
-        dydt[30] = -rA10
-        dydt[31] = -rA11
+            # ------------------------------------------------------------------
+            # Particulate ODEs (Eqs 13-24)
+            # ------------------------------------------------------------------
+            dX_xc      = dil*(X_xc_in  - X_xc)     - rho1  + sum_dec
+            dX_ch      = dil*(X_ch_in  - X_ch)     + f_ch_xc*rho1 - rho2
+            dX_pr      = dil*(X_pr_in  - X_pr)     + f_pr_xc*rho1 - rho3
+            dX_li      = dil*(X_li_in  - X_li)     + f_li_xc*rho1 - rho4
+            dX_su      = dil*(X_su_in  - X_su)     + Y_su*rho5   - rho13
+            dX_aa      = dil*(X_aa_in  - X_aa)     + Y_aa*rho6   - rho14
+            dX_fa      = dil*(X_fa_in  - X_fa)     + Y_fa*rho7   - rho15
+            dX_c4      = dil*(X_c4_in  - X_c4)     + Y_c4*(rho8 + rho9) - rho16
+            dX_pro_bac = dil*(X_pro_in - X_pro_bac)+ Y_pro*rho10 - rho17
+            dX_ac      = dil*(X_ac_in  - X_ac)     + Y_ac*rho11  - rho18
+            dX_h2_bac  = dil*(X_h2_in  - X_h2_bac) + Y_h2*rho12  - rho19
+            dX_I       = dil*(X_I_in   - X_I)      + f_xI_xc*rho1
 
-        # Gas phase (eqs 33-35)
-        dydt[32] = -S_gas_h2 * q_gas / V_gas + rT8 * V_liq / V_gas
-        dydt[33] = -S_gas_ch4 * q_gas / V_gas + rT9 * V_liq / V_gas
-        dydt[34] = -S_gas_co2 * q_gas / V_gas + rT10 * V_liq / V_gas
+            # ------------------------------------------------------------------
+            # Cation/anion ODEs (Eqs 25-26)
+            # ------------------------------------------------------------------
+            dS_cat = dil*(S_cat_in - S_cat)
+            dS_an  = dil*(S_an_in  - S_an)
 
-        return dydt
+            # ------------------------------------------------------------------
+            # Ion state ODEs (Eqs 27-32)
+            # ------------------------------------------------------------------
+            dS_va_ion   = -rho_A4
+            dS_bu_ion   = -rho_A5
+            dS_pro_ion  = -rho_A6
+            dS_ac_ion   = -rho_A7
+            dS_hco3_ion = -rho_A10
+            dS_nh3      = -rho_A11
 
-    # ------------------------------------------------------------------
-    # 6) Integrate over the feed time horizon (stiff solver)
-    # ------------------------------------------------------------------
-    t0 = float(t_feed[0])
-    tf = float(t_feed[-1])
-    if tf <= t0:
-        faasr_log("ERROR: feed time column does not define a positive simulation horizon")
-        raise RuntimeError("Feed 'time' column must span an increasing simulation horizon")
+            # ------------------------------------------------------------------
+            # Gas phase ODEs (Eqs 33-35)
+            # ------------------------------------------------------------------
+            dS_gas_h2  = -S_gas_h2  * q_gas / V_gas + rho_T8  * V_liq / V_gas
+            dS_gas_ch4 = -S_gas_ch4 * q_gas / V_gas + rho_T9  * V_liq / V_gas
+            dS_gas_co2 = -S_gas_co2 * q_gas / V_gas + rho_T10 * V_liq / V_gas
 
-    faasr_log(f"Integrating 35-state ADM1 ODE system from t={t0} to t={tf} d (stiff BDF solver)")
+            return [
+                dS_su, dS_aa, dS_fa, dS_va, dS_bu, dS_pro, dS_ac,
+                dS_h2, dS_ch4, dS_IC, dS_IN, dS_I,
+                dX_xc, dX_ch, dX_pr, dX_li,
+                dX_su, dX_aa, dX_fa, dX_c4, dX_pro_bac, dX_ac, dX_h2_bac, dX_I,
+                dS_cat, dS_an,
+                dS_va_ion, dS_bu_ion, dS_pro_ion, dS_ac_ion, dS_hco3_ion, dS_nh3,
+                dS_gas_h2, dS_gas_ch4, dS_gas_co2,
+            ]
 
-    sol = solve_ivp(
-        adm1_rhs, (t0, tf), y0,
-        method="BDF",
-        t_eval=t_feed,
-        rtol=1.0e-6,
-        atol=1.0e-8,
-        max_step=1.0,
-    )
+        # ------------------------------------------------------------------
+        # 9. Integrate ODE system
+        # ------------------------------------------------------------------
+        faasr_log(f"Starting ADM1 ODE integration (Radau stiff solver)")
+        sol = solve_ivp(
+            adm1_ode,
+            [t_start, t_end],
+            y0,
+            method='Radau',
+            t_eval=t_inf,
+            rtol=1e-6,
+            atol=1e-8,
+            dense_output=False,
+            max_step=0.5 / 24.0,   # max 30-minute internal step
+        )
 
-    if not sol.success:
-        faasr_log(f"ERROR: ODE integration failed: {sol.message}")
-        raise RuntimeError(f"ADM1 ODE integration failed: {sol.message}")
+        if not sol.success:
+            msg = f"ADM1 ODE integration failed: {sol.message}"
+            faasr_log(f"ERROR: {msg}")
+            raise RuntimeError(msg)
 
-    faasr_log(f"Integration succeeded: {sol.y.shape[1]} time points produced")
+        faasr_log(f"ODE integration complete: {sol.t.shape[0]} output time points")
 
-    # ------------------------------------------------------------------
-    # 7) Assemble output time-series with derived variables
-    # ------------------------------------------------------------------
-    times = sol.t
-    Y = sol.y  # (35, n)
+        # ------------------------------------------------------------------
+        # 10. Compute algebraic outputs at each time point
+        # ------------------------------------------------------------------
+        Y     = sol.y          # shape (35, n_t)
+        t_out = sol.t
+        n_t   = len(t_out)
 
-    records = []
-    for idx in range(len(times)):
-        y = Y[:, idx]
-        row = {"time": float(times[idx])}
-        for j, name in enumerate(STATE_NAMES):
-            row[name] = float(y[j])
+        pH_arr        = np.zeros(n_t)
+        S_H_ion_arr   = np.zeros(n_t)
+        S_co2_arr     = np.zeros(n_t)
+        S_nh4_arr     = np.zeros(n_t)
+        q_gas_arr     = np.zeros(n_t)
+        p_gas_h2_arr  = np.zeros(n_t)
+        p_gas_ch4_arr = np.zeros(n_t)
+        p_gas_co2_arr = np.zeros(n_t)
 
-        # Derived: pH, ammonium, dissolved CO2, gas pressures/flow/composition
-        S_IN = y[10]; S_IC = y[9]
-        S_cat = y[24]; S_an = y[25]
-        S_va_ion = y[26]; S_bu_ion = y[27]; S_pro_ion = y[28]; S_ac_ion = y[29]
-        S_hco3_ion = y[30]; S_nh3 = y[31]
-        S_gas_h2 = y[32]; S_gas_ch4 = y[33]; S_gas_co2 = y[34]
+        for i in range(n_t):
+            T_C  = float(T_interp(t_out[i]))
+            T_op = T_C + 273.15
+            K_w, K_a_co2, K_a_IN_T, p_h2o, K_H_co2, K_H_ch4, K_H_h2 = compute_temp_params(T_op)
 
-        S_nh4_ion = S_IN - S_nh3
-        Theta = (S_cat + S_nh4_ion - S_hco3_ion
-                 - S_ac_ion / 64.0 - S_pro_ion / 112.0 - S_bu_ion / 160.0
-                 - S_va_ion / 208.0 - S_an)
-        S_H_ion = -Theta / 2.0 + 0.5 * math.sqrt(Theta * Theta + 4.0 * K_w)
-        if S_H_ion <= 0.0:
-            S_H_ion = 1.0e-12
-        pH = -math.log10(S_H_ion)
-        S_co2 = S_IC - S_hco3_ion
+            yi = np.maximum(Y[:, i], 0.0)
+            S_cat    = yi[24]; S_an     = yi[25]
+            S_va_ion = yi[26]; S_bu_ion = yi[27]
+            S_pro_ion= yi[28]; S_ac_ion = yi[29]
+            S_hco3   = yi[30]; S_nh3    = yi[31]
+            S_IC     = yi[9];  S_IN     = yi[10]
+            S_gas_h2 = yi[32]; S_gas_ch4= yi[33]; S_gas_co2= yi[34]
 
-        p_gas_h2 = S_gas_h2 * R * T_op / 16.0
-        p_gas_ch4 = S_gas_ch4 * R * T_op / 64.0
-        p_gas_co2 = S_gas_co2 * R * T_op
-        P_gas = p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_gas_h2o
-        q_gas = k_p * (P_gas - P_atm)
-        if q_gas < 0.0:
-            q_gas = 0.0
+            S_H = solve_pH_algebraic(S_cat, S_an, S_va_ion, S_bu_ion, S_pro_ion,
+                                     S_ac_ion, S_hco3, S_IN, S_nh3, K_w)
+            S_H_ion_arr[i] = S_H
+            pH_arr[i]      = -np.log10(S_H)
+            S_co2_arr[i]   = max(S_IC - S_hco3, 0.0)
+            S_nh4_arr[i]   = max(S_IN - S_nh3,  0.0)
 
-        frac_ch4 = p_gas_ch4 / P_gas if P_gas > 0.0 else 0.0
-        frac_co2 = p_gas_co2 / P_gas if P_gas > 0.0 else 0.0
+            p_h2  = S_gas_h2  * R_gas * T_op / 16.0
+            p_ch4 = S_gas_ch4 * R_gas * T_op / 64.0
+            p_co2 = S_gas_co2 * R_gas * T_op
+            P_gas = p_h2 + p_ch4 + p_co2 + p_h2o
+            q_gas = max(k_p * (P_gas - P_atm) * (P_gas / P_atm), 0.0)
 
-        row["S_H_ion"] = float(S_H_ion)
-        row["pH"] = float(pH)
-        row["S_nh4_ion"] = float(S_nh4_ion)
-        row["S_co2"] = float(S_co2)
-        row["p_gas_h2"] = float(p_gas_h2)
-        row["p_gas_ch4"] = float(p_gas_ch4)
-        row["p_gas_co2"] = float(p_gas_co2)
-        row["P_gas"] = float(P_gas)
-        row["q_gas"] = float(q_gas)
-        row["gas_frac_ch4"] = float(frac_ch4)
-        row["gas_frac_co2"] = float(frac_co2)
-        records.append(row)
+            q_gas_arr[i]      = q_gas
+            p_gas_h2_arr[i]   = p_h2
+            p_gas_ch4_arr[i]  = p_ch4
+            p_gas_co2_arr[i]  = p_co2
 
-    out_df = pd.DataFrame.from_records(records)
+        # ------------------------------------------------------------------
+        # 11. Assemble output DataFrame
+        # ------------------------------------------------------------------
+        data = {"time": t_out}
+        for j, col in enumerate(CORE_COLS):
+            data[col] = Y[j, :]
+        data["S_H_ion"]    = S_H_ion_arr
+        for j, col in enumerate(ION_ODE_COLS):
+            data[col] = Y[26 + j, :]
+        data["S_co2"]      = S_co2_arr
+        data["S_nh4_ion"]  = S_nh4_arr
+        data["S_gas_h2"]   = Y[32, :]
+        data["S_gas_ch4"]  = Y[33, :]
+        data["S_gas_co2"]  = Y[34, :]
+        data["pH"]         = pH_arr
+        data["q_gas"]      = q_gas_arr
+        data["p_gas_h2"]   = p_gas_h2_arr
+        data["p_gas_ch4"]  = p_gas_ch4_arr
+        data["p_gas_co2"]  = p_gas_co2_arr
 
-    final = out_df.iloc[-1]
-    faasr_log(
-        f"Steady-state summary at t={final['time']:.1f} d: "
-        f"pH={final['pH']:.3f}, q_gas={final['q_gas']:.1f} m3/d, "
-        f"CH4={final['gas_frac_ch4'] * 100:.1f}%, CO2={final['gas_frac_co2'] * 100:.1f}%"
-    )
+        df_out = pd.DataFrame(data)
+        faasr_log(f"Output DataFrame: {df_out.shape[0]} rows x {df_out.shape[1]} columns")
 
-    # ------------------------------------------------------------------
-    # 8) Write and upload output
-    # ------------------------------------------------------------------
-    local_out = "adm1_model_output.csv"
-    out_df.to_csv(local_out, index=False)
-
-    if not os.path.exists(local_out) or os.path.getsize(local_out) == 0:
-        faasr_log("ERROR: model output CSV was not written or is empty")
-        raise RuntimeError("Failed to produce adm1_model_output.csv")
-
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Uploaded ADM1 model output to S3 as '{output1}' "
-              f"({len(out_df)} rows, {out_df.shape[1]} columns)")
-    faasr_log("run_adm1_model: completed successfully")
+        # ------------------------------------------------------------------
+        # 12. Save and upload
+        # ------------------------------------------------------------------
+        df_out.to_csv(local_output, index=False)
+        faasr_log(f"Uploading '{output1}' to folder '{folder}'")
+        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+        faasr_log("run_adm1_model complete")
     # --- CONTRACT: promises ---
     _faasr_promises(folder)
     # --- end promises ---
