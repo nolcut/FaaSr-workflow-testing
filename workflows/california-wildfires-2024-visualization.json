@@ -1,0 +1,132 @@
+{
+  "FunctionInvoke": "fetch-wildfire-data",
+  "WorkflowName": "california-wildfires-2024-visualization",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "fetch-wildfire-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fetch_wildfire_data",
+      "Arguments": {
+        "folder": "ca_wildfires_2024",
+        "output1": "raw_wildfire_data_2024.csv"
+      },
+      "InvokeNext": [
+        "clean-and-filter-data",
+        "fetch-california-boundary"
+      ]
+    },
+    "fetch-california-boundary": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fetch_california_boundary",
+      "Arguments": {
+        "folder": "ca_wildfires_2024",
+        "output1": "california_state_boundary.geojson",
+        "output2": "california_county_boundaries.geojson"
+      },
+      "InvokeNext": [
+        "generate-visualization"
+      ]
+    },
+    "clean-and-filter-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "clean_and_filter_data",
+      "Arguments": {
+        "folder": "ca_wildfires_2024",
+        "input1": "raw_wildfire_data_2024.csv",
+        "output1": "cleaned_wildfire_data_2024.csv"
+      },
+      "InvokeNext": [
+        "compute-statistics",
+        "generate-visualization"
+      ]
+    },
+    "compute-statistics": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "compute_statistics",
+      "Arguments": {
+        "folder": "ca_wildfires_2024",
+        "input1": "cleaned_wildfire_data_2024.csv",
+        "output1": "wildfire_statistics_2024.json"
+      },
+      "InvokeNext": [
+        "generate-visualization"
+      ]
+    },
+    "generate-visualization": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_visualization",
+      "Arguments": {
+        "folder": "ca_wildfires_2024",
+        "input1": "cleaned_wildfire_data_2024.csv",
+        "input2": "wildfire_statistics_2024.json",
+        "input3": "california_state_boundary.geojson",
+        "input4": "california_county_boundaries.geojson",
+        "output1": "california_wildfires_2024_visualization.png"
+      }
+    }
+  },
+  "ActionContainers": {
+    "fetch-wildfire-data": "ghcr.io/faasr/github-actions-python:latest",
+    "fetch-california-boundary": "ghcr.io/faasr/github-actions-python:latest",
+    "clean-and-filter-data": "ghcr.io/faasr/github-actions-python:latest",
+    "compute-statistics": "ghcr.io/faasr/github-actions-python:latest",
+    "generate-visualization": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "fetch_wildfire_data": "nolcut/FaaSr-workflow-testing/main/functions/fetch_wildfire_data.py",
+    "fetch_california_boundary": "nolcut/FaaSr-workflow-testing/main/functions/fetch_california_boundary.py",
+    "clean_and_filter_data": "nolcut/FaaSr-workflow-testing/main/functions/clean_and_filter_data.py",
+    "compute_statistics": "nolcut/FaaSr-workflow-testing/main/functions/compute_statistics.py",
+    "generate_visualization": "nolcut/FaaSr-workflow-testing/main/functions/generate_visualization.py"
+  },
+  "PyPIPackageDownloads": {
+    "fetch_wildfire_data": [
+      "requests",
+      "pandas"
+    ],
+    "fetch_california_boundary": [
+      "requests"
+    ],
+    "clean_and_filter_data": [
+      "pandas"
+    ],
+    "compute_statistics": [
+      "pandas"
+    ],
+    "generate_visualization": [
+      "matplotlib",
+      "pandas",
+      "geopandas",
+      "shapely",
+      "numpy",
+      "contextily"
+    ]
+  }
+}
