@@ -29,18 +29,19 @@ def fuse_data_into_art_params(
 ) -> None:
     """
     Reads weather, astronomy, and financial datasets from S3. Fuses them into a
-    unified abstract art parameter set by mapping data values to visual properties:
-      - color palettes      ← temperature + weather code + humidity
-      - shape distributions ← astronomical magnitudes + moon phase + constellation count
-      - textures            ← financial volatility + wind speed
-      - compositional rules ← market trend directions + moon phase + temperature
-    Writes the resulting art parameter dictionary as a JSON file to S3.
+    unified concrete scene parameter set by mapping data values to recognizable
+    visual scene properties:
+      - sky color and atmospheric conditions  <- temperature + weather code + humidity
+      - celestial placement and brightness    <- astronomical magnitudes + moon phase + planet positions
+      - scene activity and texture density    <- financial volatility + wind speed
+      - foreground/background scene elements  <- market trend directions + seasonal context
+    Writes the resulting concrete scene parameter dictionary as a JSON file to S3.
     """
 
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    faasr_log("Starting fusion of weather, astronomy, and financial data into art parameters")
+    faasr_log("Starting fusion of weather, astronomy, and financial data into concrete scene parameters")
 
     local_weather = "weather_data_fuse_local.json"
     local_astro = "astronomy_data_fuse_local.json"
@@ -100,66 +101,98 @@ def fuse_data_into_art_params(
             raise RuntimeError(msg)
 
         # -----------------------------------------------------------------------
-        # 1. COLOR PALETTE — derived from temperature, weather code, and humidity
+        # 1. SKY AND ATMOSPHERE — derived from temperature, weather code, humidity
         # -----------------------------------------------------------------------
         temperature = float(temperature)
 
-        # Map temperature to hue range (degrees on the HSV wheel, 0–360)
-        # Cold  (<   0 °C): blue-violet     [220 – 270]
-        # Cool  (0 – 15 °C): teal-cyan-green [150 – 210]
-        # Warm  (15 – 30 °C): yellow-orange   [ 30 –  90]
-        # Hot   (>  30 °C): red-orange       [  0 –  30]
+        # Map temperature to sky color tone and colour temperature (Kelvin)
+        # Cold sky appears bluish/icy; hot sky appears hazy and golden.
         if temperature < 0:
-            hue_min, hue_max = 220, 270
-            base_palette_name = "arctic"
-            palette_mood = "cold"
-        elif temperature < 15:
-            hue_min, hue_max = 150, 210
-            base_palette_name = "cool"
-            palette_mood = "cool"
+            sky_color_tone = "icy_blue"
+            color_temperature_k = 8000
+        elif temperature < 10:
+            sky_color_tone = "pale_blue"
+            color_temperature_k = 7000
+        elif temperature < 20:
+            sky_color_tone = "daylight_blue"
+            color_temperature_k = 6500
         elif temperature < 30:
-            hue_min, hue_max = 30, 90
-            base_palette_name = "warm"
-            palette_mood = "warm"
+            sky_color_tone = "warm_azure"
+            color_temperature_k = 5500
         else:
-            hue_min, hue_max = 0, 30
-            base_palette_name = "hot"
-            palette_mood = "hot"
+            sky_color_tone = "hazy_golden"
+            color_temperature_k = 4500
 
-        # Saturation: high humidity mutes colours (shifts toward grey)
-        # humidity in [0, 100] → saturation in [0.5, 1.0]
-        raw_humidity = float(humidity) if humidity is not None else 50.0
-        saturation = 1.0 - raw_humidity / 200.0
-        saturation = float(np.clip(saturation, 0.3, 1.0))
-
-        # Brightness driven by weather code (WMO classification)
+        # WMO weather code → atmospheric condition, cloud coverage, visibility, precipitation
         wc = int(weather_code) if weather_code is not None else 0
         if wc == 0:
-            brightness, overlay_effect = 0.95, "none"
-        elif 1 <= wc <= 3:
-            brightness, overlay_effect = 0.85, "light_cloud"
+            atmospheric_condition = "clear"
+            cloud_coverage = 0.0
+            visibility = "excellent"
+            precipitation = "none"
+        elif 1 <= wc <= 2:
+            atmospheric_condition = "partly_cloudy"
+            cloud_coverage = 0.35
+            visibility = "good"
+            precipitation = "none"
+        elif wc == 3:
+            atmospheric_condition = "overcast"
+            cloud_coverage = 0.90
+            visibility = "moderate"
+            precipitation = "none"
         elif 45 <= wc <= 48:
-            brightness, overlay_effect = 0.55, "fog"
-        elif (51 <= wc <= 67) or (80 <= wc <= 82):
-            brightness, overlay_effect = 0.70, "rain"
-        elif (71 <= wc <= 77) or (85 <= wc <= 86):
-            brightness, overlay_effect = 0.80, "snow"
+            atmospheric_condition = "foggy"
+            cloud_coverage = 1.0
+            visibility = "poor"
+            precipitation = "none"
+        elif 51 <= wc <= 55:
+            atmospheric_condition = "drizzle"
+            cloud_coverage = 0.80
+            visibility = "moderate"
+            precipitation = "light_rain"
+        elif 61 <= wc <= 65:
+            atmospheric_condition = "rainy"
+            cloud_coverage = 0.90
+            visibility = "low"
+            precipitation = "rain"
+        elif wc == 67 or (80 <= wc <= 82):
+            atmospheric_condition = "heavy_rain"
+            cloud_coverage = 1.0
+            visibility = "poor"
+            precipitation = "heavy_rain"
+        elif 71 <= wc <= 77:
+            atmospheric_condition = "snowy"
+            cloud_coverage = 0.95
+            visibility = "low"
+            precipitation = "snow"
+        elif 85 <= wc <= 86:
+            atmospheric_condition = "snow_showers"
+            cloud_coverage = 0.85
+            visibility = "low"
+            precipitation = "snow"
         elif 95 <= wc <= 99:
-            brightness, overlay_effect = 0.50, "storm"
+            atmospheric_condition = "stormy"
+            cloud_coverage = 1.0
+            visibility = "very_poor"
+            precipitation = "heavy_rain_with_thunder"
         else:
-            brightness, overlay_effect = 0.75, "mixed"
+            atmospheric_condition = "mixed"
+            cloud_coverage = 0.50
+            visibility = "moderate"
+            precipitation = "none"
 
-        # Five evenly-spaced hues across the mapped range
-        hues = np.linspace(hue_min, hue_max, 5).tolist()
+        # Humidity → atmospheric haze (high humidity = more diffuse, milky light)
+        raw_humidity = float(humidity) if humidity is not None else 50.0
+        haze_factor = float(np.clip(raw_humidity / 100.0, 0.0, 1.0))
 
-        color_palette = {
-            "base_palette_name": base_palette_name,
-            "palette_mood": palette_mood,
-            "hue_range": [hue_min, hue_max],
-            "hues_degrees": [round(h, 2) for h in hues],
-            "saturation": round(saturation, 4),
-            "brightness": round(brightness, 4),
-            "overlay_effect": overlay_effect,
+        sky_atmosphere = {
+            "sky_color_tone": sky_color_tone,
+            "color_temperature_kelvin": color_temperature_k,
+            "atmospheric_condition": atmospheric_condition,
+            "cloud_coverage": round(cloud_coverage, 2),
+            "visibility": visibility,
+            "precipitation": precipitation,
+            "haze_factor": round(haze_factor, 4),
             "source": {
                 "temperature_c": temperature,
                 "weather_code": wc,
@@ -168,75 +201,76 @@ def fuse_data_into_art_params(
         }
 
         faasr_log(
-            f"Color palette: {base_palette_name}, hues=[{hue_min}–{hue_max}], "
-            f"saturation={saturation:.2f}, brightness={brightness:.2f}, "
-            f"overlay={overlay_effect}"
+            f"Sky/atmosphere: condition={atmospheric_condition}, cloud_coverage={cloud_coverage:.2f}, "
+            f"sky_color={sky_color_tone}, visibility={visibility}"
         )
 
         # -----------------------------------------------------------------------
-        # 2. SHAPE DISTRIBUTION — derived from astronomical magnitudes & moon phase
+        # 2. CELESTIAL PLACEMENT — derived from astronomical magnitudes & moon phase
         # -----------------------------------------------------------------------
-        # Collect magnitude + visibility of each planet
-        visible_planet_mags = []
-        for name, pdata in planets.items():
-            if pdata.get("is_visible"):
-                mag = pdata.get("magnitude")
-                if mag is not None:
-                    visible_planet_mags.append((name, float(mag)))
-
-        n_visible_planets = len(visible_planet_mags)
-
-        # Shape weight per planet: brightest (lowest/most negative mag) → largest weight
-        if visible_planet_mags:
-            mag_values = np.array([m for _, m in visible_planet_mags])
-            # Invert so that the most negative mag gets the highest weight
-            inverted = -mag_values + float(np.max(mag_values)) + 1.0
-            shape_weights = (inverted / inverted.sum()).tolist()
-        else:
-            shape_weights = []
-
         moon_phase_frac = float(moon_data.get("phase_fraction", 0.5))
         moon_illumination = float(moon_data.get("illumination_percent", 50.0))
         moon_phase_name = moon_data.get("phase_name", "Unknown")
+        moon_is_visible = moon_data.get("is_visible", False)
+        moon_alt_deg = float(moon_data.get("altitude_deg", 0.0))
+        moon_az_deg = float(moon_data.get("azimuth_deg", 180.0))
+        moon_constellation = moon_data.get("constellation", "")
 
-        # Full moon → more circles; new moon → more polygons
-        circle_ratio = moon_phase_frac
-        polygon_ratio = 1.0 - circle_ratio
+        # Moon brightness: full illumination → very bright object in scene sky
+        moon_brightness = float(np.clip(moon_illumination / 100.0, 0.0, 1.0))
 
-        # Number of visible constellations drives density of background micro-shapes
+        # Visible planets: collect those above the horizon with position + brightness
+        visible_planet_details = []
+        for planet_name, pdata in planets.items():
+            if pdata.get("is_visible"):
+                mag = pdata.get("magnitude")
+                if mag is not None:
+                    # Apparent magnitude: lower/more-negative = brighter
+                    # Map from typical range [-5, 6] to [0, 1] brightness
+                    brightness_norm = float(np.clip((6.0 - float(mag)) / 11.0, 0.0, 1.0))
+                    visible_planet_details.append({
+                        "name": planet_name,
+                        "magnitude": round(float(mag), 2),
+                        "brightness": round(brightness_norm, 4),
+                        "altitude_deg": pdata.get("altitude_deg"),
+                        "azimuth_deg": pdata.get("azimuth_deg"),
+                        "constellation": pdata.get("constellation"),
+                    })
+
+        # Sort brightest-first so the image generator can prioritise prominent objects
+        visible_planet_details.sort(key=lambda p: p["brightness"], reverse=True)
+
         n_constellations = len(visible_constellations)
-        background_shape_density = float(np.clip(n_constellations / 20.0, 0.0, 1.0))
+        # Star-field density: more visible constellations → richer background sky
+        star_field_density = float(np.clip(n_constellations / 20.0, 0.0, 1.0))
 
-        shape_distribution = {
-            "primary_shape_count": max(3, n_visible_planets + 2),
-            "circle_ratio": round(circle_ratio, 4),
-            "polygon_ratio": round(polygon_ratio, 4),
-            "dominant_shapes": ["circle", "polygon", "line"],
-            "background_shape_density": round(background_shape_density, 4),
-            "visible_planets": [
-                {
-                    "name": name,
-                    "magnitude": mag,
-                    "shape_weight": round(w, 4),
-                }
-                for (name, mag), w in zip(visible_planet_mags, shape_weights)
-            ],
-            "n_visible_constellations": n_constellations,
+        celestial_placement = {
+            "moon": {
+                "is_visible": moon_is_visible,
+                "phase_name": moon_phase_name,
+                "phase_fraction": round(moon_phase_frac, 4),
+                "brightness": round(moon_brightness, 4),
+                "altitude_deg": round(moon_alt_deg, 4),
+                "azimuth_deg": round(moon_az_deg, 4),
+                "constellation": moon_constellation,
+            },
+            "visible_planets": visible_planet_details,
+            "visible_constellations": visible_constellations,
+            "star_field_density": round(star_field_density, 4),
+            "n_visible_planets": len(visible_planet_details),
             "source": {
-                "moon_phase_name": moon_phase_name,
                 "moon_illumination_pct": moon_illumination,
-                "n_visible_planets": n_visible_planets,
+                "n_visible_constellations": n_constellations,
             },
         }
 
         faasr_log(
-            f"Shape distribution: {n_visible_planets} visible planets, "
-            f"circle_ratio={circle_ratio:.2f}, polygon_ratio={polygon_ratio:.2f}, "
-            f"background_density={background_shape_density:.2f}"
+            f"Celestial: moon={moon_phase_name} ({moon_illumination:.1f}% illum, visible={moon_is_visible}), "
+            f"{len(visible_planet_details)} visible planets, {n_constellations} constellations"
         )
 
         # -----------------------------------------------------------------------
-        # 3. TEXTURE PARAMS — derived from financial volatility + wind speed
+        # 3. SCENE ACTIVITY AND TEXTURE DENSITY — from financial volatility + wind speed
         # -----------------------------------------------------------------------
         vol_values = []
         for symbol, adata in assets.items():
@@ -253,41 +287,50 @@ def fuse_data_into_art_params(
         mean_vol = float(np.mean(vol_arr))
         max_vol = float(np.max(vol_arr))
 
-        # Normalise mean volatility to [0, 1]; clip at 2.0 as ceiling
-        # Typical stocks: 0.2–0.5 ann. vol; crypto: 0.5–1.5+
+        # Normalise mean volatility to [0, 1]; ceiling at 2.0
+        # Typical stocks: 0.2–0.5 annualised; crypto: 0.5–1.5+
         norm_vol = float(np.clip(mean_vol / 2.0, 0.0, 1.0))
 
+        # High market volatility → busy, chaotic scene; low → calm, sparse scene
         if norm_vol < 0.20:
-            texture_type = "smooth"
-            noise_frequency = 0.5
-            noise_amplitude = 0.10
+            activity_level = "serene"
+            crowd_density = "empty"
+            texture_density = "sparse"
         elif norm_vol < 0.50:
-            texture_type = "granular"
-            noise_frequency = 2.0
-            noise_amplitude = 0.30
+            activity_level = "moderate"
+            crowd_density = "light"
+            texture_density = "medium"
         elif norm_vol < 0.75:
-            texture_type = "rough"
-            noise_frequency = 5.0
-            noise_amplitude = 0.50
+            activity_level = "busy"
+            crowd_density = "moderate"
+            texture_density = "dense"
         else:
-            texture_type = "chaotic"
-            noise_frequency = 10.0
-            noise_amplitude = 0.80
+            activity_level = "frantic"
+            crowd_density = "crowded"
+            texture_density = "very_dense"
 
-        # Stroke weight: bolder when markets are more volatile
-        stroke_weight = round(float(np.clip(1.0 + max_vol * 3.0, 1.0, 10.0)), 2)
-
-        # Directional factor from wind speed: fast wind → pronounced brush directionality
+        # Wind speed → surface texture effects (water ripples, foliage sway, flags)
         raw_wind = float(wind_speed) if wind_speed is not None else 0.0
-        wind_directional_factor = float(np.clip(raw_wind / 100.0, 0.0, 1.0))
+        if raw_wind < 10:
+            wind_effect = "calm"
+            surface_motion = "still"
+        elif raw_wind < 30:
+            wind_effect = "light_breeze"
+            surface_motion = "gentle_ripples"
+        elif raw_wind < 60:
+            wind_effect = "moderate_wind"
+            surface_motion = "active_movement"
+        else:
+            wind_effect = "strong_wind"
+            surface_motion = "turbulent"
 
-        texture_params = {
-            "texture_type": texture_type,
-            "noise_frequency": round(noise_frequency, 4),
-            "noise_amplitude": round(noise_amplitude, 4),
-            "stroke_weight": stroke_weight,
-            "wind_directional_factor": round(wind_directional_factor, 4),
-            "normalized_volatility": round(norm_vol, 4),
+        scene_activity = {
+            "activity_level": activity_level,
+            "crowd_density": crowd_density,
+            "texture_density": texture_density,
+            "normalized_market_volatility": round(norm_vol, 4),
+            "wind_effect": wind_effect,
+            "surface_motion": surface_motion,
             "source": {
                 "mean_volatility_annualised": round(mean_vol, 6),
                 "max_volatility_annualised": round(max_vol, 6),
@@ -296,13 +339,12 @@ def fuse_data_into_art_params(
         }
 
         faasr_log(
-            f"Texture: type={texture_type}, noise_freq={noise_frequency}, "
-            f"noise_amp={noise_amplitude}, stroke_weight={stroke_weight}, "
-            f"wind_directional={wind_directional_factor:.2f}"
+            f"Scene activity: level={activity_level}, crowd={crowd_density}, "
+            f"texture={texture_density}, wind_effect={wind_effect}"
         )
 
         # -----------------------------------------------------------------------
-        # 4. COMPOSITION RULES — from trend directions, moon phase, temperature
+        # 4. SCENE ELEMENTS — from market trend direction + seasonal context
         # -----------------------------------------------------------------------
         bullish_count = sum(1 for a in assets.values() if a.get("trend") == "bullish")
         bearish_count = sum(1 for a in assets.values() if a.get("trend") == "bearish")
@@ -310,79 +352,125 @@ def fuse_data_into_art_params(
 
         bullish_ratio = bullish_count / total_assets if total_assets > 0 else 0.5
 
+        # Scene type: bullish markets → upward urban scenes (skyscrapers, construction);
+        # bearish markets → horizontal/downward natural landscapes; mixed → suburban
         if bullish_ratio > 0.6:
-            compositional_flow = "ascending"
-            movement_direction = "upward"
-            energy = "expansive"
+            scene_type = "urban_cityscape"
+            scene_orientation = "upward"
+            market_sentiment = "bullish"
+            foreground_elements = ["pedestrians", "street_traffic", "lit_storefronts", "trees_lining_street"]
+            background_elements = ["tall_skyscrapers", "cranes_construction", "illuminated_office_towers"]
         elif (1.0 - bullish_ratio) > 0.6:
-            compositional_flow = "descending"
-            movement_direction = "downward"
-            energy = "contracting"
+            scene_type = "rural_landscape"
+            scene_orientation = "horizontal"
+            market_sentiment = "bearish"
+            foreground_elements = ["rolling_hills", "winding_river", "sparse_trees", "dirt_path"]
+            background_elements = ["mountain_range", "forest_treeline", "distant_farmland"]
         else:
-            compositional_flow = "lateral"
-            movement_direction = "horizontal"
-            energy = "balanced"
+            scene_type = "suburban_townscape"
+            scene_orientation = "balanced"
+            market_sentiment = "mixed"
+            foreground_elements = ["residential_street", "parked_cars", "garden_hedges", "lamp_posts"]
+            background_elements = ["low_rise_buildings", "church_steeple", "water_tower", "distant_hills"]
 
-        # Moon phase shapes the focal geometry
-        if "Full Moon" in moon_phase_name:
-            focal_point = "center"
-            radial_symmetry = True
-            layer_count = 5
-        elif "New Moon" in moon_phase_name:
-            focal_point = "edges"
-            radial_symmetry = False
-            layer_count = 3
-        elif "Waxing" in moon_phase_name:
-            focal_point = "upper_right"
-            radial_symmetry = False
-            layer_count = 4
-        else:  # Waning
-            focal_point = "lower_left"
-            radial_symmetry = False
-            layer_count = 4
+        # Determine season from the astronomy timestamp (UTC); observer is New York City (northern hemisphere)
+        astronomy_ts = astronomy.get("timestamp_utc", "")
+        season = "unknown"
+        if astronomy_ts:
+            try:
+                month = int(astronomy_ts[5:7])
+                if month in (12, 1, 2):
+                    season = "winter"
+                elif month in (3, 4, 5):
+                    season = "spring"
+                elif month in (6, 7, 8):
+                    season = "summer"
+                else:
+                    season = "autumn"
+            except (ValueError, IndexError):
+                pass
+        if season == "unknown" and weather.get("time"):
+            try:
+                month = int(str(weather.get("time", ""))[5:7])
+                if month in (12, 1, 2):
+                    season = "winter"
+                elif month in (3, 4, 5):
+                    season = "spring"
+                elif month in (6, 7, 8):
+                    season = "summer"
+                else:
+                    season = "autumn"
+            except (ValueError, IndexError):
+                pass
 
-        # Element density: warmer temperatures → more dense / energetic compositions
-        # Scaled across the plausible range −10 °C to 50 °C
-        element_density = float(np.clip(0.3 + 0.5 * (temperature + 10.0) / 60.0, 0.1, 1.0))
+        # Season-specific scene modifiers: vegetation state, lighting angle, ground cover
+        season_modifier_map = {
+            "winter": {"vegetation": "bare_trees", "lighting": "low_angle_cold", "ground_cover": "snow_or_frost"},
+            "spring": {"vegetation": "budding_trees", "lighting": "fresh_daylight", "ground_cover": "new_grass"},
+            "summer": {"vegetation": "full_foliage", "lighting": "bright_high_sun", "ground_cover": "lush_grass"},
+            "autumn": {"vegetation": "autumn_coloured_trees", "lighting": "golden_hour_warm", "ground_cover": "fallen_leaves"},
+            "unknown": {"vegetation": "generic_trees", "lighting": "natural_daylight", "ground_cover": "grass"},
+        }
+        seasonal_modifiers = season_modifier_map.get(season, season_modifier_map["unknown"])
+
+        # Time of day: infer from moon visibility and altitude vs cloud coverage
+        if moon_is_visible and moon_alt_deg > 10 and cloud_coverage < 0.7:
+            time_of_day = "night"
+            lighting_quality = "moonlit"
+        elif moon_is_visible and moon_alt_deg <= 10:
+            time_of_day = "twilight"
+            lighting_quality = "dusk_or_dawn"
+        else:
+            # Moon below horizon → daytime; lighting quality driven by cloud coverage
+            if cloud_coverage < 0.3:
+                time_of_day = "daytime"
+                lighting_quality = "clear_sunlight"
+            elif cloud_coverage < 0.7:
+                time_of_day = "daytime"
+                lighting_quality = "diffuse_overcast"
+            else:
+                time_of_day = "daytime"
+                lighting_quality = "flat_overcast"
 
         asset_trends = {
             symbol: adata.get("trend", "unknown")
             for symbol, adata in assets.items()
         }
 
-        composition_rules = {
-            "compositional_flow": compositional_flow,
-            "movement_direction": movement_direction,
-            "energy": energy,
-            "focal_point": focal_point,
-            "radial_symmetry": radial_symmetry,
-            "layer_count": layer_count,
-            "element_density": round(element_density, 4),
-            "golden_ratio_guide": True,
+        scene_elements = {
+            "scene_type": scene_type,
+            "scene_orientation": scene_orientation,
+            "time_of_day": time_of_day,
+            "lighting_quality": lighting_quality,
+            "season": season,
+            "seasonal_modifiers": seasonal_modifiers,
+            "foreground_elements": foreground_elements,
+            "background_elements": background_elements,
+            "market_sentiment": market_sentiment,
             "asset_trends": asset_trends,
             "source": {
                 "bullish_count": bullish_count,
                 "bearish_count": bearish_count,
                 "total_assets": total_assets,
-                "moon_phase_name": moon_phase_name,
-                "temperature_c": temperature,
+                "moon_visible": moon_is_visible,
+                "moon_alt_deg": round(moon_alt_deg, 4),
+                "cloud_coverage": round(cloud_coverage, 2),
             },
         }
 
         faasr_log(
-            f"Composition: flow={compositional_flow}, focal={focal_point}, "
-            f"radial_symmetry={radial_symmetry}, layer_count={layer_count}, "
-            f"element_density={element_density:.2f}"
+            f"Scene elements: type={scene_type}, time={time_of_day}, season={season}, "
+            f"lighting={lighting_quality}, market_sentiment={market_sentiment}"
         )
 
         # -----------------------------------------------------------------------
-        # Assemble unified art parameter set
+        # Assemble unified concrete scene parameter set
         # -----------------------------------------------------------------------
         art_params = {
-            "color_palette": color_palette,
-            "shape_distribution": shape_distribution,
-            "texture_params": texture_params,
-            "composition_rules": composition_rules,
+            "sky_atmosphere": sky_atmosphere,
+            "celestial_placement": celestial_placement,
+            "scene_activity": scene_activity,
+            "scene_elements": scene_elements,
             "metadata": {
                 "weather_time": weather.get("time"),
                 "astronomy_timestamp": astronomy.get("timestamp_utc"),
@@ -398,7 +486,7 @@ def fuse_data_into_art_params(
             json.dump(art_params, f, indent=2)
 
         faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-        faasr_log(f"Art parameters uploaded to S3 folder '{folder}' as '{output1}'")
+        faasr_log(f"Concrete scene parameters uploaded to S3 folder '{folder}' as '{output1}'")
 
     finally:
         for tmp in [local_weather, local_astro, local_financial, local_output]:
