@@ -97,6 +97,22 @@ def clean_and_filter_data(folder: str, input1: str, output1: str) -> None:
             df["fire_name"] = df["fire_name"].replace("nan", pd.NA)
 
         # ------------------------------------------------------------------
+        # 3.5 Filter incident types: retain only actual wildfire records
+        #     The upstream fetch_wildfire_data already filters for "WF", but
+        #     we defensively re-apply here per the cleaning spec so that any
+        #     stale or mixed CSV is also handled correctly.
+        # ------------------------------------------------------------------
+        if "incident_type" in df.columns:
+            pre_type_count = len(df)
+            df = df[df["incident_type"] == "WF"]
+            excluded = pre_type_count - len(df)
+            if excluded:
+                faasr_log(
+                    f"clean_and_filter_data: excluded {excluded} non-wildfire "
+                    "rows (incident_type != 'WF' — prescribed burns, complexes, etc.)"
+                )
+
+        # ------------------------------------------------------------------
         # 4. Coerce numeric columns — invalid values become NaN
         # ------------------------------------------------------------------
         for col in ("acres_burned", "percent_contained", "latitude", "longitude"):
@@ -143,6 +159,44 @@ def clean_and_filter_data(folder: str, input1: str, output1: str) -> None:
             f"clean_and_filter_data: {pre_filter_count} rows before "
             f"CA-2024 filter → {len(df)} rows after"
         )
+
+        # ------------------------------------------------------------------
+        # 6.5 Deduplicate on unique_fire_id: keep the single most complete
+        #     and latest snapshot per fire.
+        #
+        #     WFIGS can emit multiple location-update records for the same
+        #     fire (same UniqueFireIdentifier).  We sort each group so the
+        #     "best" row lands last, then drop_duplicates(keep="last").
+        #
+        #     Sort order (ascending → last = best):
+        #       1. _completeness  – count of non-null fields; more = better
+        #       2. percent_contained – higher = later/more-complete update
+        #       3. _has_containment – 1 if containment_date is present, else 0
+        # ------------------------------------------------------------------
+        if "unique_fire_id" in df.columns:
+            pre_dedup_count = len(df)
+
+            df["_completeness"] = df.notna().sum(axis=1)
+
+            sort_keys = ["unique_fire_id", "_completeness"]
+            if "percent_contained" in df.columns:
+                sort_keys.append("percent_contained")
+            if "containment_date" in df.columns:
+                df["_has_containment"] = df["containment_date"].notna().astype(int)
+                sort_keys.append("_has_containment")
+
+            df = df.sort_values(sort_keys, ascending=True, na_position="first")
+            df = df.drop_duplicates(subset=["unique_fire_id"], keep="last")
+            df = df.drop(
+                columns=[c for c in ["_completeness", "_has_containment"] if c in df.columns]
+            )
+
+            deduped = pre_dedup_count - len(df)
+            if deduped:
+                faasr_log(
+                    f"clean_and_filter_data: removed {deduped} duplicate records "
+                    "on unique_fire_id (kept most complete/latest snapshot per fire)"
+                )
 
         # ------------------------------------------------------------------
         # 7. Drop rows missing critical location data (latitude or longitude)
