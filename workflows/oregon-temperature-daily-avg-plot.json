@@ -11,7 +11,7 @@
       "Type": "Python",
       "FunctionName": "download_temperature_data",
       "Arguments": {
-        "folder": "oregon_temperature_jan2026",
+        "folder": "oregon_temp_jan2026",
         "output1": "oregon_temperature_jan2026_raw.csv"
       },
       "InvokeNext": [
@@ -23,7 +23,7 @@
       "Type": "Python",
       "FunctionName": "compute_daily_averages",
       "Arguments": {
-        "folder": "oregon_temperature_jan2026",
+        "folder": "oregon_temp_jan2026",
         "input1": "oregon_temperature_jan2026_raw.csv",
         "output1": "oregon_daily_avg_temperature_jan2026.csv"
       },
@@ -36,10 +36,11 @@
       "Type": "Python",
       "FunctionName": "plot_temperature_chart",
       "Arguments": {
-        "folder": "oregon_temperature_jan2026",
+        "folder": "oregon_temp_jan2026",
         "input1": "oregon_daily_avg_temperature_jan2026.csv",
         "output1": "oregon_temperature_chart_jan2026.png"
-      }
+      },
+      "InvokeNext": []
     }
   },
   "ActionContainers": {
