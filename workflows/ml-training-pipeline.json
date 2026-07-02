@@ -28,7 +28,9 @@
         "input1": "classification_dataset.csv",
         "output1": "svm_results.json"
       },
-      "InvokeNext": []
+      "InvokeNext": [
+        "visualize"
+      ]
     },
     "train-rf": {
       "FaaSServer": "GH",
@@ -39,13 +41,28 @@
         "input1": "classification_dataset.csv",
         "output1": "rf_results.json"
       },
+      "InvokeNext": [
+        "visualize"
+      ]
+    },
+    "visualize": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "svm_results.json",
+        "input2": "rf_results.json",
+        "output1": "model_comparison.png"
+      },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "train-svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train-rf": "ghcr.io/faasr/github-actions-python:latest"
+    "train-rf": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -69,7 +86,8 @@
   "FunctionGitRepo": {
     "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
     "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
-    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py"
+    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py",
+    "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
     "gen": [
@@ -85,6 +103,10 @@
     "train_rf": [
       "scikit-learn",
       "pandas",
+      "numpy"
+    ],
+    "visualize": [
+      "matplotlib",
       "numpy"
     ]
   }
