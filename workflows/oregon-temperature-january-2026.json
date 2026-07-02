@@ -39,7 +39,8 @@
         "folder": "workflow_data",
         "input1": "oregon_daily_avg_temperature_jan2026.csv",
         "output1": "oregon_temperature_chart_jan2026.png"
-      }
+      },
+      "InvokeNext": []
     }
   },
   "ActionContainers": {
