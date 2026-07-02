@@ -2,153 +2,113 @@ import json
 import os
 import tempfile
 
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    f1_score,
-    precision_score,
-    recall_score,
-)
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
 
 
 # --- CONTRACT HELPERS ---
 def _faasr_requires(folder):
     if "classification_dataset.csv" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input dataset 'classification_dataset.csv' must exist in S3 before train_rf can download and train on it")
+        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input classification dataset CSV must exist in S3 before training can begin")
         raise SystemExit(1)
 
 
 def _faasr_promises(folder):
-    if "rf_metrics.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Output metrics file 'rf_metrics.json' must exist in S3 after train_rf completes model training and evaluation")
+    if "rf_results.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
+        faasr_log("[PROMISE] CONTRACT VIOLATION: Random Forest results JSON must be present in S3 after training and evaluation complete")
         raise SystemExit(1)
 # --- end contract helpers ---
 
 
 def train_rf(folder: str, input1: str, output1: str) -> None:
-    """Read the generated classification dataset CSV from S3, train a Random
-    Forest classifier, evaluate its performance, and save the evaluation
-    metrics as a JSON file to S3.
+    """Read the classification dataset CSV, train a Random Forest classifier, and write results JSON.
 
-    Args:
-        folder:  Remote S3 folder used for all faasr_get/put_file calls.
-        input1:  Remote filename of the input CSV (e.g. "classification_dataset.csv").
-        output1: Remote filename for the metrics JSON (e.g. "rf_metrics.json").
+    Splits the dataset into training and test sets, trains a RandomForestClassifier,
+    evaluates it on the test set, and uploads a JSON file containing model
+    accuracy and classification report metrics.
     """
-    # ------------------------------------------------------------------ #
-    # 1. Download the dataset CSV from S3 to a local temp file            #
-    # ------------------------------------------------------------------ #
     # --- CONTRACT: requires ---
     _faasr_requires(folder)
     # --- end requires ---
-    tmp_csv_fd, tmp_csv_path = tempfile.mkstemp(suffix=".csv")
-    os.close(tmp_csv_fd)
+    faasr_log(f"train_rf: starting — reading {input1} from {folder}")
 
-    tmp_metrics_fd, tmp_metrics_path = tempfile.mkstemp(suffix=".json")
-    os.close(tmp_metrics_fd)
-
+    # --- Download dataset ---
+    local_csv = tempfile.mktemp(suffix=".csv")
     try:
-        faasr_log(f"train_rf: Downloading '{input1}' from folder '{folder}'")
-        faasr_get_file(local_file=tmp_csv_path, remote_folder=folder, remote_file=input1)
+        faasr_get_file(local_file=local_csv, remote_folder=folder, remote_file=input1)
+        faasr_log(f"train_rf: downloaded dataset to {local_csv}")
 
-        # ------------------------------------------------------------------ #
-        # 2. Load and validate the dataset                                    #
-        # ------------------------------------------------------------------ #
-        df = pd.read_csv(tmp_csv_path)
-        faasr_log(f"train_rf: Loaded dataset with shape={df.shape}, columns={list(df.columns)}")
-
-        if "target" not in df.columns:
-            msg = (
-                f"train_rf: ERROR — 'target' column not found in {input1}; "
-                f"columns are {list(df.columns)}"
-            )
+        if not os.path.exists(local_csv) or os.path.getsize(local_csv) == 0:
+            msg = f"train_rf: input file {input1} is missing or empty"
             faasr_log(msg)
-            raise ValueError(msg)
+            raise RuntimeError(msg)
 
-        feature_cols = [c for c in df.columns if c != "target"]
-        if not feature_cols:
-            msg = "train_rf: ERROR — no feature columns found in the dataset"
-            faasr_log(msg)
-            raise ValueError(msg)
-
-        X = df[feature_cols].values
-        y = df["target"].values
-        faasr_log(
-            f"train_rf: Features={len(feature_cols)}, Samples={len(y)}, "
-            f"Classes={sorted(set(y.tolist()))}"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 3. Train / test split                                               #
-        # ------------------------------------------------------------------ #
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-        faasr_log(
-            f"train_rf: Split — train_size={len(y_train)}, test_size={len(y_test)}"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 4. Train Random Forest classifier                                   #
-        # ------------------------------------------------------------------ #
-        faasr_log(
-            "train_rf: Training RandomForestClassifier "
-            "(n_estimators=100, random_state=42)"
-        )
-        clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        clf.fit(X_train, y_train)
-        faasr_log("train_rf: Training complete")
-
-        # ------------------------------------------------------------------ #
-        # 5. Evaluate                                                         #
-        # ------------------------------------------------------------------ #
-        y_pred = clf.predict(X_test)
-        accuracy = float(accuracy_score(y_test, y_pred))
-        precision = float(precision_score(y_test, y_pred, average="weighted", zero_division=0))
-        recall = float(recall_score(y_test, y_pred, average="weighted", zero_division=0))
-        f1 = float(f1_score(y_test, y_pred, average="weighted", zero_division=0))
-        report = classification_report(y_test, y_pred, output_dict=True)
-
-        faasr_log(
-            f"train_rf: Test accuracy={accuracy:.4f}, precision={precision:.4f}, "
-            f"recall={recall:.4f}, f1={f1:.4f}"
-        )
-
-        # ------------------------------------------------------------------ #
-        # 6. Write metrics JSON temp file and upload                          #
-        # ------------------------------------------------------------------ #
-        metrics = {
-            "model": "RandomForest",
-            "n_estimators": 100,
-            "random_state": 42,
-            "accuracy": accuracy,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "train_size": int(len(y_train)),
-            "test_size": int(len(y_test)),
-            "n_features": int(len(feature_cols)),
-            "classification_report": report,
-        }
-        with open(tmp_metrics_path, "w", encoding="utf-8") as fh:
-            json.dump(metrics, fh, indent=2)
-
-        faasr_log(f"train_rf: Uploading metrics '{output1}' to folder '{folder}'")
-        faasr_put_file(local_file=tmp_metrics_path, remote_folder=folder, remote_file=output1)
-
-        faasr_log(
-            f"train_rf: Done — accuracy={accuracy:.4f}, "
-            f"precision={precision:.4f}, recall={recall:.4f}, f1={f1:.4f}, "
-            f"metrics='{output1}'"
-        )
-
+        df = pd.read_csv(local_csv)
+        faasr_log(f"train_rf: dataset shape = {df.shape}")
     finally:
-        for p in (tmp_csv_path, tmp_metrics_path):
-            if os.path.exists(p):
-                os.remove(p)
+        if os.path.exists(local_csv):
+            os.remove(local_csv)
+
+    # --- Validate columns ---
+    if "target" not in df.columns:
+        msg = "train_rf: 'target' column not found in dataset"
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    feature_cols = [c for c in df.columns if c != "target"]
+    if not feature_cols:
+        msg = "train_rf: no feature columns found in dataset"
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    X = df[feature_cols].values
+    y = df["target"].values
+
+    # --- Train / test split (80/20, fixed seed for reproducibility) ---
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    faasr_log(
+        f"train_rf: train size = {len(X_train)}, test size = {len(X_test)}"
+    )
+
+    # --- Train Random Forest ---
+    faasr_log("train_rf: fitting RandomForestClassifier (100 estimators)")
+    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf.fit(X_train, y_train)
+    faasr_log("train_rf: training complete")
+
+    # --- Evaluate ---
+    y_pred = clf.predict(X_test)
+    accuracy = float(accuracy_score(y_test, y_pred))
+    report_dict = classification_report(y_test, y_pred, output_dict=True)
+
+    faasr_log(f"train_rf: test accuracy = {accuracy:.4f}")
+
+    # --- Build results dict ---
+    results = {
+        "model": "Random Forest (100 estimators)",
+        "accuracy": accuracy,
+        "classification_report": report_dict,
+        "n_train": int(len(X_train)),
+        "n_test": int(len(X_test)),
+        "n_features": int(len(feature_cols)),
+    }
+
+    # --- Upload results ---
+    local_json = tempfile.mktemp(suffix=".json")
+    try:
+        with open(local_json, "w") as f:
+            json.dump(results, f, indent=2)
+        faasr_log(f"train_rf: uploading results to {folder}/{output1}")
+        faasr_put_file(local_file=local_json, remote_folder=folder, remote_file=output1)
+        faasr_log("train_rf: done")
+    finally:
+        if os.path.exists(local_json):
+            os.remove(local_json)
     # --- CONTRACT: promises ---
     _faasr_promises(folder)
     # --- end promises ---
