@@ -1,0 +1,92 @@
+{
+  "FunctionInvoke": "generate-random-numbers",
+  "WorkflowName": "random-stats-plot",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-random-numbers": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_random_numbers",
+      "Arguments": {
+        "folder": "workflow_data",
+        "output1": "random_numbers.csv"
+      },
+      "InvokeNext": [
+        "calculate-statistics",
+        "plot-results"
+      ]
+    },
+    "calculate-statistics": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "calculate_statistics",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "random_numbers.csv",
+        "output1": "statistics.json"
+      },
+      "InvokeNext": [
+        "plot-results"
+      ]
+    },
+    "plot-results": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "plot_results",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "random_numbers.csv",
+        "input2": "statistics.json",
+        "output1": "random_numbers_histogram.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-random-numbers": "ghcr.io/faasr/github-actions-python:latest",
+    "calculate-statistics": "ghcr.io/faasr/github-actions-python:latest",
+    "plot-results": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_random_numbers": "nolcut/FaaSr-workflow-testing/main/functions/generate_random_numbers.py",
+    "calculate_statistics": "nolcut/FaaSr-workflow-testing/main/functions/calculate_statistics.py",
+    "plot_results": "nolcut/FaaSr-workflow-testing/main/functions/plot_results.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_random_numbers": [
+      "numpy",
+      "pandas"
+    ],
+    "calculate_statistics": [
+      "numpy",
+      "pandas"
+    ],
+    "plot_results": [
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
