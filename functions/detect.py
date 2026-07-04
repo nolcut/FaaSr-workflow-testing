@@ -1,119 +1,165 @@
-"""Detect objects in video frames using Faster R-CNN ResNet-50 COCO model."""
+"""
+Detect function for video analysis workflow.
+
+Loads Faster R-CNN ResNet-50 COCO model, processes a batch of base64-encoded frames,
+runs object detection on each frame, and outputs detections with confidence > 0.5.
+"""
+
+import base64
 import json
 import os
-import pickle
+import tempfile
 
 import cv2
 import numpy as np
 
 
+# COCO class labels (1-indexed in COCO, so class_id 1 -> labels[0])
+COCO_LABELS = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
+    "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
+    "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+    "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
+    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+    "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
+    "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
+    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier",
+    "toothbrush"
+]
+
+
 def detect(folder: str, input1: str, input2: str, input3: str, output1: str) -> None:
     """
-    Loads Faster R-CNN model and detects objects in a batch of frames.
+    Detect objects in video frames using Faster R-CNN ResNet-50 COCO model.
 
     Args:
-        folder: S3 folder for input/output
-        input1: Input pickle filename pattern (frame_batch_{rank}.pkl)
+        folder: S3 folder name
+        input1: Input batch filename template with {rank} placeholder (batch_{rank}.json)
         input2: Model weights file (frozen_inference_graph.pb)
         input3: Model config file (faster_rcnn_resnet50_coco_2018_01_28.pbtxt)
-        output1: Output JSON filename pattern (detections_batch_{rank}.json)
+        output1: Output detections filename template with {rank} placeholder
     """
     # Get rank for this parallel instance
     r = faasr_rank()
     rank = r['rank']
-    faasr_log(f"Starting detect for rank {rank} of {r['max_rank']}")
+    max_rank = r['max_rank']
+
+    faasr_log(f"Starting detect: rank {rank}/{max_rank}")
 
     # Substitute rank into filenames
-    input_frames = input1.format(rank=rank)
-    output_detections = output1.format(rank=rank)
+    batch_file = input1.format(rank=rank)
+    output_file = output1.format(rank=rank)
 
-    # Download frame batch from S3
-    local_frames = "local_frames.pkl"
-    faasr_get_file(local_file=local_frames, remote_folder=folder, remote_file=input_frames)
-    faasr_log(f"Downloaded frame batch: {input_frames}")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Download batch file
+        local_batch = os.path.join(tmpdir, "batch.json")
+        faasr_get_file(local_file=local_batch, remote_folder=folder, remote_file=batch_file)
 
-    # Verify frame file exists and is not empty
-    if not os.path.exists(local_frames) or os.path.getsize(local_frames) == 0:
-        faasr_log(f"ERROR: Frame batch file {input_frames} is missing or empty")
-        raise ValueError(f"Frame batch file {input_frames} is missing or empty")
+        if not os.path.exists(local_batch) or os.path.getsize(local_batch) == 0:
+            faasr_log(f"ERROR: Failed to download batch file {batch_file}")
+            raise RuntimeError(f"Batch file {batch_file} not found or empty in S3 folder {folder}")
 
-    # Load frames from pickle
-    with open(local_frames, 'rb') as f:
-        frames = pickle.load(f)
-    faasr_log(f"Loaded {len(frames)} frames from batch")
+        faasr_log(f"Downloaded batch: {batch_file}")
 
-    # Download model weights
-    local_weights = "frozen_inference_graph.pb"
-    faasr_get_file(local_file=local_weights, remote_folder=folder, remote_file=input2)
-    faasr_log(f"Downloaded model weights: {input2}")
+        # Download model weights
+        local_weights = os.path.join(tmpdir, "frozen_inference_graph.pb")
+        faasr_get_file(local_file=local_weights, remote_folder=folder, remote_file=input2)
 
-    # Verify weights file exists and is not empty
-    if not os.path.exists(local_weights) or os.path.getsize(local_weights) == 0:
-        faasr_log(f"ERROR: Model weights file {input2} is missing or empty")
-        raise ValueError(f"Model weights file {input2} is missing or empty")
+        if not os.path.exists(local_weights) or os.path.getsize(local_weights) == 0:
+            faasr_log(f"ERROR: Failed to download model weights {input2}")
+            raise RuntimeError(f"Model weights {input2} not found or empty in S3 folder {folder}")
 
-    # Download model config
-    local_config = "model_config.pbtxt"
-    faasr_get_file(local_file=local_config, remote_folder=folder, remote_file=input3)
-    faasr_log(f"Downloaded model config: {input3}")
+        faasr_log(f"Downloaded model weights: {input2}")
 
-    # Verify config file exists and is not empty
-    if not os.path.exists(local_config) or os.path.getsize(local_config) == 0:
-        faasr_log(f"ERROR: Model config file {input3} is missing or empty")
-        raise ValueError(f"Model config file {input3} is missing or empty")
+        # Download model config
+        local_config = os.path.join(tmpdir, "model.pbtxt")
+        faasr_get_file(local_file=local_config, remote_folder=folder, remote_file=input3)
 
-    # Load Faster R-CNN model using OpenCV's dnn module
-    net = cv2.dnn.readNetFromTensorflow(local_weights, local_config)
-    faasr_log("Loaded Faster R-CNN model")
+        if not os.path.exists(local_config) or os.path.getsize(local_config) == 0:
+            faasr_log(f"ERROR: Failed to download model config {input3}")
+            raise RuntimeError(f"Model config {input3} not found or empty in S3 folder {folder}")
 
-    # Confidence threshold
-    CONFIDENCE_THRESHOLD = 0.5
+        faasr_log(f"Downloaded model config: {input3}")
 
-    # Process each frame and collect detections
-    all_detections = []
+        # Load batch data
+        with open(local_batch, 'r') as f:
+            batch_data = json.load(f)
 
-    for frame_idx, frame in enumerate(frames):
-        # Create blob from image
-        # Faster R-CNN expects BGR input, which OpenCV provides by default
-        blob = cv2.dnn.blobFromImage(frame, swapRB=True, crop=False)
+        frames = batch_data['frames']
+        batch_id = batch_data.get('batch_id', rank)
 
-        # Set input and run forward pass
-        net.setInput(blob)
-        detections = net.forward()
+        faasr_log(f"Processing batch {batch_id} with {len(frames)} frames")
 
-        # detections shape is typically (1, 1, num_detections, 7)
-        # where each detection is [batch_id, class_id, confidence, left, top, right, bottom]
-        num_detections = detections.shape[2]
+        # Load Faster R-CNN model using cv2.dnn.readNetFromTensorflow
+        net = cv2.dnn.readNetFromTensorflow(local_weights, local_config)
+        faasr_log("Loaded Faster R-CNN model")
 
-        for i in range(num_detections):
-            detection = detections[0, 0, i]
-            confidence = float(detection[2])
+        # Process each frame and collect detections
+        all_detections = []
 
-            # Filter by confidence threshold
-            if confidence > CONFIDENCE_THRESHOLD:
-                class_id = int(detection[1])
-                all_detections.append({
-                    "class": class_id,
-                    "score": confidence
-                })
+        for frame_info in frames:
+            frame_index = frame_info['frame_index']
+            frame_b64 = frame_info['data']
 
-        faasr_log(f"Processed frame {frame_idx + 1}/{len(frames)}")
+            # Decode base64 to image
+            img_bytes = base64.b64decode(frame_b64)
+            img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+            img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
-    faasr_log(f"Found {len(all_detections)} detections with confidence > {CONFIDENCE_THRESHOLD}")
+            if img is None:
+                faasr_log(f"WARNING: Failed to decode frame {frame_index}, skipping")
+                continue
 
-    # Write detections to JSON
-    local_output = "detections.json"
-    with open(local_output, 'w') as f:
-        json.dump(all_detections, f)
+            # Create blob from image for Faster R-CNN
+            blob = cv2.dnn.blobFromImage(
+                img,
+                swapRB=True,
+                crop=False
+            )
 
-    # Upload to S3
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_detections)
-    faasr_log(f"Uploaded {output_detections}")
+            # Set the input and run forward pass
+            net.setInput(blob)
+            detections = net.forward()
 
-    # Clean up local files
-    os.remove(local_frames)
-    os.remove(local_weights)
-    os.remove(local_config)
-    os.remove(local_output)
+            # Process detections
+            # Output shape: [1, 1, num_detections, 7]
+            # Each detection: [batch_id, class_id, confidence, x1, y1, x2, y2]
+            frame_detection_count = 0
+            for i in range(detections.shape[2]):
+                confidence = detections[0, 0, i, 2]
 
-    faasr_log(f"Detect complete for rank {rank}: {len(all_detections)} detections")
+                # Filter by confidence threshold > 0.5
+                if confidence > 0.5:
+                    class_id = int(detections[0, 0, i, 1])
+
+                    # COCO class IDs are 1-indexed, labels array is 0-indexed
+                    if 1 <= class_id <= len(COCO_LABELS):
+                        label = COCO_LABELS[class_id - 1]
+                    else:
+                        label = f"unknown_class_{class_id}"
+
+                    detection_result = {
+                        "label": label,
+                        "class": class_id,
+                        "score": float(confidence)
+                    }
+                    all_detections.append(detection_result)
+                    frame_detection_count += 1
+
+            faasr_log(f"Frame {frame_index}: found {frame_detection_count} detections")
+
+        faasr_log(f"Total detections in batch {batch_id}: {len(all_detections)} (confidence > 0.5)")
+
+        # Write detections to output file
+        local_output = os.path.join(tmpdir, "detections.json")
+        with open(local_output, 'w') as f:
+            json.dump(all_detections, f)
+
+        # Upload to S3
+        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Uploaded detections: {output_file}")
+
+        faasr_log(f"Detect complete for rank {rank}")
