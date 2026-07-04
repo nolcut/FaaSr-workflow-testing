@@ -1,75 +1,83 @@
 import json
 import os
-import re
+import tempfile
 
 
-def accumulate(folder: str, input1: str, output1: str) -> None:
+def accumulate(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Collects detection results from all parallel detect functions and merges them
-    into a single accumulated result containing all detections across all video frames.
+    Collects detection results from parallel detect functions (N=2 batches from F=10 frames
+    with batch size B=5). Reads detection JSON files from each parallel detect worker,
+    accumulates all detections into a single final payload Y.
     """
-    faasr_log("Starting accumulate function")
+    faasr_log("accumulate function starting")
 
-    # Discover all files in the folder using faasr_get_folder_list
+    # Use faasr_get_folder_list to discover detection files from ranked predecessor
+    # The function receives input1 and input2 as specific filenames, but we follow
+    # the fan-in pattern: discover files with faasr_get_folder_list and read each one
     all_files = faasr_get_folder_list(prefix=folder)
-    faasr_log(f"Found {len(all_files)} files in folder: {all_files}")
+    faasr_log(f"Found {len(all_files)} files in folder with prefix '{folder}'")
 
     # Filter for detection files (detections_*.json pattern)
-    # Extract pattern from input1 template (e.g., "detections_{rank}.json")
-    pattern_base = input1.replace("{rank}", r"(\d+)")
     detection_files = []
     for full_key in all_files:
         basename = full_key.rsplit("/", 1)[-1]
-        if re.match(pattern_base, basename):
+        if basename.startswith("detections_") and basename.endswith(".json"):
             detection_files.append(basename)
 
     faasr_log(f"Found {len(detection_files)} detection files: {detection_files}")
 
-    if len(detection_files) == 0:
-        faasr_log("ERROR: No detection files found")
-        raise RuntimeError("No detection files found to accumulate")
+    if not detection_files:
+        # Fall back to using the provided input parameters
+        detection_files = [input1, input2]
+        faasr_log(f"No detection files found via folder list, using provided inputs: {detection_files}")
 
-    # Accumulate all detections from all files
-    all_detections = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Accumulate all frames from all batches
+        all_frames = []
+        total_detections = 0
 
-    for detection_file in sorted(detection_files):
-        local_file = f"temp_{detection_file}"
-        faasr_log(f"Downloading {detection_file}")
-        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=detection_file)
+        for detection_file in sorted(detection_files):
+            local_path = os.path.join(tmpdir, detection_file)
+            faasr_get_file(local_file=local_path, remote_folder=folder, remote_file=detection_file)
 
-        try:
-            with open(local_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    faasr_log(f"WARNING: {detection_file} is empty")
-                    detections = []
-                else:
-                    detections = json.loads(content)
+            if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+                faasr_log(f"ERROR: Failed to download detection file {detection_file} or file is empty")
+                raise RuntimeError(f"Failed to download detection file {detection_file}")
 
-            if not isinstance(detections, list):
-                faasr_log(f"ERROR: {detection_file} does not contain a list")
-                raise RuntimeError(f"Invalid format in {detection_file}: expected list")
+            with open(local_path, "r") as f:
+                batch_data = json.load(f)
 
-            faasr_log(f"Loaded {len(detections)} detections from {detection_file}")
-            all_detections.extend(detections)
-        finally:
-            # Clean up temp file
-            if os.path.exists(local_file):
-                os.remove(local_file)
+            rank = batch_data.get("rank", "unknown")
+            num_frames = batch_data.get("num_frames", 0)
+            frames = batch_data.get("frames", [])
 
-    faasr_log(f"Total accumulated detections: {len(all_detections)}")
+            faasr_log(f"Processing batch from rank {rank}: {num_frames} frames")
 
-    # Write the merged results to local file
-    local_output = "all_detections_local.json"
-    with open(local_output, 'w') as f:
-        json.dump(all_detections, f, indent=2)
+            # Add batch info to each frame for traceability
+            for frame in frames:
+                frame_detections = frame.get("detections", [])
+                total_detections += len(frame_detections)
+                # Store with batch rank info
+                all_frames.append({
+                    "batch_rank": rank,
+                    "frame_index": frame.get("frame_index"),
+                    "detections": frame_detections
+                })
 
-    # Upload to S3
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Uploaded merged detections to {output1}")
+        # Build final accumulated output
+        output_data = {
+            "total_batches": len(detection_files),
+            "total_frames": len(all_frames),
+            "total_detections": total_detections,
+            "frames": all_frames
+        }
 
-    # Clean up
-    if os.path.exists(local_output):
-        os.remove(local_output)
+        # Write output JSON
+        output_path = os.path.join(tmpdir, output1)
+        with open(output_path, "w") as f:
+            json.dump(output_data, f, indent=2)
 
-    faasr_log("Accumulate function completed successfully")
+        # Upload results
+        faasr_put_file(local_file=output_path, remote_folder=folder, remote_file=output1)
+
+        faasr_log(f"accumulate complete: {total_detections} total detections from {len(all_frames)} frames across {len(detection_files)} batches")
