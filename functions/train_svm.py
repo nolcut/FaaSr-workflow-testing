@@ -1,101 +1,54 @@
-import os
 import json
-import tempfile
 import numpy as np
 from sklearn.svm import SVC
 
 
-# --- CONTRACT HELPERS ---
-def _faasr_requires(folder):
-    if "train_test_data.npz" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Preprocessed training/test data file must exist in S3 before training SVM classifier")
-        raise SystemExit(1)
-
-
-def _faasr_promises(folder):
-    if "svm_results.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: SVM results JSON file must be uploaded to S3 after training completes")
-        raise SystemExit(1)
-# --- end contract helpers ---
-
-
 def train_svm(folder: str, input1: str, output1: str) -> None:
     """
-    Train an SVM classifier on preprocessed data.
+    Train a Support Vector Machine classifier on preprocessed data.
 
-    Loads training and test data from the npz file produced by preprocess,
-    trains an SVM with kernel='linear' and C=0.025, then computes accuracy
-    using clf.score() on the test set. Saves results including accuracy and
-    model parameters to JSON.
+    Uses SVC with kernel='linear' and C=0.025 as specified by user.
+    Computes accuracy using clf.score(X_test, y_test).
     """
-    # --- CONTRACT: requires ---
-    _faasr_requires(folder)
-    # --- end requires ---
-    faasr_log("Starting SVM classifier training")
+    faasr_log("Starting SVM training")
 
-    # Download the preprocessed data
-    with tempfile.NamedTemporaryFile(mode='wb', suffix='.npz', delete=False) as f:
-        local_input_file = f.name
+    # Download preprocessed data from S3
+    local_input = "preprocessed_data_local.npz"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
 
-    try:
-        faasr_get_file(local_file=local_input_file, remote_folder=folder, remote_file=input1)
-        faasr_log(f"Downloaded preprocessed data from {folder}/{input1}")
+    # Load preprocessed data
+    data = np.load(local_input)
+    X_train = data["X_train"]
+    X_test = data["X_test"]
+    y_train = data["y_train"]
+    y_test = data["y_test"]
 
-        # Load the preprocessed data
-        data = np.load(local_input_file, allow_pickle=True)
-        X_train = data['X_train']
-        X_test = data['X_test']
-        y_train = data['y_train']
-        y_test = data['y_test']
+    faasr_log(f"Loaded preprocessed data: X_train shape: {X_train.shape}, X_test shape: {X_test.shape}")
 
-        faasr_log(f"Loaded training data: X_train={X_train.shape}, y_train={y_train.shape}")
-        faasr_log(f"Loaded test data: X_test={X_test.shape}, y_test={y_test.shape}")
+    # Initialize SVC with user-specified parameters: kernel='linear', C=0.025
+    clf = SVC(kernel='linear', C=0.025)
 
-        # Train SVM classifier with specified parameters
-        # kernel='linear', C=0.025
-        clf = SVC(
-            kernel='linear',
-            C=0.025
-        )
+    faasr_log("Training SVM classifier with kernel='linear' and C=0.025")
 
-        faasr_log("Training SVM classifier with kernel='linear', C=0.025")
-        clf.fit(X_train, y_train)
-        faasr_log("Training complete")
+    # Fit the classifier on training data
+    clf.fit(X_train, y_train)
 
-        # Compute accuracy using clf.score() on test set
-        accuracy = clf.score(X_test, y_test)
-        faasr_log(f"Test accuracy: {accuracy:.4f}")
+    faasr_log("SVM classifier trained successfully")
 
-        # Prepare results
-        results = {
-            "model": "SVM",
-            "parameters": {
-                "kernel": "linear",
-                "C": 0.025
-            },
-            "accuracy": accuracy,
-            "train_samples": int(X_train.shape[0]),
-            "test_samples": int(X_test.shape[0]),
-            "n_features": int(X_train.shape[1])
-        }
+    # Compute accuracy on test set using clf.score
+    accuracy = clf.score(X_test, y_test)
 
-        # Write results to local JSON file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            local_output_file = f.name
-            json.dump(results, f, indent=2)
+    faasr_log(f"SVM test accuracy: {accuracy}")
 
-        # Upload to S3
-        faasr_put_file(local_file=local_output_file, remote_folder=folder, remote_file=output1)
-        faasr_log(f"Uploaded results to {folder}/{output1}")
+    # Save accuracy result to JSON
+    result = {"accuracy": accuracy}
+    local_output = "svm_accuracy_local.json"
+    with open(local_output, "w") as f:
+        json.dump(result, f)
 
-    finally:
-        # Clean up local files
-        if os.path.exists(local_input_file):
-            os.remove(local_input_file)
-        if 'local_output_file' in locals() and os.path.exists(local_output_file):
-            os.remove(local_output_file)
+    faasr_log(f"Saved accuracy result to {local_output}")
 
-    faasr_log("SVM training complete")
-    # --- CONTRACT: promises ---
-    _faasr_promises(folder)
-    # --- end promises ---
+    # Upload to S3
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+
+    faasr_log(f"Uploaded SVM accuracy to {folder}/{output1}")
