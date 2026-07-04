@@ -1,0 +1,96 @@
+{
+  "FunctionInvoke": "generate-dataset",
+  "WorkflowName": "machine-learning-training-pipeline",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-dataset": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_dataset",
+      "Arguments": {
+        "folder": "ml_training_data",
+        "output1": "synthetic_dataset.csv"
+      },
+      "InvokeNext": [
+        "preprocess-data"
+      ]
+    },
+    "preprocess-data": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "preprocess_data",
+      "Arguments": {
+        "folder": "ml_training_data",
+        "input1": "synthetic_dataset.csv",
+        "output1": "X_train.npy",
+        "output2": "X_test.npy",
+        "output3": "y_train.npy",
+        "output4": "y_test.npy"
+      },
+      "InvokeNext": [
+        "train-classifier(2)"
+      ]
+    },
+    "train-classifier": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_classifier",
+      "Arguments": {
+        "folder": "ml_training_data",
+        "input1": "X_train.npy",
+        "input2": "X_test.npy",
+        "input3": "y_train.npy",
+        "input4": "y_test.npy",
+        "output1": "classifier_results_{rank}.json"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-dataset": "ghcr.io/faasr/github-actions-python:latest",
+    "preprocess-data": "ghcr.io/faasr/github-actions-python:latest",
+    "train-classifier": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_dataset": "nolcut/FaaSr-workflow-testing/main/functions/generate_dataset.py",
+    "preprocess_data": "nolcut/FaaSr-workflow-testing/main/functions/preprocess_data.py",
+    "train_classifier": "nolcut/FaaSr-workflow-testing/main/functions/train_classifier.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_dataset": [
+      "scikit-learn",
+      "pandas"
+    ],
+    "preprocess_data": [
+      "scikit-learn",
+      "pandas",
+      "numpy"
+    ],
+    "train_classifier": [
+      "numpy",
+      "scikit-learn"
+    ]
+  }
+}
