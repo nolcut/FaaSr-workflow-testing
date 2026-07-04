@@ -1,30 +1,29 @@
 {
-  "FunctionInvoke": "decode",
+  "FunctionInvoke": "decode-video",
   "WorkflowName": "video-analysis",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
-    "decode": {
+    "decode-video": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "decode",
+      "FunctionName": "decode_video",
       "Arguments": {
         "folder": "video_analysis",
         "input1": "video_small.mp4",
-        "input2": "frozen_inference_graph.pb",
-        "input3": "faster_rcnn_resnet50_coco_2018_01_28.pbtxt",
-        "output1": "batch_{rank}.json"
+        "output1": "batch_1.json",
+        "output2": "batch_2.json"
       },
       "InvokeNext": [
-        "detect(2)"
+        "detect-objects(2)"
       ]
     },
-    "detect": {
+    "detect-objects": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "detect",
+      "FunctionName": "detect_objects",
       "Arguments": {
         "folder": "video_analysis",
         "input1": "batch_{rank}.json",
@@ -33,25 +32,26 @@
         "output1": "detections_{rank}.json"
       },
       "InvokeNext": [
-        "accumulate"
+        "accumulate-detections"
       ]
     },
-    "accumulate": {
+    "accumulate-detections": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "accumulate",
+      "FunctionName": "accumulate_detections",
       "Arguments": {
         "folder": "video_analysis",
-        "input1": "detections_{rank}.json",
-        "output1": "all_detections.json"
+        "input1": "detections_1.json",
+        "input2": "detections_2.json",
+        "output1": "accumulated_detections.json"
       },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
-    "decode": "ghcr.io/faasr/github-actions-python:latest",
-    "detect": "ghcr.io/faasr/github-actions-python:latest",
-    "accumulate": "ghcr.io/faasr/github-actions-python:latest"
+    "decode-video": "ghcr.io/faasr/github-actions-python:latest",
+    "detect-objects": "ghcr.io/faasr/github-actions-python:latest",
+    "accumulate-detections": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -73,17 +73,17 @@
     }
   },
   "FunctionGitRepo": {
-    "decode": "nolcut/FaaSr-workflow-testing/main/functions/decode.py",
-    "detect": "nolcut/FaaSr-workflow-testing/main/functions/detect.py",
-    "accumulate": "nolcut/FaaSr-workflow-testing/main/functions/accumulate.py"
+    "decode_video": "nolcut/FaaSr-workflow-testing/main/functions/decode_video.py",
+    "detect_objects": "nolcut/FaaSr-workflow-testing/main/functions/detect_objects.py",
+    "accumulate_detections": "nolcut/FaaSr-workflow-testing/main/functions/accumulate_detections.py"
   },
   "PyPIPackageDownloads": {
-    "decode": [
+    "decode_video": [
       "opencv-python-headless",
       "numpy"
     ],
-    "detect": [
-      "opencv-python",
+    "detect_objects": [
+      "opencv-python-headless",
       "numpy"
     ]
   }
