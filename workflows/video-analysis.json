@@ -1,0 +1,90 @@
+{
+  "FunctionInvoke": "decode",
+  "WorkflowName": "video-analysis",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "decode": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "decode",
+      "Arguments": {
+        "folder": "video_analysis",
+        "input1": "video_small.mp4",
+        "output1": "frame_batch_1.pkl",
+        "output2": "frame_batch_2.pkl"
+      },
+      "InvokeNext": [
+        "detect(2)"
+      ]
+    },
+    "detect": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "detect",
+      "Arguments": {
+        "folder": "video_analysis",
+        "input1": "frame_batch_{rank}.pkl",
+        "input2": "frozen_inference_graph.pb",
+        "input3": "faster_rcnn_resnet50_coco_2018_01_28.pbtxt",
+        "output1": "detections_batch_{rank}.json"
+      },
+      "InvokeNext": [
+        "accumulate"
+      ]
+    },
+    "accumulate": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "accumulate",
+      "Arguments": {
+        "folder": "video_analysis",
+        "input1": "detections_batch_1.json",
+        "input2": "detections_batch_2.json",
+        "output1": "final_detections.json"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "decode": "ghcr.io/faasr/github-actions-python:latest",
+    "detect": "ghcr.io/faasr/github-actions-python:latest",
+    "accumulate": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "decode": "nolcut/FaaSr-workflow-testing/main/functions/decode.py",
+    "detect": "nolcut/FaaSr-workflow-testing/main/functions/detect.py",
+    "accumulate": "nolcut/FaaSr-workflow-testing/main/functions/accumulate.py"
+  },
+  "PyPIPackageDownloads": {
+    "decode": [
+      "opencv-python-headless",
+      "numpy"
+    ],
+    "detect": [
+      "opencv-python-headless",
+      "numpy"
+    ]
+  }
+}
