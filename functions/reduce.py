@@ -1,74 +1,62 @@
 import json
-import tempfile
-import os
 
 
 def reduce(folder: str, input1: str, output1: str) -> None:
     """
-    Count the total occurrences of the assigned word across all mapper outputs.
-    This is a ranked function (M=5 reducers, one per unique word).
-    Each reducer instance reads its assigned shuffle shard containing word counts
-    from all mappers for its specific word, sums the counts to compute the final
-    total occurrence count for that word, and writes the result to an output file.
+    Reduce function for MapReduce word count workflow.
 
-    The reducer determines which word it handles based on its rank (1-indexed),
-    mapping to the word list [cat, dog, bird, horse, pig].
+    This function runs as 5 parallel instances. Each instance (rank 1-5) is responsible
+    for counting the total occurrences of one word:
+    - rank 1: cat
+    - rank 2: dog
+    - rank 3: bird
+    - rank 4: horse
+    - rank 5: pig
+
+    Reads the shuffle shard file for this reducer's rank, which contains partial counts
+    from all N=3 mappers. Sums the counts to get the total occurrence count for the word.
     """
-    # Get rank for this instance
+    # Get this instance's rank (1-5)
     r = faasr_rank()
     rank = r['rank']
 
-    # Map rank to word
-    words = ["cat", "dog", "bird", "horse", "pig"]
-    word = words[rank - 1]  # rank is 1-indexed
+    # Word mapping for logging purposes
+    rank_to_word = {1: "cat", 2: "dog", 3: "bird", 4: "horse", 5: "pig"}
+    word = rank_to_word.get(rank, f"unknown_rank_{rank}")
 
-    faasr_log(f"Reduce rank {rank}: processing word '{word}'")
+    faasr_log(f"Reduce rank {rank} starting: processing word '{word}'")
 
     # Substitute rank into input/output filenames
     input_file = input1.format(rank=rank)
     output_file = output1.format(rank=rank)
 
-    # Download the shuffle shard for this rank
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-        tmp_path = tmp.name
+    # Download the shuffle shard file for this rank
+    local_input = f"shuffle_{rank}.json"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
+    faasr_log(f"Downloaded shuffle shard: {input_file}")
 
-    try:
-        faasr_get_file(local_file=tmp_path, remote_folder=folder, remote_file=input_file)
+    # Read partial counts from all mappers
+    with open(local_input, 'r') as f:
+        partial_counts = json.load(f)
 
-        # Read the JSON content - a list of counts from all mappers
-        with open(tmp_path, 'r') as f:
-            content = f.read()
+    if not isinstance(partial_counts, list):
+        error_msg = f"Expected a list of partial counts from {input_file}, got {type(partial_counts).__name__}"
+        faasr_log(error_msg)
+        raise ValueError(error_msg)
 
-        if not content.strip():
-            faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
-            raise ValueError(f"Input file {input_file} is empty or missing")
+    faasr_log(f"Partial counts for '{word}' from mappers: {partial_counts}")
 
-        counts_list = json.loads(content)
-        faasr_log(f"Read counts from {input_file}: {counts_list}")
+    # Sum the partial counts to get total count for this word
+    total_count = sum(partial_counts)
+    faasr_log(f"Total count for '{word}': {total_count}")
 
-        # Sum all counts to get the final total for this word
-        total_count = sum(counts_list)
-        faasr_log(f"Total count for word '{word}': {total_count}")
+    # Write final count to output file
+    local_output = f"final_count_{rank}.json"
+    result = {"word": word, "count": total_count}
 
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    with open(local_output, 'w') as f:
+        json.dump(result, f)
 
-    # Write the final count to output
-    result = {
-        "word": word,
-        "total_count": total_count
-    }
-
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-        json.dump(result, tmp)
-        tmp_path = tmp.name
-
-    try:
-        faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
-        faasr_log(f"Uploaded final count for '{word}' ({total_count}) to {output_file}")
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-    faasr_log(f"Reduce rank {rank} completed successfully")
+    # Upload the final count
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
+    faasr_log(f"Reduce rank {rank} complete: wrote {output_file} with total count {total_count} for '{word}'")
