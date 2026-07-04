@@ -12,9 +12,9 @@
       "FunctionName": "split",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "input_text.txt",
-        "output1": "batch_{rank}.txt",
-        "output2": "split_metadata.json"
+        "output1": "text_batch_1.txt",
+        "output2": "text_batch_2.txt",
+        "output3": "text_batch_3.txt"
       },
       "InvokeNext": [
         "map(3)"
@@ -26,8 +26,8 @@
       "FunctionName": "map",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "batch_{rank}.txt",
-        "output1": "partial_counts_{rank}.json"
+        "input1": "text_batch_{rank}.txt",
+        "output1": "word_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -39,9 +39,14 @@
       "FunctionName": "shuffle",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "partial_counts_{rank}.json",
-        "input2": "split_metadata.json",
-        "output1": "shuffle_bucket_{rank}.json"
+        "input1": "word_counts_1.json",
+        "input2": "word_counts_2.json",
+        "input3": "word_counts_3.json",
+        "output1": "shuffle_shard_1.json",
+        "output2": "shuffle_shard_2.json",
+        "output3": "shuffle_shard_3.json",
+        "output4": "shuffle_shard_4.json",
+        "output5": "shuffle_shard_5.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -53,9 +58,10 @@
       "FunctionName": "reduce",
       "Arguments": {
         "folder": "mapreduce_word_count",
-        "input1": "shuffle_bucket_{rank}.json",
-        "output1": "word_counts_{rank}.json"
-      }
+        "input1": "shuffle_shard_{rank}.json",
+        "output1": "final_count_{rank}.json"
+      },
+      "InvokeNext": []
     }
   },
   "ActionContainers": {
