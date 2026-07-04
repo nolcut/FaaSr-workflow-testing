@@ -1,58 +1,65 @@
 {
-  "FunctionInvoke": "generate-dataset",
+  "FunctionInvoke": "gen",
   "WorkflowName": "machine-learning-training-pipeline",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
-    "generate-dataset": {
+    "gen": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "generate_dataset",
+      "FunctionName": "gen",
       "Arguments": {
-        "folder": "ml_training_data",
+        "folder": "ml_training_pipeline",
         "output1": "synthetic_dataset.csv"
       },
       "InvokeNext": [
-        "preprocess-data"
+        "preprocess"
       ]
     },
-    "preprocess-data": {
+    "preprocess": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "preprocess_data",
+      "FunctionName": "preprocess",
       "Arguments": {
-        "folder": "ml_training_data",
+        "folder": "ml_training_pipeline",
         "input1": "synthetic_dataset.csv",
-        "output1": "X_train.npy",
-        "output2": "X_test.npy",
-        "output3": "y_train.npy",
-        "output4": "y_test.npy"
+        "output1": "train_test_data.npz"
       },
       "InvokeNext": [
-        "train-classifier(2)"
+        "train-random-forest",
+        "train-svm"
       ]
     },
-    "train-classifier": {
+    "train-random-forest": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_classifier",
+      "FunctionName": "train_random_forest",
       "Arguments": {
-        "folder": "ml_training_data",
-        "input1": "X_train.npy",
-        "input2": "X_test.npy",
-        "input3": "y_train.npy",
-        "input4": "y_test.npy",
-        "output1": "classifier_results_{rank}.json"
+        "folder": "ml_training_pipeline",
+        "input1": "train_test_data.npz",
+        "output1": "random_forest_results.json"
+      },
+      "InvokeNext": []
+    },
+    "train-svm": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_svm",
+      "Arguments": {
+        "folder": "ml_training_pipeline",
+        "input1": "train_test_data.npz",
+        "output1": "svm_results.json"
       },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
-    "generate-dataset": "ghcr.io/faasr/github-actions-python:latest",
-    "preprocess-data": "ghcr.io/faasr/github-actions-python:latest",
-    "train-classifier": "ghcr.io/faasr/github-actions-python:latest"
+    "gen": "ghcr.io/faasr/github-actions-python:latest",
+    "preprocess": "ghcr.io/faasr/github-actions-python:latest",
+    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest",
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -74,21 +81,27 @@
     }
   },
   "FunctionGitRepo": {
-    "generate_dataset": "nolcut/FaaSr-workflow-testing/main/functions/generate_dataset.py",
-    "preprocess_data": "nolcut/FaaSr-workflow-testing/main/functions/preprocess_data.py",
-    "train_classifier": "nolcut/FaaSr-workflow-testing/main/functions/train_classifier.py"
+    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
+    "preprocess": "nolcut/FaaSr-workflow-testing/main/functions/preprocess.py",
+    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py"
   },
   "PyPIPackageDownloads": {
-    "generate_dataset": [
-      "scikit-learn",
-      "pandas"
-    ],
-    "preprocess_data": [
+    "gen": [
       "scikit-learn",
       "pandas",
       "numpy"
     ],
-    "train_classifier": [
+    "preprocess": [
+      "numpy",
+      "pandas",
+      "scikit-learn"
+    ],
+    "train_random_forest": [
+      "numpy",
+      "scikit-learn"
+    ],
+    "train_svm": [
       "numpy",
       "scikit-learn"
     ]
