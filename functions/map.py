@@ -1,73 +1,59 @@
 import json
-import tempfile
-import os
+from collections import Counter
 
 
 def map(folder: str, input1: str, output1: str) -> None:
     """
-    Count how often each word occurs in the assigned text chunk.
-    This is a parallel map function where each instance (identified by its FaaSr rank)
-    reads its corresponding batch file from the split phase, counts the frequency of
-    each word in that chunk, and outputs the word frequency counts as a JSON file.
+    Count word occurrences in the assigned text chunk.
+
+    This function runs as N=3 parallel instances. Each instance:
+    1. Gets its rank (1, 2, or 3) from faasr_rank()
+    2. Reads its assigned batch file (batch_{rank}.json)
+    3. Counts occurrences of each word in that chunk
+    4. Outputs word counts as JSON (map_counts_{rank}.json)
     """
     # Get this instance's rank
     r = faasr_rank()
     rank = r['rank']
     max_rank = r['max_rank']
 
-    faasr_log(f"Map function starting for rank {rank}/{max_rank}")
+    faasr_log(f"Map instance {rank}/{max_rank} starting")
 
     # Substitute rank into input/output filenames
     input_file = input1.format(rank=rank)
     output_file = output1.format(rank=rank)
 
-    faasr_log(f"Reading input file: {input_file}")
+    # Download the batch file for this rank
+    local_input = f"batch_{rank}.json"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
+    faasr_log(f"Downloaded input file: {input_file}")
 
-    # Download the text batch file to a temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
-        tmp_input_path = tmp.name
+    # Read the word list from the batch file
+    with open(local_input, 'r') as f:
+        words = json.load(f)
 
-    try:
-        faasr_get_file(local_file=tmp_input_path, remote_folder=folder, remote_file=input_file)
+    if not isinstance(words, list):
+        error_msg = f"Expected a list of words, got {type(words).__name__}"
+        faasr_log(error_msg)
+        raise ValueError(error_msg)
 
-        # Read the text content
-        with open(tmp_input_path, 'r') as f:
-            text_content = f.read()
+    faasr_log(f"Read {len(words)} words from batch {rank}")
 
-        if not text_content.strip():
-            faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
-            raise ValueError(f"Input file {input_file} is empty or missing")
+    # Count word occurrences
+    word_counts = Counter(words)
 
-        # Split into words and count frequencies
-        words = text_content.split()
-        faasr_log(f"Read {len(words)} words from {input_file}")
+    # Convert Counter to regular dict for JSON serialization
+    counts_dict = dict(word_counts)
 
-        # Count word frequencies
-        word_counts = {}
-        for word in words:
-            # Normalize to lowercase (though the input should already be lowercase)
-            word_lower = word.lower().strip()
-            if word_lower:
-                word_counts[word_lower] = word_counts.get(word_lower, 0) + 1
+    faasr_log(f"Counted {len(counts_dict)} unique words in batch {rank}")
 
-        faasr_log(f"Counted {len(word_counts)} unique words: {word_counts}")
+    # Write the counts to local file
+    local_output = f"map_counts_{rank}.json"
+    with open(local_output, 'w') as f:
+        json.dump(counts_dict, f)
 
-    finally:
-        # Clean up input temp file
-        if os.path.exists(tmp_input_path):
-            os.remove(tmp_input_path)
+    # Upload to S3
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
+    faasr_log(f"Uploaded output file: {output_file}")
 
-    # Write word counts to JSON file and upload
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-        json.dump(word_counts, tmp)
-        tmp_output_path = tmp.name
-
-    try:
-        faasr_put_file(local_file=tmp_output_path, remote_folder=folder, remote_file=output_file)
-        faasr_log(f"Uploaded word counts to {output_file}")
-    finally:
-        # Clean up output temp file
-        if os.path.exists(tmp_output_path):
-            os.remove(tmp_output_path)
-
-    faasr_log(f"Map function completed successfully for rank {rank}")
+    faasr_log(f"Map instance {rank} complete - word counts: {counts_dict}")
