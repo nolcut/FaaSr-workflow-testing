@@ -1,79 +1,64 @@
 import json
-import tempfile
-import os
 
 
 def shuffle(folder: str, input1: str, input2: str, input3: str, output1: str, output2: str, output3: str, output4: str, output5: str) -> None:
     """
-    Flatten and reorganize the word count results from all N=3 mappers to enable M=5 parallel reducers.
-    Read the partial word count JSON files from each mapper (containing counts for words: cat, dog, bird, horse, pig).
-    Reorganize the data so that each of the M=5 reducers receives all counts for its assigned word across all mappers.
-    Output M=5 separate JSON files, one per word, where each file contains a list of counts from all mappers for that specific word.
+    Flatten word count results from N=3 parallel map functions into M=5 separate files,
+    one per unique word, to enable parallel reduce processing.
+
+    For each of the 5 words, collect all partial counts from all 3 map outputs and write
+    them to a separate JSON file. Each output file contains an array of partial counts
+    for that specific word from all map partitions.
+
+    Word-to-rank mapping: rank 1=cat, rank 2=dog, rank 3=bird, rank 4=horse, rank 5=pig.
     """
-    faasr_log("Starting shuffle: reorganizing N=3 mapper outputs for M=5 reducers")
+    faasr_log("Starting shuffle: reorganizing map outputs by word")
 
-    # The 5 words in order corresponding to the 5 outputs
-    words = ["cat", "dog", "bird", "horse", "pig"]
-    outputs = [output1, output2, output3, output4, output5]
+    # Word-to-output mapping: rank 1=cat, rank 2=dog, rank 3=bird, rank 4=horse, rank 5=pig
+    word_to_output = {
+        "cat": output1,    # shuffle_1.json
+        "dog": output2,    # shuffle_2.json
+        "bird": output3,   # shuffle_3.json
+        "horse": output4,  # shuffle_4.json
+        "pig": output5,    # shuffle_5.json
+    }
 
-    # Discover all word count files from mappers using faasr_get_folder_list
-    all_files = faasr_get_folder_list(prefix=f"{folder}/word_counts_")
-    faasr_log(f"Discovered mapper output files: {all_files}")
+    # Collect partial counts for each word from all map outputs
+    word_counts = {word: [] for word in word_to_output.keys()}
 
-    # If no files found with the prefix, try the exact input filenames
+    # Read all 3 map count files
     input_files = [input1, input2, input3]
-    if not all_files:
-        all_files = input_files
-        faasr_log(f"Using explicit input filenames: {all_files}")
 
-    # Collect word counts from all mappers
-    # Structure: {word: [count_from_mapper1, count_from_mapper2, ...]}
-    word_counts_all = {word: [] for word in words}
+    for i, input_file in enumerate(input_files, start=1):
+        local_file = f"map_counts_{i}.json"
+        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=input_file)
+        faasr_log(f"Downloaded map output: {input_file}")
 
-    for input_file in all_files:
-        # Download the mapper output to a temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-            tmp_path = tmp.name
+        with open(local_file, 'r') as f:
+            counts = json.load(f)
 
-        try:
-            faasr_get_file(local_file=tmp_path, remote_folder=folder, remote_file=input_file)
+        if not isinstance(counts, dict):
+            error_msg = f"Expected a dict of word counts from {input_file}, got {type(counts).__name__}"
+            faasr_log(error_msg)
+            raise ValueError(error_msg)
 
-            # Read the JSON content
-            with open(tmp_path, 'r') as f:
-                content = f.read()
+        # Extract the count for each word from this map output
+        for word in word_counts.keys():
+            count = counts.get(word, 0)
+            word_counts[word].append(count)
+            faasr_log(f"  {word}: {count} from map {i}")
 
-            if not content.strip():
-                faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
-                raise ValueError(f"Input file {input_file} is empty or missing")
+    faasr_log("All map outputs read, writing shuffle outputs by word")
 
-            mapper_counts = json.loads(content)
-            faasr_log(f"Read counts from {input_file}: {mapper_counts}")
+    # Write output files: one per word with array of partial counts
+    for word, output_file in word_to_output.items():
+        local_file = f"shuffle_{word}.json"
+        partial_counts = word_counts[word]
 
-            # Collect the count for each word from this mapper
-            for word in words:
-                count = mapper_counts.get(word, 0)
-                word_counts_all[word].append(count)
+        with open(local_file, 'w') as f:
+            json.dump(partial_counts, f)
 
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Wrote {output_file} with partial counts: {partial_counts}")
 
-    faasr_log(f"Aggregated counts per word: {word_counts_all}")
-
-    # Write output files - one per word, containing the list of counts from all mappers
-    for i, (word, output_file) in enumerate(zip(words, outputs), start=1):
-        counts_list = word_counts_all[word]
-
-        # Write to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-            json.dump(counts_list, tmp)
-            tmp_path = tmp.name
-
-        try:
-            faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
-            faasr_log(f"Uploaded shard {i} for word '{word}' with counts {counts_list} to {output_file}")
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
-    faasr_log("Shuffle function completed successfully")
+    faasr_log("Shuffle complete: 5 word-specific files ready for parallel reduce")
