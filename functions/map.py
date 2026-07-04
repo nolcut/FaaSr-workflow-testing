@@ -1,77 +1,73 @@
 import json
-import os
-import string
 import tempfile
-from collections import Counter
+import os
 
 
-# --- CONTRACT HELPERS ---
-def _faasr_requires(folder):
-    if "batch_{rank}.txt".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input batch file 'batch_{rank}.txt' must exist in S3 before the map function can process it")
-        raise SystemExit(1)
-def _faasr_promises(folder):
-    if "map_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Map result file 'map_result_{rank}.json' should have been uploaded to S3 after word count processing")
-        raise SystemExit(1)
-# --- end contract helpers ---
 def map(folder: str, input1: str, output1: str) -> None:
     """
-    Reads the assigned text chunk from S3 for this mapper's batch index
-    (determined via faasr_rank()), tokenizes the text into words (lowercased,
-    stripped of punctuation), counts the frequency of each word, and writes
-    the intermediate word count results as a JSON file to S3 for the shuffle step.
+    Count how often each word occurs in the assigned text chunk.
+    This is a parallel map function where each instance (identified by its FaaSr rank)
+    reads its corresponding batch file from the split phase, counts the frequency of
+    each word in that chunk, and outputs the word frequency counts as a JSON file.
     """
-    # ── 1. Determine this instance's rank ────────────────────────────────────
-    # --- CONTRACT: requires ---
-    _faasr_requires(folder)
-    # --- end requires ---
+    # Get this instance's rank
     r = faasr_rank()
-    rank = r["rank"]
-    faasr_log(f"map: starting rank={rank} max_rank={r['max_rank']}")
+    rank = r['rank']
+    max_rank = r['max_rank']
 
-    # Substitute {rank} in filenames
-    remote_input = input1.format(rank=rank)
-    remote_output = output1.format(rank=rank)
+    faasr_log(f"Map function starting for rank {rank}/{max_rank}")
 
-    # ── 2. Download this rank's batch file ───────────────────────────────────
-    local_input = tempfile.mktemp(suffix=".txt")
-    faasr_log(f"Downloading batch file '{remote_input}' from folder '{folder}'")
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=remote_input)
+    # Substitute rank into input/output filenames
+    input_file = input1.format(rank=rank)
+    output_file = output1.format(rank=rank)
 
-    with open(local_input, "r", encoding="utf-8") as fh:
-        text = fh.read()
-    os.unlink(local_input)
+    faasr_log(f"Reading input file: {input_file}")
 
-    if not text.strip():
-        msg = f"Batch file '{remote_input}' is empty — cannot map"
-        faasr_log(msg)
-        raise ValueError(msg)
+    # Download the text batch file to a temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
+        tmp_input_path = tmp.name
 
-    # ── 3. Tokenize: lowercase + strip punctuation ───────────────────────────
-    # The split function writes words one per line (joined with "\n"), but those
-    # words may still carry leading/trailing punctuation from the original text.
-    translator = str.maketrans("", "", string.punctuation)
-    counts: Counter = Counter()
-    for token in text.split():
-        word = token.lower().translate(translator)
-        if word:  # skip empty strings left after stripping punctuation
-            counts[word] += 1
+    try:
+        faasr_get_file(local_file=tmp_input_path, remote_folder=folder, remote_file=input_file)
 
-    total_words = sum(counts.values())
-    faasr_log(f"Rank {rank}: counted {total_words} tokens across {len(counts)} unique words")
+        # Read the text content
+        with open(tmp_input_path, 'r') as f:
+            text_content = f.read()
 
-    # ── 4. Write word counts to a local JSON file ────────────────────────────
-    local_output = tempfile.mktemp(suffix=".json")
-    with open(local_output, "w", encoding="utf-8") as fh:
-        json.dump(counts, fh, indent=2, sort_keys=True)
+        if not text_content.strip():
+            faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
+            raise ValueError(f"Input file {input_file} is empty or missing")
 
-    # ── 5. Upload JSON result to S3 ───────────────────────────────────────────
-    faasr_log(f"Uploading map result '{remote_output}' to folder '{folder}'")
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=remote_output)
-    os.unlink(local_output)
+        # Split into words and count frequencies
+        words = text_content.split()
+        faasr_log(f"Read {len(words)} words from {input_file}")
 
-    faasr_log(f"map rank={rank} complete")
-    # --- CONTRACT: promises ---
-    _faasr_promises(folder)
-    # --- end promises ---
+        # Count word frequencies
+        word_counts = {}
+        for word in words:
+            # Normalize to lowercase (though the input should already be lowercase)
+            word_lower = word.lower().strip()
+            if word_lower:
+                word_counts[word_lower] = word_counts.get(word_lower, 0) + 1
+
+        faasr_log(f"Counted {len(word_counts)} unique words: {word_counts}")
+
+    finally:
+        # Clean up input temp file
+        if os.path.exists(tmp_input_path):
+            os.remove(tmp_input_path)
+
+    # Write word counts to JSON file and upload
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+        json.dump(word_counts, tmp)
+        tmp_output_path = tmp.name
+
+    try:
+        faasr_put_file(local_file=tmp_output_path, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Uploaded word counts to {output_file}")
+    finally:
+        # Clean up output temp file
+        if os.path.exists(tmp_output_path):
+            os.remove(tmp_output_path)
+
+    faasr_log(f"Map function completed successfully for rank {rank}")
