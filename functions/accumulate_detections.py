@@ -5,64 +5,72 @@ import tempfile
 
 def accumulate_detections(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Accumulate all detections from parallel detect functions into a final consolidated payload.
-    Reads detection results from multiple parallel detect function outputs (N=2 batches),
-    merges all detections into a single list, and outputs the final consolidated list
-    containing all {label, class, score} entries where score > 0.5.
+    Accumulate all detections from the parallel detect functions (N=2 batch detection outputs)
+    and return the final payload Y.
+
+    Reads detection results from each parallel detect function (batch 0 and batch 1),
+    which are JSON files containing detection arrays with label, class, and score fields.
+    Combines all detections from both batches into a single unified result.
     """
-    faasr_log("accumulate_detections starting")
+    faasr_log("Starting accumulate_detections")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        all_detections = []
+    # Use faasr_get_folder_list to discover all detection files from the ranked predecessor
+    # The folder prefix helps filter to detection files
+    all_files = faasr_get_folder_list(prefix=folder)
+    faasr_log(f"Found files in folder: {all_files}")
 
-        # Process each input detection file
-        input_files = [input1, input2]
+    # Collect all detections from input files
+    all_detections = []
 
-        for detection_file in input_files:
-            local_file = os.path.join(tmpdir, detection_file)
+    # Process input1 (detections from batch 0)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp1:
+        local_file1 = tmp1.name
 
-            # Download the detection file
-            faasr_get_file(
-                local_file=local_file,
-                remote_folder=folder,
-                remote_file=detection_file
-            )
+    try:
+        faasr_get_file(local_file=local_file1, remote_folder=folder, remote_file=input1)
+        with open(local_file1, 'r') as f:
+            detections1 = json.load(f)
+        faasr_log(f"Loaded {len(detections1)} detections from {input1}")
+        all_detections.extend(detections1)
+    except Exception as e:
+        faasr_log(f"Error reading {input1}: {e}")
+        raise
+    finally:
+        if os.path.exists(local_file1):
+            os.remove(local_file1)
 
-            if not os.path.exists(local_file) or os.path.getsize(local_file) == 0:
-                error_msg = f"Failed to download detection file '{detection_file}' from folder '{folder}'"
-                faasr_log(error_msg)
-                raise RuntimeError(error_msg)
+    # Process input2 (detections from batch 1)
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp2:
+        local_file2 = tmp2.name
 
-            faasr_log(f"Downloaded detection file: {detection_file}")
+    try:
+        faasr_get_file(local_file=local_file2, remote_folder=folder, remote_file=input2)
+        with open(local_file2, 'r') as f:
+            detections2 = json.load(f)
+        faasr_log(f"Loaded {len(detections2)} detections from {input2}")
+        all_detections.extend(detections2)
+    except Exception as e:
+        faasr_log(f"Error reading {input2}: {e}")
+        raise
+    finally:
+        if os.path.exists(local_file2):
+            os.remove(local_file2)
 
-            # Load the detections
-            with open(local_file, "r") as f:
-                detections = json.load(f)
+    faasr_log(f"Total accumulated detections: {len(all_detections)}")
 
-            # Filter detections with score > 0.5 and add to consolidated list
-            for detection in detections:
-                if detection.get("score", 0) > 0.5:
-                    all_detections.append({
-                        "label": detection["label"],
-                        "class": detection["class"],
-                        "score": detection["score"]
-                    })
+    # Write the combined results to output file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_out:
+        local_output = tmp_out.name
 
-            faasr_log(f"Loaded {len(detections)} detections from {detection_file}")
-
-        faasr_log(f"Total consolidated detections with score > 0.5: {len(all_detections)}")
-
-        # Write the final consolidated output
-        local_output = os.path.join(tmpdir, "final_detections.json")
-        with open(local_output, "w") as f:
+    try:
+        with open(local_output, 'w') as f:
             json.dump(all_detections, f, indent=2)
 
         # Upload to S3
-        faasr_put_file(
-            local_file=local_output,
-            remote_folder=folder,
-            remote_file=output1
-        )
-        faasr_log(f"Uploaded consolidated detections: {output1}")
+        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+        faasr_log(f"Uploaded final detections to {output1}")
+    finally:
+        if os.path.exists(local_output):
+            os.remove(local_output)
 
-        faasr_log("accumulate_detections completed")
+    faasr_log("accumulate_detections complete")
