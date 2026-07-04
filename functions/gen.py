@@ -1,19 +1,17 @@
-import tempfile
-import os
-
 import numpy as np
 from sklearn.datasets import make_classification
 
 
-def gen(folder: str, output1: str) -> None:
+def gen(folder: str, output1: str, output2: str) -> None:
     """
     Generate a synthetic classification dataset using sklearn's make_classification.
 
     Parameters:
-        folder: S3 folder for remote storage
-        output1: Output filename for the raw dataset (npz format)
+        folder: Remote folder for S3 storage
+        output1: Filename for raw features (X)
+        output2: Filename for raw labels (y)
     """
-    faasr_log("Starting synthetic dataset generation")
+    faasr_log("Starting dataset generation with make_classification")
 
     # Generate synthetic classification dataset with specified parameters
     X, y = make_classification(
@@ -23,19 +21,22 @@ def gen(folder: str, output1: str) -> None:
         n_clusters_per_class=2,
         weights=[0.9, 0.1],
         flip_y=0.1,
-        random_state=123,
-        n_informative=2,  # default, required since n_redundant=0
+        random_state=123
     )
 
-    faasr_log(f"Generated dataset with shape X={X.shape}, y={y.shape}")
+    faasr_log(f"Generated dataset: X shape={X.shape}, y shape={y.shape}")
     faasr_log(f"Class distribution: {np.bincount(y)}")
 
-    # Save to temporary file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        local_file = os.path.join(tmpdir, "raw_dataset.npz")
-        np.savez(local_file, X=X, y=y)
+    # Save features to local temp file and upload
+    local_features = "temp_raw_features.npy"
+    np.save(local_features, X)
+    faasr_put_file(local_file=local_features, remote_folder=folder, remote_file=output1)
+    faasr_log(f"Uploaded features to {output1}")
 
-        # Upload to S3
-        faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output1)
+    # Save labels to local temp file and upload
+    local_labels = "temp_raw_labels.npy"
+    np.save(local_labels, y)
+    faasr_put_file(local_file=local_labels, remote_folder=folder, remote_file=output2)
+    faasr_log(f"Uploaded labels to {output2}")
 
-    faasr_log(f"Dataset saved to {output1}")
+    faasr_log("Dataset generation complete")
