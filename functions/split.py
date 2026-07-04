@@ -1,68 +1,48 @@
+import json
 import random
-import tempfile
-import os
 
 
 def split(folder: str, output1: str, output2: str, output3: str) -> None:
     """
     Generate input text containing W=5000 words from vocabulary [cat, dog, bird, horse, pig]
-    with each word distributed evenly (1000 of each) and shuffled randomly.
-    Partition the resulting text into N=3 batches for parallel processing by the downstream map functions.
+    (M=5 different words), with each word distributed evenly (1000 occurrences each) and
+    the entire list shuffled randomly. Partition into N=3 batches for parallel map processing.
     """
-    faasr_log("Starting split: generating W=5000 words from vocabulary [cat, dog, bird, horse, pig]")
+    faasr_log("Starting split: generating 5000 words with 5 vocabulary items")
 
-    # Define vocabulary and parameters
+    # Vocabulary and parameters per spec
     vocabulary = ["cat", "dog", "bird", "horse", "pig"]
-    words_per_vocab = 1000  # 5000 total / 5 words = 1000 each
-    total_words = 5000
-    num_batches = 3
+    words_per_term = 1000  # W=5000 total, M=5 words => 1000 each
+    n_batches = 3  # N=3 partitions
 
-    # Generate the word list with even distribution
-    words = []
+    # Generate all words: 1000 occurrences of each word
+    all_words = []
     for word in vocabulary:
-        words.extend([word] * words_per_vocab)
+        all_words.extend([word] * words_per_term)
+
+    faasr_log(f"Generated {len(all_words)} words total")
 
     # Shuffle randomly
-    random.shuffle(words)
+    random.shuffle(all_words)
+    faasr_log("Shuffled words randomly")
 
-    faasr_log(f"Generated {len(words)} words, shuffled randomly")
+    # Partition into 3 approximately equal batches
+    total_words = len(all_words)
+    batch_size = total_words // n_batches
 
-    # Calculate batch sizes: 5000 / 3 = 1666.67, so batches 1 and 2 get 1667, batch 3 gets 1666
-    # This gives approximately equal distribution
-    batch_size = total_words // num_batches  # 1666
-    remainder = total_words % num_batches     # 2
+    batches = [
+        all_words[0:batch_size],                      # batch 1: indices 0-1666
+        all_words[batch_size:2*batch_size],           # batch 2: indices 1667-3333
+        all_words[2*batch_size:]                      # batch 3: indices 3334-4999 (gets any remainder)
+    ]
 
-    # Create batch boundaries
-    batches = []
-    start = 0
-    for i in range(num_batches):
-        # Add one extra word to the first 'remainder' batches
-        size = batch_size + (1 if i < remainder else 0)
-        batches.append(words[start:start + size])
-        start += size
+    output_files = [output1, output2, output3]
 
-    faasr_log(f"Split into {num_batches} batches with sizes: {[len(b) for b in batches]}")
+    for i, (batch, output_file) in enumerate(zip(batches, output_files), start=1):
+        local_file = f"batch_{i}.json"
+        with open(local_file, "w") as f:
+            json.dump(batch, f)
+        faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Wrote batch {i} with {len(batch)} words to {output_file}")
 
-    # Output files mapping
-    outputs = [output1, output2, output3]
-
-    # Write each batch to a file and upload
-    for i, (batch, output_file) in enumerate(zip(batches, outputs), start=1):
-        # Create text content with words separated by spaces
-        text_content = " ".join(batch)
-
-        # Write to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
-            tmp.write(text_content)
-            tmp_path = tmp.name
-
-        try:
-            # Upload to S3
-            faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
-            faasr_log(f"Uploaded batch {i} ({len(batch)} words) to {output_file}")
-        finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
-    faasr_log("Split function completed successfully")
+    faasr_log("Split complete: 3 batches created for parallel map processing")
