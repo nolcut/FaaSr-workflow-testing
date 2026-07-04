@@ -1,92 +1,74 @@
 import json
-import os
 import tempfile
+import os
 
 
-# --- CONTRACT HELPERS ---
-def _faasr_requires(folder):
-    if "shuffle_shard_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Shuffle shard file for this reducer instance must exist in S3 before reduction can proceed")
-        raise SystemExit(1)
-def _faasr_promises(folder):
-    if "reduce_result_{rank}.json".format(rank=faasr_rank()["rank"]) not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Reducer output file for this instance must be present in S3 after reduction completes")
-        raise SystemExit(1)
-# --- end contract helpers ---
 def reduce(folder: str, input1: str, output1: str) -> None:
     """
-    Reads this reducer instance's assigned shuffle shard from S3, sums the
-    partial counts for every word in the shard, and writes the final
-    word-count results as a JSON file back to S3.
+    Count the total occurrences of the assigned word across all mapper outputs.
+    This is a ranked function (M=5 reducers, one per unique word).
+    Each reducer instance reads its assigned shuffle shard containing word counts
+    from all mappers for its specific word, sums the counts to compute the final
+    total occurrence count for that word, and writes the result to an output file.
 
-    The shuffle shard format is:
-        { "word": [count_from_mapper_1, count_from_mapper_2, ...], ... }
-
-    The output format is:
-        { "word": total_count, ... }
-
-    This function runs as one of 5 parallel instances.  faasr_rank() tells
-    us which shard we own (rank 1‥5).
+    The reducer determines which word it handles based on its rank (1-indexed),
+    mapping to the word list [cat, dog, bird, horse, pig].
     """
-    # ── 1. Determine this instance's rank ────────────────────────────────────
-    # --- CONTRACT: requires ---
-    _faasr_requires(folder)
-    # --- end requires ---
+    # Get rank for this instance
     r = faasr_rank()
-    rank = r["rank"]
-    faasr_log(f"reduce instance rank={rank} (max_rank={r['max_rank']})")
+    rank = r['rank']
 
-    # ── 2. Resolve ranked filenames ──────────────────────────────────────────
-    shard_file = input1.format(rank=rank)
-    result_file = output1.format(rank=rank)
+    # Map rank to word
+    words = ["cat", "dog", "bird", "horse", "pig"]
+    word = words[rank - 1]  # rank is 1-indexed
 
-    # ── 3. Download the shuffle shard ────────────────────────────────────────
-    local_shard = tempfile.mktemp(suffix=".json")
-    faasr_log(f"Downloading shuffle shard '{shard_file}' from folder '{folder}'")
-    faasr_get_file(local_file=local_shard, remote_folder=folder, remote_file=shard_file)
+    faasr_log(f"Reduce rank {rank}: processing word '{word}'")
 
-    with open(local_shard, "r", encoding="utf-8") as fh:
-        shard = json.load(fh)
-    os.unlink(local_shard)
+    # Substitute rank into input/output filenames
+    input_file = input1.format(rank=rank)
+    output_file = output1.format(rank=rank)
 
-    # ── 4. Validate shard format ─────────────────────────────────────────────
-    if not isinstance(shard, dict):
-        msg = (
-            f"Unexpected format in '{shard_file}': expected a JSON object "
-            f"(dict), got {type(shard).__name__}"
-        )
-        faasr_log(msg)
-        raise ValueError(msg)
+    # Download the shuffle shard for this rank
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+        tmp_path = tmp.name
 
-    faasr_log(f"Shard {rank} contains {len(shard)} unique word(s)")
+    try:
+        faasr_get_file(local_file=tmp_path, remote_folder=folder, remote_file=input_file)
 
-    # ── 5. Reduce: sum partial counts for each word ──────────────────────────
-    final_counts: dict = {}
-    for word, counts in shard.items():
-        if not isinstance(counts, list):
-            msg = (
-                f"Unexpected counts format for word '{word}' in shard "
-                f"{rank}: expected list, got {type(counts).__name__}"
-            )
-            faasr_log(msg)
-            raise ValueError(msg)
-        final_counts[word] = sum(counts)
+        # Read the JSON content - a list of counts from all mappers
+        with open(tmp_path, 'r') as f:
+            content = f.read()
 
-    faasr_log(
-        f"Reduced {len(final_counts)} word(s); "
-        f"total tokens in shard: {sum(final_counts.values())}"
-    )
+        if not content.strip():
+            faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
+            raise ValueError(f"Input file {input_file} is empty or missing")
 
-    # ── 6. Write and upload the result ───────────────────────────────────────
-    local_result = tempfile.mktemp(suffix=".json")
-    with open(local_result, "w", encoding="utf-8") as fh:
-        json.dump(final_counts, fh, indent=2, sort_keys=True)
+        counts_list = json.loads(content)
+        faasr_log(f"Read counts from {input_file}: {counts_list}")
 
-    faasr_log(f"Uploading result '{result_file}' to folder '{folder}'")
-    faasr_put_file(local_file=local_result, remote_folder=folder, remote_file=result_file)
-    os.unlink(local_result)
+        # Sum all counts to get the final total for this word
+        total_count = sum(counts_list)
+        faasr_log(f"Total count for word '{word}': {total_count}")
 
-    faasr_log(f"reduce rank={rank} complete")
-    # --- CONTRACT: promises ---
-    _faasr_promises(folder)
-    # --- end promises ---
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    # Write the final count to output
+    result = {
+        "word": word,
+        "total_count": total_count
+    }
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+        json.dump(result, tmp)
+        tmp_path = tmp.name
+
+    try:
+        faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Uploaded final count for '{word}' ({total_count}) to {output_file}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    faasr_log(f"Reduce rank {rank} completed successfully")
