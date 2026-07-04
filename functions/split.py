@@ -1,85 +1,68 @@
-import json
-import os
+import random
 import tempfile
+import os
 
 
-# --- CONTRACT HELPERS ---
-def _faasr_requires(folder):
-    if "input_text.txt" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: Input text file 'input_text.txt' must exist in S3 folder 'workflow_data2' before split can run")
-        raise SystemExit(1)
-def _faasr_promises(folder):
-    if "manifest.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: Manifest file 'manifest.json' was not uploaded to S3 after split completed")
-        raise SystemExit(1)
-# --- end contract helpers ---
-def split(folder: str, input1: str, output1: str, output2: str) -> None:
+def split(folder: str, output1: str, output2: str, output3: str) -> None:
     """
-    Reads the full input text from S3 folder 'workflow_data2', tokenises it into
-    words, partitions the words into 2 approximately equal batches for parallel map
-    processing, uploads each batch as a separate file, and writes a manifest JSON
-    describing the batches for the downstream shuffle step.
+    Generate input text containing W=5000 words from vocabulary [cat, dog, bird, horse, pig]
+    with each word distributed evenly (1000 of each) and shuffled randomly.
+    Partition the resulting text into N=3 batches for parallel processing by the downstream map functions.
     """
-    # --- CONTRACT: requires ---
-    _faasr_requires(folder)
-    # --- end requires ---
-    num_batches = 2  # hard-coded: map runs as 2 parallel instances
+    faasr_log("Starting split: generating W=5000 words from vocabulary [cat, dog, bird, horse, pig]")
 
-    # ── 1. Download input text ────────────────────────────────────────────────
-    local_input = tempfile.mktemp(suffix=".txt")
-    faasr_log(f"Downloading input file '{input1}' from folder 'workflow_data2'")
-    faasr_get_file(local_file=local_input, remote_folder="workflow_data2", remote_file=input1)
+    # Define vocabulary and parameters
+    vocabulary = ["cat", "dog", "bird", "horse", "pig"]
+    words_per_vocab = 1000  # 5000 total / 5 words = 1000 each
+    total_words = 5000
+    num_batches = 3
 
-    with open(local_input, "r", encoding="utf-8") as fh:
-        text = fh.read()
-    os.unlink(local_input)
+    # Generate the word list with even distribution
+    words = []
+    for word in vocabulary:
+        words.extend([word] * words_per_vocab)
 
-    words = text.split()
-    total_words = len(words)
-    faasr_log(f"Total words tokenised: {total_words}")
+    # Shuffle randomly
+    random.shuffle(words)
 
-    if total_words == 0:
-        msg = "Input file is empty or contains no words — cannot split"
-        faasr_log(msg)
-        raise ValueError(msg)
+    faasr_log(f"Generated {len(words)} words, shuffled randomly")
 
-    # ── 2. Partition words into batches and upload ────────────────────────────
-    batch_files = []
-    for i in range(1, num_batches + 1):
-        start = (i - 1) * total_words // num_batches
-        end = i * total_words // num_batches
-        batch_words = words[start:end]
+    # Calculate batch sizes: 5000 / 3 = 1666.67, so batches 1 and 2 get 1667, batch 3 gets 1666
+    # This gives approximately equal distribution
+    batch_size = total_words // num_batches  # 1666
+    remainder = total_words % num_batches     # 2
 
-        local_batch = tempfile.mktemp(suffix=".txt")
-        with open(local_batch, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(batch_words))
+    # Create batch boundaries
+    batches = []
+    start = 0
+    for i in range(num_batches):
+        # Add one extra word to the first 'remainder' batches
+        size = batch_size + (1 if i < remainder else 0)
+        batches.append(words[start:start + size])
+        start += size
 
-        remote_batch = output1.replace("{rank}", str(i))
-        faasr_log(
-            f"Uploading batch {i}/{num_batches}: '{remote_batch}' ({len(batch_words)} words)"
-        )
-        faasr_put_file(
-            local_file=local_batch, remote_folder=folder, remote_file=remote_batch
-        )
-        os.unlink(local_batch)
-        batch_files.append(remote_batch)
+    faasr_log(f"Split into {num_batches} batches with sizes: {[len(b) for b in batches]}")
 
-    # ── 3. Write and upload manifest ──────────────────────────────────────────
-    manifest = {
-        "num_batches": num_batches,
-        "batch_files": batch_files,
-    }
-    local_manifest = tempfile.mktemp(suffix=".json")
-    with open(local_manifest, "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2)
+    # Output files mapping
+    outputs = [output1, output2, output3]
 
-    faasr_log(f"Uploading manifest '{output2}'")
-    faasr_put_file(
-        local_file=local_manifest, remote_folder=folder, remote_file=output2
-    )
-    os.unlink(local_manifest)
+    # Write each batch to a file and upload
+    for i, (batch, output_file) in enumerate(zip(batches, outputs), start=1):
+        # Create text content with words separated by spaces
+        text_content = " ".join(batch)
 
-    faasr_log("split complete")
-    # --- CONTRACT: promises ---
-    _faasr_promises(folder)
-    # --- end promises ---
+        # Write to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
+            tmp.write(text_content)
+            tmp_path = tmp.name
+
+        try:
+            # Upload to S3
+            faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
+            faasr_log(f"Uploaded batch {i} ({len(batch)} words) to {output_file}")
+        finally:
+            # Clean up temp file
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    faasr_log("Split function completed successfully")
