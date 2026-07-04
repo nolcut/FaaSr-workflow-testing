@@ -13,8 +13,8 @@
       "Arguments": {
         "folder": "video_analysis",
         "input1": "video_small.mp4",
-        "output1": "batch_1.pkl",
-        "output2": "batch_2.pkl"
+        "output1": "frame_batch_1.npz",
+        "output2": "frame_batch_2.npz"
       },
       "InvokeNext": [
         "detect-objects(2)"
@@ -26,7 +26,7 @@
       "FunctionName": "detect_objects",
       "Arguments": {
         "folder": "video_analysis",
-        "input1": "batch_{rank}.pkl",
+        "input1": "frame_batch_{rank}.npz",
         "input2": "frozen_inference_graph.pb",
         "input3": "faster_rcnn_resnet50_coco_2018_01_28.pbtxt",
         "output1": "detections_{rank}.json"
