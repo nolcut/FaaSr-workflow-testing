@@ -1,56 +1,59 @@
 import json
+import tempfile
+import os
+
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
 
 def train_random_forest(folder: str, input1: str, output1: str) -> None:
-    """
-    Train a Random Forest classifier on preprocessed data.
+    """Train a Random Forest classifier on preprocessed data and save accuracy."""
 
-    Uses RandomForestClassifier with max_depth=5 and n_estimators=10 as specified by user.
-    No random_state seeding as per user specification.
-    Computes accuracy using clf.score(X_test, y_test).
-    """
     faasr_log("Starting Random Forest training")
 
-    # Download preprocessed data from S3
-    local_input = "preprocessed_data_local.npz"
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    # Download preprocessed data
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as tmp_input:
+        local_input = tmp_input.name
 
-    # Load preprocessed data
-    data = np.load(local_input)
-    X_train = data["X_train"]
-    X_test = data["X_test"]
-    y_train = data["y_train"]
-    y_test = data["y_test"]
+    try:
+        faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+        faasr_log(f"Downloaded preprocessed data: {input1}")
 
-    faasr_log(f"Loaded preprocessed data: X_train shape: {X_train.shape}, X_test shape: {X_test.shape}")
+        # Load the preprocessed dataset
+        data = np.load(local_input)
+        X_train = data["X_train"]
+        X_test = data["X_test"]
+        y_train = data["y_train"]
+        y_test = data["y_test"]
+        faasr_log(f"Loaded data: X_train shape={X_train.shape}, X_test shape={X_test.shape}")
 
-    # Initialize RandomForestClassifier with user-specified parameters:
-    # max_depth=5, n_estimators=10, no random_state (no seeding)
-    clf = RandomForestClassifier(max_depth=5, n_estimators=10)
+        # Initialize RandomForestClassifier with max_depth=5, n_estimators=10, no random_state
+        clf = RandomForestClassifier(max_depth=5, n_estimators=10)
+        faasr_log("Training Random Forest classifier (max_depth=5, n_estimators=10)")
 
-    faasr_log("Training Random Forest classifier with max_depth=5 and n_estimators=10")
+        # Fit the classifier on training data
+        clf.fit(X_train, y_train)
+        faasr_log("Training complete")
 
-    # Fit the classifier on training data
-    clf.fit(X_train, y_train)
+        # Compute accuracy on test set using clf.score
+        accuracy = clf.score(X_test, y_test)
+        faasr_log(f"Random Forest accuracy: {accuracy}")
 
-    faasr_log("Random Forest classifier trained successfully")
+        # Save accuracy result to output file
+        result = {"accuracy": accuracy}
 
-    # Compute accuracy on test set using clf.score
-    accuracy = clf.score(X_test, y_test)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp_output:
+            local_output = tmp_output.name
+            json.dump(result, tmp_output)
 
-    faasr_log(f"Random Forest test accuracy: {accuracy}")
+        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+        faasr_log(f"Uploaded accuracy result: {output1}")
 
-    # Save accuracy result to JSON
-    result = {"accuracy": accuracy}
-    local_output = "random_forest_accuracy_local.json"
-    with open(local_output, "w") as f:
-        json.dump(result, f)
+    finally:
+        # Cleanup temp files
+        if os.path.exists(local_input):
+            os.remove(local_input)
+        if 'local_output' in locals() and os.path.exists(local_output):
+            os.remove(local_output)
 
-    faasr_log(f"Saved accuracy result to {local_output}")
-
-    # Upload to S3
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-
-    faasr_log(f"Uploaded Random Forest accuracy to {folder}/{output1}")
+    faasr_log("Random Forest training complete")
