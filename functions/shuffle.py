@@ -1,119 +1,79 @@
 import json
-import os
 import tempfile
+import os
 
 
-# --- CONTRACT HELPERS ---
-def _faasr_requires(folder):
-    if "manifest.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[REQUIRE] CONTRACT VIOLATION: manifest.json must be present in S3 before shuffle can run")
-        raise SystemExit(1)
-def _faasr_promises(folder):
-    if "shuffle_shard_1.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_1.json was not found in S3 after shuffle completed")
-        raise SystemExit(1)
-    if "shuffle_shard_2.json" not in [_k.rsplit("/", 1)[-1] for _k in faasr_get_folder_list(prefix=folder)]:
-        faasr_log("[PROMISE] CONTRACT VIOLATION: shuffle_shard_2.json was not found in S3 after shuffle completed")
-        raise SystemExit(1)
-# --- end contract helpers ---
-def shuffle(folder: str, input1: str, input2: str, output1: str) -> None:
+def shuffle(folder: str, input1: str, input2: str, input3: str, output1: str, output2: str, output3: str, output4: str, output5: str) -> None:
     """
-    Reads all intermediate word count JSON files produced by all mapper instances
-    from S3. Merges them into a grouped structure keyed by word where each value is
-    a list of partial counts (one per mapper), then partitions this grouped structure
-    into 2 reducer shards and writes one shuffle shard file per reducer to S3.
+    Flatten and reorganize the word count results from all N=3 mappers to enable M=5 parallel reducers.
+    Read the partial word count JSON files from each mapper (containing counts for words: cat, dog, bird, horse, pig).
+    Reorganize the data so that each of the M=5 reducers receives all counts for its assigned word across all mappers.
+    Output M=5 separate JSON files, one per word, where each file contains a list of counts from all mappers for that specific word.
     """
-    # --- CONTRACT: requires ---
-    _faasr_requires(folder)
-    # --- end requires ---
-    NUM_REDUCERS = 2  # fan-out to reduce (×2); THIS function is unranked — hardcode 2
+    faasr_log("Starting shuffle: reorganizing N=3 mapper outputs for M=5 reducers")
 
-    # ── 1. Download and parse manifest ───────────────────────────────────────
-    local_manifest = tempfile.mktemp(suffix=".json")
-    faasr_log(f"Downloading manifest '{input2}' from folder '{folder}'")
-    faasr_get_file(local_file=local_manifest, remote_folder=folder, remote_file=input2)
+    # The 5 words in order corresponding to the 5 outputs
+    words = ["cat", "dog", "bird", "horse", "pig"]
+    outputs = [output1, output2, output3, output4, output5]
 
-    with open(local_manifest, "r", encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    os.unlink(local_manifest)
+    # Discover all word count files from mappers using faasr_get_folder_list
+    all_files = faasr_get_folder_list(prefix=f"{folder}/word_counts_")
+    faasr_log(f"Discovered mapper output files: {all_files}")
 
-    num_batches = manifest.get("num_batches")
-    if num_batches is not None:
-        faasr_log(f"Manifest reports {num_batches} mapper batch(es)")
-    else:
-        faasr_log(
-            "Manifest does not contain 'num_batches'; will discover map result files "
-            "via folder listing"
-        )
+    # If no files found with the prefix, try the exact input filenames
+    input_files = [input1, input2, input3]
+    if not all_files:
+        all_files = input_files
+        faasr_log(f"Using explicit input filenames: {all_files}")
 
-    # ── 2. Discover all map_result_*.json files via folder listing ────────────
-    faasr_log(f"Listing files in folder '{folder}' to find map result files")
-    all_files = faasr_get_folder_list(prefix=folder)
+    # Collect word counts from all mappers
+    # Structure: {word: [count_from_mapper1, count_from_mapper2, ...]}
+    word_counts_all = {word: [] for word in words}
 
-    map_result_files = sorted(
-        f.rsplit("/", 1)[-1]
-        for f in all_files
-        if f.rsplit("/", 1)[-1].startswith("map_result_")
-        and f.rsplit("/", 1)[-1].endswith(".json")
-    )
+    for input_file in all_files:
+        # Download the mapper output to a temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+            tmp_path = tmp.name
 
-    faasr_log(f"Found {len(map_result_files)} map result file(s): {map_result_files}")
+        try:
+            faasr_get_file(local_file=tmp_path, remote_folder=folder, remote_file=input_file)
 
-    if not map_result_files:
-        msg = (
-            f"No map_result_*.json files found in folder '{folder}' — "
-            "cannot shuffle; ensure all map instances have completed"
-        )
-        faasr_log(msg)
-        raise ValueError(msg)
+            # Read the JSON content
+            with open(tmp_path, 'r') as f:
+                content = f.read()
 
-    # ── 3. Download and merge all mapper outputs ──────────────────────────────
-    # merged: { word: [count_from_mapper_A, count_from_mapper_B, ...] }
-    merged: dict = {}
+            if not content.strip():
+                faasr_log(f"ERROR: Input file {input_file} is empty or could not be read")
+                raise ValueError(f"Input file {input_file} is empty or missing")
 
-    for map_file in map_result_files:
-        local_map = tempfile.mktemp(suffix=".json")
-        faasr_log(f"Downloading '{map_file}' from folder '{folder}'")
-        faasr_get_file(local_file=local_map, remote_folder=folder, remote_file=map_file)
+            mapper_counts = json.loads(content)
+            faasr_log(f"Read counts from {input_file}: {mapper_counts}")
 
-        with open(local_map, "r", encoding="utf-8") as fh:
-            word_counts = json.load(fh)
-        os.unlink(local_map)
+            # Collect the count for each word from this mapper
+            for word in words:
+                count = mapper_counts.get(word, 0)
+                word_counts_all[word].append(count)
 
-        for word, count in word_counts.items():
-            if word not in merged:
-                merged[word] = []
-            merged[word].append(count)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
-    faasr_log(
-        f"Merged {len(merged)} unique word(s) from {len(map_result_files)} mapper(s)"
-    )
+    faasr_log(f"Aggregated counts per word: {word_counts_all}")
 
-    # ── 4. Partition words into NUM_REDUCERS shards ───────────────────────────
-    # Use Python's built-in hash for consistent within-process word assignment.
-    # Each word maps to exactly one shard; shards are disjoint and cover all words.
-    shards: list = [{} for _ in range(NUM_REDUCERS)]
-    for word, counts in merged.items():
-        shard_idx = hash(word) % NUM_REDUCERS
-        shards[shard_idx][word] = counts
+    # Write output files - one per word, containing the list of counts from all mappers
+    for i, (word, output_file) in enumerate(zip(words, outputs), start=1):
+        counts_list = word_counts_all[word]
 
-    for idx, shard in enumerate(shards, start=1):
-        faasr_log(f"Shard {idx}: {len(shard)} word(s)")
+        # Write to temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+            json.dump(counts_list, tmp)
+            tmp_path = tmp.name
 
-    # ── 5. Write and upload each reducer shard ────────────────────────────────
-    for i in range(1, NUM_REDUCERS + 1):
-        local_shard = tempfile.mktemp(suffix=".json")
-        with open(local_shard, "w", encoding="utf-8") as fh:
-            json.dump(shards[i - 1], fh, indent=2, sort_keys=True)
+        try:
+            faasr_put_file(local_file=tmp_path, remote_folder=folder, remote_file=output_file)
+            faasr_log(f"Uploaded shard {i} for word '{word}' with counts {counts_list} to {output_file}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
-        remote_shard = output1.replace("{rank}", str(i))
-        faasr_log(f"Uploading shuffle shard '{remote_shard}' to folder '{folder}'")
-        faasr_put_file(
-            local_file=local_shard, remote_folder=folder, remote_file=remote_shard
-        )
-        os.unlink(local_shard)
-
-    faasr_log("shuffle complete")
-    # --- CONTRACT: promises ---
-    _faasr_promises(folder)
-    # --- end promises ---
+    faasr_log("Shuffle function completed successfully")
