@@ -1,57 +1,57 @@
-import tempfile
-import os
-
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 
-def preprocess(folder: str, input1: str, output1: str) -> None:
+def preprocess(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Preprocess the dataset for machine learning training.
-
-    Read the generated dataset from upstream gen function, apply StandardScaler
-    to normalize/standardize features, and split into training and testing sets.
+    Preprocess the dataset by applying StandardScaler for feature normalization
+    and splitting into training and test sets.
 
     Parameters:
-        folder: S3 folder for remote storage
-        input1: Input filename for raw dataset (npz format with X, y arrays)
-        output1: Output filename for preprocessed data (npz format)
+        folder: Remote folder for S3 storage
+        input1: Filename for raw features (raw_features.npy)
+        input2: Filename for raw labels (raw_labels.npy)
+        output1: Filename for preprocessed data (preprocessed_data.npz)
     """
-    faasr_log("Starting dataset preprocessing")
+    faasr_log("Starting data preprocessing")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Download raw dataset from S3
-        local_input = os.path.join(tmpdir, "raw_dataset.npz")
-        faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    # Download raw features and labels from S3
+    local_features = "temp_features.npy"
+    local_labels = "temp_labels.npy"
 
-        # Load the raw dataset
-        data = np.load(local_input)
-        X = data["X"]
-        y = data["y"]
-        faasr_log(f"Loaded dataset with shape X={X.shape}, y={y.shape}")
+    faasr_get_file(local_file=local_features, remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file=local_labels, remote_folder=folder, remote_file=input2)
 
-        # Apply StandardScaler to normalize features
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        faasr_log("Applied StandardScaler normalization")
+    # Load the data
+    X = np.load(local_features)
+    y = np.load(local_labels)
 
-        # Split into training and testing sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_scaled, y, test_size=0.4, random_state=123
-        )
-        faasr_log(
-            f"Split data: X_train={X_train.shape}, X_test={X_test.shape}, "
-            f"y_train={y_train.shape}, y_test={y_test.shape}"
-        )
+    faasr_log(f"Loaded data: X shape={X.shape}, y shape={y.shape}")
 
-        # Save preprocessed data to local file
-        local_output = os.path.join(tmpdir, "preprocessed_data.npz")
-        np.savez(
-            local_output, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test
-        )
+    # Apply StandardScaler for feature normalization
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-        # Upload to S3
-        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log("Applied StandardScaler normalization")
 
-    faasr_log(f"Preprocessed data saved to {output1}")
+    # Split into training and test sets
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y,
+        test_size=0.4,
+        random_state=123
+    )
+
+    faasr_log(f"Split data: X_train shape={X_train.shape}, X_test shape={X_test.shape}")
+    faasr_log(f"Training set class distribution: {np.bincount(y_train)}")
+    faasr_log(f"Test set class distribution: {np.bincount(y_test)}")
+
+    # Save preprocessed data to local npz file
+    local_output = "temp_preprocessed_data.npz"
+    np.savez(local_output, X_train=X_train, X_test=X_test, y_train=y_train, y_test=y_test)
+
+    # Upload to S3
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log(f"Uploaded preprocessed data to {output1}")
+
+    faasr_log("Preprocessing complete")
