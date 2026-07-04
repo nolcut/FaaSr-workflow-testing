@@ -1,129 +1,98 @@
-"""
-Decode function for video analysis workflow.
-
-Downloads video_small.mp4 from S3, decodes F=10 frames evenly sampled from the video,
-splits into N=2 batches of size B=5 each. Each batch is serialized as JSON with
-base64-encoded frame data and frame indices.
-"""
-
-import base64
-import json
-import os
+import pickle
 import tempfile
+import os
 
 import cv2
 import numpy as np
 
 
-def decode(folder: str, input1: str, input2: str, input3: str, output1: str) -> None:
+def decode(folder: str, input1: str, output1: str, output2: str) -> None:
     """
-    Decode video frames and create batches for parallel processing.
-
-    Args:
-        folder: S3 folder name
-        input1: Input video filename (video_small.mp4)
-        input2: Model weights file (frozen_inference_graph.pb) - passed through
-        input3: Model config file (faster_rcnn_resnet50_coco_2018_01_28.pbtxt) - passed through
-        output1: Output batch filename template with {rank} placeholder
+    Downloads video, decodes F=10 frames, and uploads N=2 batches of B=5 frames each.
+    Each batch is pickled as a list of numpy arrays for downstream detect functions.
     """
-    # Constants as specified
-    F = 10  # Total frames to extract
+    F = 10  # Total number of frames to extract
     B = 5   # Batch size
-    N = 2   # Number of batches (F/B)
+    N = F // B  # Number of batches (2)
 
-    faasr_log(f"Starting decode: extracting {F} frames into {N} batches of {B}")
-
-    # Create temp directory for local processing
+    # Download the video file from S3
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Download video from S3
-        local_video = os.path.join(tmpdir, "video.mp4")
-        faasr_get_file(local_file=local_video, remote_folder=folder, remote_file=input1)
+        video_path = os.path.join(tmpdir, input1)
+        faasr_get_file(local_file=video_path, remote_folder=folder, remote_file=input1)
 
-        # Check if video file was downloaded properly
-        if not os.path.exists(local_video) or os.path.getsize(local_video) == 0:
-            faasr_log(f"ERROR: Failed to download video file {input1}")
-            raise RuntimeError(f"Video file {input1} not found or empty in S3 folder {folder}")
+        # Verify the file was downloaded and is not empty
+        if not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+            faasr_log(f"ERROR: Failed to download video file {input1} or file is empty")
+            raise RuntimeError(f"Failed to download video file {input1} from S3 folder {folder}")
 
-        faasr_log(f"Downloaded video: {input1}")
-
-        # Open video with OpenCV
-        cap = cv2.VideoCapture(local_video)
+        # Open the video with OpenCV
+        cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             faasr_log(f"ERROR: Cannot open video file {input1}")
             raise RuntimeError(f"Cannot open video file {input1}")
 
-        # Get video properties
+        # Get total frame count
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        faasr_log(f"Video has {total_frames} total frames")
 
-        faasr_log(f"Video properties: {total_frames} frames, {fps:.2f} fps, {width}x{height}")
+        if total_frames == 0:
+            faasr_log("ERROR: Video has no frames")
+            cap.release()
+            raise RuntimeError(f"Video file {input1} has no frames")
 
-        if total_frames < F:
-            faasr_log(f"WARNING: Video has only {total_frames} frames, extracting all available")
-            F = total_frames
-
-        # Calculate frame indices to extract (evenly sampled)
-        if total_frames == F:
-            frame_indices = list(range(F))
+        # Calculate frame indices to sample evenly
+        if total_frames >= F:
+            # Evenly sample F frames across the video
+            frame_indices = np.linspace(0, total_frames - 1, F, dtype=int).tolist()
         else:
-            # Evenly sample F frames from the video
-            frame_indices = [int(i * (total_frames - 1) / (F - 1)) for i in range(F)]
+            # If video has fewer than F frames, use all available frames
+            frame_indices = list(range(total_frames))
+            faasr_log(f"WARNING: Video has only {total_frames} frames, using all")
 
-        faasr_log(f"Extracting frames at indices: {frame_indices}")
+        faasr_log(f"Sampling {len(frame_indices)} frames at indices: {frame_indices}")
 
         # Extract frames
         frames = []
         for idx in frame_indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
-            if not ret:
-                faasr_log(f"ERROR: Failed to read frame at index {idx}")
-                raise RuntimeError(f"Failed to read frame at index {idx}")
-
-            # Encode frame as PNG bytes, then base64
-            success, encoded = cv2.imencode('.png', frame)
-            if not success:
-                faasr_log(f"ERROR: Failed to encode frame at index {idx}")
-                raise RuntimeError(f"Failed to encode frame at index {idx}")
-
-            frame_b64 = base64.b64encode(encoded.tobytes()).decode('utf-8')
-            frames.append({
-                'frame_index': idx,
-                'data': frame_b64
-            })
+            if ret:
+                frames.append(frame)
+            else:
+                faasr_log(f"WARNING: Could not read frame at index {idx}")
 
         cap.release()
+
+        if len(frames) == 0:
+            faasr_log("ERROR: Could not extract any frames from video")
+            raise RuntimeError("Could not extract any frames from video")
+
         faasr_log(f"Extracted {len(frames)} frames")
 
         # Split frames into batches and upload
-        for batch_num in range(1, N + 1):
-            start_idx = (batch_num - 1) * B
-            end_idx = min(batch_num * B, len(frames))
+        # batch 1: frames 0-4 (indices 0..B-1)
+        # batch 2: frames 5-9 (indices B..2B-1)
+        output_files = [output1, output2]
+
+        for i in range(N):
+            start_idx = i * B
+            end_idx = min((i + 1) * B, len(frames))
             batch_frames = frames[start_idx:end_idx]
 
-            batch_data = {
-                'batch_id': batch_num,
-                'total_batches': N,
-                'frames': batch_frames,
-                'video_info': {
-                    'source': input1,
-                    'total_frames': total_frames,
-                    'fps': fps,
-                    'width': width,
-                    'height': height
-                }
-            }
+            if len(batch_frames) == 0:
+                faasr_log(f"WARNING: Batch {i+1} is empty, skipping")
+                continue
 
-            # Write batch to local file
-            local_batch = os.path.join(tmpdir, f"batch_{batch_num}.json")
-            with open(local_batch, 'w') as f:
-                json.dump(batch_data, f)
+            # Pickle the batch of frames (list of numpy arrays)
+            batch_path = os.path.join(tmpdir, f"batch_{i+1}.pkl")
+            with open(batch_path, "wb") as f:
+                pickle.dump(batch_frames, f)
 
-            # Upload to S3
-            remote_batch = output1.replace("{rank}", str(batch_num))
-            faasr_put_file(local_file=local_batch, remote_folder=folder, remote_file=remote_batch)
-            faasr_log(f"Uploaded batch {batch_num}: {remote_batch} with {len(batch_frames)} frames")
+            # Upload the batch file
+            # The output file pattern uses {rank} placeholder for ranked successor
+            # output1 = "frame_batch_1.pkl", output2 = "frame_batch_2.pkl"
+            output_file = output_files[i]
+            faasr_put_file(local_file=batch_path, remote_folder=folder, remote_file=output_file)
+            faasr_log(f"Uploaded batch {i+1} with {len(batch_frames)} frames to {output_file}")
 
-        faasr_log("Decode complete")
+    faasr_log(f"decode complete: processed {len(frames)} frames into {N} batches")
