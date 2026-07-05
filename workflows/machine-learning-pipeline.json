@@ -12,7 +12,8 @@
       "FunctionName": "gen",
       "Arguments": {
         "folder": "ml_pipeline",
-        "output1": "raw_dataset.npz"
+        "output1": "raw_features.npy",
+        "output2": "raw_labels.npy"
       },
       "InvokeNext": [
         "preprocess"
@@ -24,24 +25,17 @@
       "FunctionName": "preprocess",
       "Arguments": {
         "folder": "ml_pipeline",
-        "input1": "raw_dataset.npz",
-        "output1": "preprocessed_data.npz"
+        "input1": "raw_features.npy",
+        "input2": "raw_labels.npy",
+        "output1": "X_train.npy",
+        "output2": "X_test.npy",
+        "output3": "y_train.npy",
+        "output4": "y_test.npy"
       },
       "InvokeNext": [
-        "train-svm",
-        "train-random-forest"
+        "train-random-forest",
+        "train-svm"
       ]
-    },
-    "train-svm": {
-      "FaaSServer": "GH",
-      "Type": "Python",
-      "FunctionName": "train_svm",
-      "Arguments": {
-        "folder": "ml_pipeline",
-        "input1": "preprocessed_data.npz",
-        "output1": "svm_accuracy.json"
-      },
-      "InvokeNext": []
     },
     "train-random-forest": {
       "FaaSServer": "GH",
@@ -49,8 +43,25 @@
       "FunctionName": "train_random_forest",
       "Arguments": {
         "folder": "ml_pipeline",
-        "input1": "preprocessed_data.npz",
-        "output1": "random_forest_accuracy.json"
+        "input1": "X_train.npy",
+        "input2": "X_test.npy",
+        "input3": "y_train.npy",
+        "input4": "y_test.npy",
+        "output1": "rf_accuracy.json"
+      },
+      "InvokeNext": []
+    },
+    "train-svm": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_svm",
+      "Arguments": {
+        "folder": "ml_pipeline",
+        "input1": "X_train.npy",
+        "input2": "X_test.npy",
+        "input3": "y_train.npy",
+        "input4": "y_test.npy",
+        "output1": "svm_accuracy.json"
       },
       "InvokeNext": []
     }
@@ -58,8 +69,8 @@
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "preprocess": "ghcr.io/faasr/github-actions-python:latest",
-    "train-svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest"
+    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest",
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -83,8 +94,8 @@
   "FunctionGitRepo": {
     "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
     "preprocess": "nolcut/FaaSr-workflow-testing/main/functions/preprocess.py",
-    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
-    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py"
+    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py"
   },
   "PyPIPackageDownloads": {
     "gen": [
@@ -95,13 +106,13 @@
       "numpy",
       "scikit-learn"
     ],
-    "train_svm": [
-      "numpy",
-      "scikit-learn"
-    ],
     "train_random_forest": [
       "numpy",
       "scikit-learn"
+    ],
+    "train_svm": [
+      "scikit-learn",
+      "numpy"
     ]
   }
 }
