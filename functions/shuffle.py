@@ -3,62 +3,87 @@ import json
 
 def shuffle(folder: str, input1: str, input2: str, input3: str, output1: str, output2: str, output3: str, output4: str, output5: str) -> None:
     """
-    Flatten word count results from N=3 parallel map functions into M=5 separate files,
-    one per unique word, to enable parallel reduce processing.
+    Flatten and reorganize the word count results from all N=3 parallel map functions
+    to prepare data for M=5 parallel reducers.
 
-    For each of the 5 words, collect all partial counts from all 3 map outputs and write
-    them to a separate JSON file. Each output file contains an array of partial counts
-    for that specific word from all map partitions.
+    Read the partial word count outputs from each map worker.
+    Reorganize the data so that each of the M=5 reducers receives all counts for one
+    specific word across all map outputs.
 
-    Word-to-rank mapping: rank 1=cat, rank 2=dog, rank 3=bird, rank 4=horse, rank 5=pig.
+    Output shards (by reducer rank):
+      Rank 1 = cat
+      Rank 2 = dog
+      Rank 3 = bird
+      Rank 4 = horse
+      Rank 5 = pig
     """
-    faasr_log("Starting shuffle: reorganizing map outputs by word")
+    faasr_log("Starting shuffle: reorganizing map outputs for parallel reducers")
 
-    # Word-to-output mapping: rank 1=cat, rank 2=dog, rank 3=bird, rank 4=horse, rank 5=pig
-    word_to_output = {
-        "cat": output1,    # shuffle_1.json
-        "dog": output2,    # shuffle_2.json
-        "bird": output3,   # shuffle_3.json
-        "horse": output4,  # shuffle_4.json
-        "pig": output5,    # shuffle_5.json
+    # Word-to-rank mapping as specified
+    word_to_rank = {
+        "cat": 1,
+        "dog": 2,
+        "bird": 3,
+        "horse": 4,
+        "pig": 5
     }
 
-    # Collect partial counts for each word from all map outputs
-    word_counts = {word: [] for word in word_to_output.keys()}
+    # Initialize accumulators for each word (to collect counts from all map workers)
+    word_counts = {
+        "cat": [],
+        "dog": [],
+        "bird": [],
+        "horse": [],
+        "pig": []
+    }
 
-    # Read all 3 map count files
+    # Read all three input files from map workers
     input_files = [input1, input2, input3]
 
     for i, input_file in enumerate(input_files, start=1):
-        local_file = f"map_counts_{i}.json"
-        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=input_file)
-        faasr_log(f"Downloaded map output: {input_file}")
+        local_input = f"temp_shuffle_input_{i}.json"
+        faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
 
-        with open(local_file, 'r') as f:
+        with open(local_input, 'r') as f:
             counts = json.load(f)
 
-        if not isinstance(counts, dict):
-            error_msg = f"Expected a dict of word counts from {input_file}, got {type(counts).__name__}"
-            faasr_log(error_msg)
-            raise ValueError(error_msg)
+        faasr_log(f"Read {input_file}: {len(counts)} words with counts")
 
-        # Extract the count for each word from this map output
-        for word in word_counts.keys():
-            count = counts.get(word, 0)
-            word_counts[word].append(count)
-            faasr_log(f"  {word}: {count} from map {i}")
+        # Collect the count for each word from this map worker
+        for word, count in counts.items():
+            if word in word_counts:
+                word_counts[word].append(count)
+            else:
+                faasr_log(f"Warning: unexpected word '{word}' in {input_file}")
 
-    faasr_log("All map outputs read, writing shuffle outputs by word")
+    faasr_log(f"Collected counts from all {len(input_files)} map workers")
 
-    # Write output files: one per word with array of partial counts
-    for word, output_file in word_to_output.items():
-        local_file = f"shuffle_{word}.json"
-        partial_counts = word_counts[word]
+    # Create output shards - one per reducer rank, containing all partial counts for that word
+    # Output mapping: output1=cat (rank 1), output2=dog (rank 2), output3=bird (rank 3),
+    #                 output4=horse (rank 4), output5=pig (rank 5)
+    output_mapping = {
+        1: (output1, "cat"),
+        2: (output2, "dog"),
+        3: (output3, "bird"),
+        4: (output4, "horse"),
+        5: (output5, "pig")
+    }
 
-        with open(local_file, 'w') as f:
-            json.dump(partial_counts, f)
+    for rank in range(1, 6):
+        output_file, word = output_mapping[rank]
+        counts_list = word_counts[word]
 
-        faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output_file)
-        faasr_log(f"Wrote {output_file} with partial counts: {partial_counts}")
+        # Shard contains all partial counts for this word from all map workers
+        shard_data = {
+            "word": word,
+            "partial_counts": counts_list
+        }
 
-    faasr_log("Shuffle complete: 5 word-specific files ready for parallel reduce")
+        local_output = f"temp_shard_{rank}.json"
+        with open(local_output, 'w') as f:
+            json.dump(shard_data, f)
+
+        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
+        faasr_log(f"Uploaded {output_file} for word '{word}' with {len(counts_list)} partial counts: {counts_list}")
+
+    faasr_log("Shuffle complete: 5 shards ready for parallel reduce processing")
