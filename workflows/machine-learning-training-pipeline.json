@@ -1,30 +1,30 @@
 {
-  "FunctionInvoke": "gen",
+  "FunctionInvoke": "generate-dataset",
   "WorkflowName": "machine-learning-training-pipeline",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
-    "gen": {
+    "generate-dataset": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "gen",
+      "FunctionName": "generate_dataset",
       "Arguments": {
-        "folder": "ml_pipeline",
+        "folder": "ml_training_pipeline",
         "output1": "raw_features.npy",
         "output2": "raw_labels.npy"
       },
       "InvokeNext": [
-        "preprocess"
+        "preprocess-data"
       ]
     },
-    "preprocess": {
+    "preprocess-data": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "preprocess",
+      "FunctionName": "preprocess_data",
       "Arguments": {
-        "folder": "ml_pipeline",
+        "folder": "ml_training_pipeline",
         "input1": "raw_features.npy",
         "input2": "raw_labels.npy",
         "output1": "X_train.npy",
@@ -33,44 +33,44 @@
         "output4": "y_test.npy"
       },
       "InvokeNext": [
-        "train-svm",
-        "train-random-forest"
+        "train-random-forest",
+        "train-svm"
       ]
-    },
-    "train-svm": {
-      "FaaSServer": "GH",
-      "Type": "Python",
-      "FunctionName": "train_svm",
-      "Arguments": {
-        "folder": "ml_pipeline",
-        "input1": "X_train.npy",
-        "input2": "X_test.npy",
-        "input3": "y_train.npy",
-        "input4": "y_test.npy",
-        "output1": "svm_accuracy.json"
-      },
-      "InvokeNext": []
     },
     "train-random-forest": {
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "train_random_forest",
       "Arguments": {
-        "folder": "ml_pipeline",
+        "folder": "ml_training_pipeline",
         "input1": "X_train.npy",
         "input2": "X_test.npy",
         "input3": "y_train.npy",
         "input4": "y_test.npy",
-        "output1": "random_forest_accuracy.json"
+        "output1": "random_forest_results.json"
+      },
+      "InvokeNext": []
+    },
+    "train-svm": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "train_svm",
+      "Arguments": {
+        "folder": "ml_training_pipeline",
+        "input1": "X_train.npy",
+        "input2": "X_test.npy",
+        "input3": "y_train.npy",
+        "input4": "y_test.npy",
+        "output1": "svm_results.json"
       },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
-    "gen": "ghcr.io/faasr/github-actions-python:latest",
-    "preprocess": "ghcr.io/faasr/github-actions-python:latest",
-    "train-svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest"
+    "generate-dataset": "ghcr.io/faasr/github-actions-python:latest",
+    "preprocess-data": "ghcr.io/faasr/github-actions-python:latest",
+    "train-random-forest": "ghcr.io/faasr/github-actions-python:latest",
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -92,27 +92,27 @@
     }
   },
   "FunctionGitRepo": {
-    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
-    "preprocess": "nolcut/FaaSr-workflow-testing/main/functions/preprocess.py",
-    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
-    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py"
+    "generate_dataset": "nolcut/FaaSr-workflow-testing/main/functions/generate_dataset.py",
+    "preprocess_data": "nolcut/FaaSr-workflow-testing/main/functions/preprocess_data.py",
+    "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py"
   },
   "PyPIPackageDownloads": {
-    "gen": [
+    "generate_dataset": [
       "numpy",
       "scikit-learn"
     ],
-    "preprocess": [
-      "numpy",
-      "scikit-learn"
-    ],
-    "train_svm": [
+    "preprocess_data": [
       "numpy",
       "scikit-learn"
     ],
     "train_random_forest": [
       "scikit-learn",
       "numpy"
+    ],
+    "train_svm": [
+      "numpy",
+      "scikit-learn"
     ]
   }
 }
