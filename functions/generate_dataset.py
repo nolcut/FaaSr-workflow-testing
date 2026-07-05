@@ -4,12 +4,16 @@ from sklearn.datasets import make_classification
 
 def generate_dataset(folder: str, output1: str, output2: str) -> None:
     """
-    Generate a synthetic classification dataset using sklearn's make_classification
-    with the specified parameters and save to output files.
-    """
-    faasr_log("Generating synthetic classification dataset")
+    Generate a classification dataset using sklearn's make_classification.
 
-    # Generate dataset with specified parameters
+    Args:
+        folder: Remote S3 folder for output files
+        output1: Filename for raw feature matrix X (raw_features.npy)
+        output2: Filename for raw labels y (raw_labels.npy)
+    """
+    faasr_log("Generating classification dataset with make_classification")
+
+    # Generate dataset with exact parameters from specification
     X, y = make_classification(
         n_samples=500,
         n_features=1024,
@@ -22,16 +26,16 @@ def generate_dataset(folder: str, output1: str, output2: str) -> None:
 
     faasr_log(f"Generated dataset with shape X={X.shape}, y={y.shape}")
 
-    # Save features (X) to local file
-    local_features = "raw_features.npy"
+    # Save features to local temp file and upload
+    local_features = "temp_features.npy"
     np.save(local_features, X)
     faasr_put_file(local_file=local_features, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Saved features to {output1}")
+    faasr_log(f"Uploaded features to {output1}")
 
-    # Save labels (y) to local file
-    local_labels = "raw_labels.npy"
+    # Save labels to local temp file and upload
+    local_labels = "temp_labels.npy"
     np.save(local_labels, y)
     faasr_put_file(local_file=local_labels, remote_folder=folder, remote_file=output2)
-    faasr_log(f"Saved labels to {output2}")
+    faasr_log(f"Uploaded labels to {output2}")
 
     faasr_log("Dataset generation complete")
