@@ -3,60 +3,61 @@ import json
 
 def reduce(folder: str, input1: str, output1: str) -> None:
     """
-    Reduce function for MapReduce word count workflow.
+    Count the total occurrences of the assigned word across all flattened shuffle data.
 
-    This function runs as 5 parallel instances. Each instance (rank 1-5) is responsible
-    for counting the total occurrences of one word:
-    - rank 1: cat
-    - rank 2: dog
-    - rank 3: bird
-    - rank 4: horse
-    - rank 5: pig
+    This is the reduce phase (Zi) of the MapReduce workflow. Read the assigned shard
+    from the flattened shuffle output (based on this reducer's rank), which contains
+    all occurrences of a specific word collected from all mappers. Sum the counts for
+    that word to produce the final total count Zi.
 
-    Reads the shuffle shard file for this reducer's rank, which contains partial counts
-    from all N=3 mappers. Sums the counts to get the total occurrence count for the word.
+    Rank-to-word mapping:
+      Rank 1 = cat
+      Rank 2 = dog
+      Rank 3 = bird
+      Rank 4 = horse
+      Rank 5 = pig
     """
-    # Get this instance's rank (1-5)
+    # Get rank for this parallel instance
     r = faasr_rank()
     rank = r['rank']
 
-    # Word mapping for logging purposes
-    rank_to_word = {1: "cat", 2: "dog", 3: "bird", 4: "horse", 5: "pig"}
-    word = rank_to_word.get(rank, f"unknown_rank_{rank}")
+    faasr_log(f"Reduce instance {rank} starting")
 
-    faasr_log(f"Reduce rank {rank} starting: processing word '{word}'")
-
-    # Substitute rank into input/output filenames
+    # Resolve input/output filenames using rank
     input_file = input1.format(rank=rank)
     output_file = output1.format(rank=rank)
 
-    # Download the shuffle shard file for this rank
-    local_input = f"shuffle_{rank}.json"
+    # Download the shard file for this reducer
+    local_input = f"temp_reduce_shard_{rank}.json"
     faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
-    faasr_log(f"Downloaded shuffle shard: {input_file}")
 
-    # Read partial counts from all mappers
+    # Read the shard data
     with open(local_input, 'r') as f:
-        partial_counts = json.load(f)
+        shard_data = json.load(f)
 
-    if not isinstance(partial_counts, list):
-        error_msg = f"Expected a list of partial counts from {input_file}, got {type(partial_counts).__name__}"
-        faasr_log(error_msg)
-        raise ValueError(error_msg)
+    word = shard_data["word"]
+    partial_counts = shard_data["partial_counts"]
 
-    faasr_log(f"Partial counts for '{word}' from mappers: {partial_counts}")
+    faasr_log(f"Reduce instance {rank}: processing word '{word}' with {len(partial_counts)} partial counts")
 
-    # Sum the partial counts to get total count for this word
+    # Sum all partial counts to get the final total
     total_count = sum(partial_counts)
-    faasr_log(f"Total count for '{word}': {total_count}")
 
-    # Write final count to output file
-    local_output = f"final_count_{rank}.json"
-    result = {"word": word, "count": total_count}
+    faasr_log(f"Reduce instance {rank}: total count for '{word}' = {total_count}")
 
+    # Create the final output
+    result = {
+        "word": word,
+        "total_count": total_count
+    }
+
+    # Write to local file
+    local_output = f"temp_final_count_{rank}.json"
     with open(local_output, 'w') as f:
         json.dump(result, f)
 
-    # Upload the final count
+    # Upload to S3
     faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
-    faasr_log(f"Reduce rank {rank} complete: wrote {output_file} with total count {total_count} for '{word}'")
+
+    faasr_log(f"Reduce instance {rank}: uploaded final count to {output_file}")
+    faasr_log(f"Reduce instance {rank} complete")
