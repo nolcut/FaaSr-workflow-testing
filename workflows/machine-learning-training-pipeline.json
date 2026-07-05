@@ -11,7 +11,7 @@
       "Type": "Python",
       "FunctionName": "generate_dataset",
       "Arguments": {
-        "folder": "ml_training_pipeline",
+        "folder": "ml_training_data",
         "output1": "raw_features.npy",
         "output2": "raw_labels.npy"
       },
@@ -24,7 +24,7 @@
       "Type": "Python",
       "FunctionName": "preprocess_data",
       "Arguments": {
-        "folder": "ml_training_pipeline",
+        "folder": "ml_training_data",
         "input1": "raw_features.npy",
         "input2": "raw_labels.npy",
         "output1": "X_train.npy",
@@ -42,12 +42,13 @@
       "Type": "Python",
       "FunctionName": "train_random_forest",
       "Arguments": {
-        "folder": "ml_training_pipeline",
+        "folder": "ml_training_data",
         "input1": "X_train.npy",
         "input2": "X_test.npy",
         "input3": "y_train.npy",
         "input4": "y_test.npy",
-        "output1": "random_forest_results.json"
+        "output1": "random_forest_model.joblib",
+        "output2": "random_forest_metrics.json"
       },
       "InvokeNext": []
     },
@@ -56,12 +57,13 @@
       "Type": "Python",
       "FunctionName": "train_svm",
       "Arguments": {
-        "folder": "ml_training_pipeline",
+        "folder": "ml_training_data",
         "input1": "X_train.npy",
         "input2": "X_test.npy",
         "input3": "y_train.npy",
         "input4": "y_test.npy",
-        "output1": "svm_results.json"
+        "output1": "svm_model.joblib",
+        "output2": "svm_metrics.json"
       },
       "InvokeNext": []
     }
@@ -108,11 +110,13 @@
     ],
     "train_random_forest": [
       "scikit-learn",
-      "numpy"
+      "numpy",
+      "joblib"
     ],
     "train_svm": [
+      "scikit-learn",
       "numpy",
-      "scikit-learn"
+      "joblib"
     ]
   }
 }
