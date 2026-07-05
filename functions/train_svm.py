@@ -1,57 +1,53 @@
 import json
 import numpy as np
 from sklearn.svm import SVC
-import joblib
 
 
-def train_svm(folder: str, input1: str, output1: str, output2: str) -> None:
-    """
-    Train an SVM classifier on preprocessed data.
+def train_svm(folder: str, input1: str, input2: str, input3: str, input4: str, output1: str) -> None:
+    """Train an SVM classifier on preprocessed data.
 
-    Parameters:
-        folder: Remote folder for S3 storage
-        input1: Filename for preprocessed data (preprocessed_data.npz)
-        output1: Filename for trained model (svm_model.joblib)
-        output2: Filename for accuracy results (svm_accuracy.json)
+    Loads training and test datasets from the preprocessing step, trains an
+    SVC with kernel='linear' and C=0.025, and computes accuracy on the test set.
     """
     faasr_log("Starting SVM training")
 
     # Download preprocessed data from S3
-    local_input = "temp_preprocessed_data.npz"
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    local_X_train = "X_train_local.npy"
+    local_X_test = "X_test_local.npy"
+    local_y_train = "y_train_local.npy"
+    local_y_test = "y_test_local.npy"
 
-    # Load the preprocessed data
-    data = np.load(local_input)
-    X_train = data["X_train"]
-    X_test = data["X_test"]
-    y_train = data["y_train"]
-    y_test = data["y_test"]
+    faasr_get_file(local_file=local_X_train, remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file=local_X_test, remote_folder=folder, remote_file=input2)
+    faasr_get_file(local_file=local_y_train, remote_folder=folder, remote_file=input3)
+    faasr_get_file(local_file=local_y_test, remote_folder=folder, remote_file=input4)
 
-    faasr_log(f"Loaded data: X_train shape={X_train.shape}, X_test shape={X_test.shape}")
+    # Load the data
+    X_train = np.load(local_X_train)
+    X_test = np.load(local_X_test)
+    y_train = np.load(local_y_train)
+    y_test = np.load(local_y_test)
 
-    # Create and train SVM classifier
-    # kernel='linear', C=0.025 as specified
+    faasr_log(f"Loaded data: X_train {X_train.shape}, X_test {X_test.shape}, y_train {y_train.shape}, y_test {y_test.shape}")
+
+    # Initialize SVC with kernel='linear' and C=0.025 as specified
     clf = SVC(kernel='linear', C=0.025)
-    clf.fit(X_train, y_train)
 
+    # Fit the model on training data
+    clf.fit(X_train, y_train)
     faasr_log("SVM model trained")
 
-    # Calculate accuracy on test data using clf.score
+    # Compute accuracy on test set using clf.score()
     accuracy = clf.score(X_test, y_test)
-    faasr_log(f"Test accuracy: {accuracy}")
+    faasr_log(f"SVM test accuracy: {accuracy}")
 
-    # Save the trained model
-    local_model = "temp_svm_model.joblib"
-    joblib.dump(clf, local_model)
-    faasr_put_file(local_file=local_model, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Uploaded trained model to {output1}")
+    # Output the accuracy result as JSON
+    result = {"accuracy": accuracy}
+    local_output = "svm_accuracy_local.json"
+    with open(local_output, "w") as f:
+        json.dump(result, f)
 
-    # Save accuracy results as JSON
-    accuracy_results = {"accuracy": accuracy}
-    local_accuracy = "temp_svm_accuracy.json"
-    with open(local_accuracy, "w") as f:
-        json.dump(accuracy_results, f)
-    faasr_put_file(local_file=local_accuracy, remote_folder=folder, remote_file=output2)
-    faasr_log(f"Uploaded accuracy results to {output2}")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log(f"Saved accuracy result to {output1}")
 
     faasr_log("SVM training complete")
