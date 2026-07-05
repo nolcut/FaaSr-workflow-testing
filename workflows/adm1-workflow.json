@@ -1,0 +1,95 @@
+{
+  "FunctionInvoke": "generate-synthetic-inputs",
+  "WorkflowName": "adm1-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-synthetic-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_synthetic_inputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "output1": "digester_influent.csv",
+        "output2": "digester_initial.csv"
+      },
+      "InvokeNext": [
+        "pyadm1"
+      ]
+    },
+    "pyadm1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "pyadm1",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "dynamic_out.csv"
+      },
+      "InvokeNext": [
+        "visualize-outputs"
+      ]
+    },
+    "visualize-outputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_outputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "dynamic_out.csv",
+        "output1": "adm1_substrate_biomass_plot.png",
+        "output2": "adm1_effluent_gasflow_plot.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-synthetic-inputs": "ghcr.io/faasr/github-actions-python:latest",
+    "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-outputs": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_synthetic_inputs": "nolcut/FaaSr-workflow-testing/main/functions/generate_synthetic_inputs.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
+    "visualize_outputs": "nolcut/FaaSr-workflow-testing/main/functions/visualize_outputs.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_synthetic_inputs": [
+      "numpy",
+      "pandas"
+    ],
+    "pyadm1": [
+      "numpy",
+      "scipy",
+      "pandas",
+      "matplotlib"
+    ],
+    "visualize_outputs": [
+      "matplotlib",
+      "numpy",
+      "pandas"
+    ]
+  }
+}
