@@ -1,75 +1,48 @@
-import json
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-import joblib
+def train_random_forest(folder: str, input1: str, input2: str, output1: str) -> None:
+    import json
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
 
+    faasr_log("train_random_forest: starting")
 
-def train_random_forest(folder: str, input1: str, input2: str, input3: str, input4: str, output1: str, output2: str) -> None:
-    """
-    Train a Random Forest classifier on preprocessed training data.
+    local_train = "train_set.csv"
+    local_test = "test_set.csv"
 
-    Args:
-        folder: Remote S3 folder
-        input1: X_train.npy - Scaled training features
-        input2: X_test.npy - Scaled test features
-        input3: y_train.npy - Training labels
-        input4: y_test.npy - Test labels
-        output1: random_forest_model.joblib - Trained model
-        output2: random_forest_metrics.json - Accuracy metrics
-    """
-    faasr_log("Starting Random Forest training")
+    faasr_get_file(local_file=local_train, remote_folder=folder, remote_file=input1)
+    faasr_log(f"train_random_forest: downloaded {input1} from folder {folder}")
 
-    # Download input files
-    local_X_train = "X_train_local.npy"
-    local_X_test = "X_test_local.npy"
-    local_y_train = "y_train_local.npy"
-    local_y_test = "y_test_local.npy"
+    faasr_get_file(local_file=local_test, remote_folder=folder, remote_file=input2)
+    faasr_log(f"train_random_forest: downloaded {input2} from folder {folder}")
 
-    faasr_get_file(local_file=local_X_train, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=local_X_test, remote_folder=folder, remote_file=input2)
-    faasr_get_file(local_file=local_y_train, remote_folder=folder, remote_file=input3)
-    faasr_get_file(local_file=local_y_test, remote_folder=folder, remote_file=input4)
+    train_df = pd.read_csv(local_train)
+    test_df = pd.read_csv(local_test)
+    faasr_log(
+        f"train_random_forest: loaded {train_df.shape[0]} train rows and "
+        f"{test_df.shape[0]} test rows"
+    )
 
-    faasr_log("Input files downloaded")
+    if "target" not in train_df.columns or "target" not in test_df.columns:
+        msg = "train_random_forest: 'target' column not found in input data"
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    # Load the data
-    X_train = np.load(local_X_train)
-    X_test = np.load(local_X_test)
-    y_train = np.load(local_y_train)
-    y_test = np.load(local_y_test)
+    feature_columns = [c for c in train_df.columns if c != "target"]
 
-    faasr_log(f"Training data shape: X_train={X_train.shape}, y_train={y_train.shape}")
-    faasr_log(f"Test data shape: X_test={X_test.shape}, y_test={y_test.shape}")
+    X_train = train_df[feature_columns].values
+    y_train = train_df["target"].values
+    X_test = test_df[feature_columns].values
+    y_test = test_df["target"].values
 
-    # Initialize RandomForestClassifier with specified parameters
-    # max_depth=5, n_estimators=10, no random_state (no seeding)
     clf = RandomForestClassifier(max_depth=5, n_estimators=10)
-
-    # Fit the classifier on training data
-    faasr_log("Fitting Random Forest classifier")
     clf.fit(X_train, y_train)
+    faasr_log("train_random_forest: fitted RandomForestClassifier (max_depth=5, n_estimators=10)")
 
-    # Calculate accuracy using clf.score on test data
     accuracy = clf.score(X_test, y_test)
-    faasr_log(f"Random Forest accuracy: {accuracy}")
+    faasr_log(f"train_random_forest: test-set accuracy = {accuracy}")
 
-    # Save the trained model
-    local_model = "random_forest_model_local.joblib"
-    joblib.dump(clf, local_model)
-    faasr_put_file(local_file=local_model, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Model saved to {output1}")
+    local_output = "random_forest_accuracy.json"
+    with open(local_output, "w") as f:
+        json.dump({"accuracy": float(accuracy)}, f)
 
-    # Save accuracy metrics
-    metrics = {
-        "model": "RandomForest",
-        "accuracy": accuracy,
-        "max_depth": 5,
-        "n_estimators": 10
-    }
-    local_metrics = "random_forest_metrics_local.json"
-    with open(local_metrics, "w") as f:
-        json.dump(metrics, f, indent=2)
-    faasr_put_file(local_file=local_metrics, remote_folder=folder, remote_file=output2)
-    faasr_log(f"Metrics saved to {output2}")
-
-    faasr_log("Random Forest training complete")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log(f"train_random_forest: uploaded {output1} to folder {folder}")
