@@ -1,74 +1,48 @@
-import json
-import numpy as np
-from sklearn.svm import SVC
-import joblib
+def train_svm(folder: str, input1: str, input2: str, output1: str) -> None:
+    import json
+    import pandas as pd
+    from sklearn.svm import SVC
 
+    faasr_log("train_svm: starting")
 
-def train_svm(folder: str, input1: str, input2: str, input3: str, input4: str, output1: str, output2: str) -> None:
-    """
-    Train an SVM classifier on preprocessed training data.
+    local_train = "train_set.csv"
+    local_test = "test_set.csv"
 
-    Args:
-        folder: Remote S3 folder
-        input1: X_train.npy - Scaled training features
-        input2: X_test.npy - Scaled test features
-        input3: y_train.npy - Training labels
-        input4: y_test.npy - Test labels
-        output1: svm_model.joblib - Trained SVM model
-        output2: svm_metrics.json - Accuracy metrics
-    """
-    faasr_log("Starting SVM training")
+    faasr_get_file(local_file=local_train, remote_folder=folder, remote_file=input1)
+    faasr_log(f"train_svm: downloaded {input1} from folder {folder}")
 
-    # Download input files
-    local_X_train = "X_train_local.npy"
-    local_X_test = "X_test_local.npy"
-    local_y_train = "y_train_local.npy"
-    local_y_test = "y_test_local.npy"
+    faasr_get_file(local_file=local_test, remote_folder=folder, remote_file=input2)
+    faasr_log(f"train_svm: downloaded {input2} from folder {folder}")
 
-    faasr_get_file(local_file=local_X_train, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=local_X_test, remote_folder=folder, remote_file=input2)
-    faasr_get_file(local_file=local_y_train, remote_folder=folder, remote_file=input3)
-    faasr_get_file(local_file=local_y_test, remote_folder=folder, remote_file=input4)
+    train_df = pd.read_csv(local_train)
+    test_df = pd.read_csv(local_test)
+    faasr_log(
+        f"train_svm: loaded {train_df.shape[0]} train rows and "
+        f"{test_df.shape[0]} test rows"
+    )
 
-    faasr_log("Input files downloaded")
+    if "target" not in train_df.columns or "target" not in test_df.columns:
+        msg = "train_svm: 'target' column not found in input data"
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    # Load the data
-    X_train = np.load(local_X_train)
-    X_test = np.load(local_X_test)
-    y_train = np.load(local_y_train)
-    y_test = np.load(local_y_test)
+    feature_columns = [c for c in train_df.columns if c != "target"]
 
-    faasr_log(f"Training data shape: X_train={X_train.shape}, y_train={y_train.shape}")
-    faasr_log(f"Test data shape: X_test={X_test.shape}, y_test={y_test.shape}")
+    X_train = train_df[feature_columns].values
+    y_train = train_df["target"].values
+    X_test = test_df[feature_columns].values
+    y_test = test_df["target"].values
 
-    # Initialize SVC with specified parameters: kernel='linear', C=0.025
-    clf = SVC(kernel='linear', C=0.025)
-
-    # Fit the classifier on training data
-    faasr_log("Fitting SVM classifier")
+    clf = SVC(kernel="linear", C=0.025)
     clf.fit(X_train, y_train)
+    faasr_log("train_svm: fitted SVC (kernel='linear', C=0.025)")
 
-    # Calculate accuracy using clf.score on test data
     accuracy = clf.score(X_test, y_test)
-    faasr_log(f"SVM accuracy: {accuracy}")
+    faasr_log(f"train_svm: test-set accuracy = {accuracy}")
 
-    # Save the trained model
-    local_model = "svm_model_local.joblib"
-    joblib.dump(clf, local_model)
-    faasr_put_file(local_file=local_model, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Model saved to {output1}")
+    local_output = "svm_accuracy.json"
+    with open(local_output, "w") as f:
+        json.dump({"accuracy": float(accuracy)}, f)
 
-    # Save accuracy metrics
-    metrics = {
-        "model": "SVM",
-        "accuracy": accuracy,
-        "kernel": "linear",
-        "C": 0.025
-    }
-    local_metrics = "svm_metrics_local.json"
-    with open(local_metrics, "w") as f:
-        json.dump(metrics, f, indent=2)
-    faasr_put_file(local_file=local_metrics, remote_folder=folder, remote_file=output2)
-    faasr_log(f"Metrics saved to {output2}")
-
-    faasr_log("SVM training complete")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log(f"train_svm: uploaded {output1} to folder {folder}")
