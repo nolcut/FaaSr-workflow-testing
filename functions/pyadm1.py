@@ -1,13 +1,29 @@
+# ==========================================================================
+# FaaSr entry wrapper for the user-provided PyADM1 model.
+#
+# The user's model (functions/original_pyadm1.py) is a plain script whose
+# top-level statements read 'digester_influent.csv' / 'digester_initial.csv'
+# from the working directory and write 'dynamic_out.csv'. Its code is copied
+# below VERBATIM: the module-level constants and the four model functions
+# (setInfluent, ADM1_ODE, simulate, DAESolve) are unchanged, and the plain
+# top-level driver logic is enclosed unchanged in run_pyadm1_model() so it is
+# callable. A `global` declaration reproduces the original module-scope
+# bindings exactly, so the model functions see the same globals they did when
+# the statements ran at module top level. No algorithm/constant/output logic
+# is altered. faasr I/O lives only in the pyadm1() entry function.
+# ==========================================================================
+
+import os
+import matplotlib
+matplotlib.use("Agg")  # headless backend (no display in the container)
+
+# ----- BEGIN VERBATIM MODEL: module-level imports & constants -------------
 import numpy as np
 import scipy.integrate
 import copy
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy import integrate
-import os
-import tempfile
 
 
 ## unit for each parameter is commented after it is declared (inline)
@@ -140,73 +156,12 @@ V_liq =  3400 #m^3
 V_gas =  300 #m^3
 V_ad = V_liq + V_gas #m^-3
 
-# Module-level mutable globals used by the model functions
-influent_state = None
-initial_state = None
-state_input = None
-q_ad = 178.4674
-
-# related to pH inhibition taken from BSM2 report, they are global variables to avoid repeating them in DAE part
-K_pH_aa =  (10 ** (-1 * (pH_LL_aa + pH_UL_aa) / 2.0))
-nn_aa =  (3.0 / (pH_UL_aa - pH_LL_aa)) #we need a differece between N_aa and n_aa to avoid typos and nn_aa refers to the n_aa in BSM2 report
-K_pH_ac = (10 ** (-1 * (pH_LL_ac + pH_UL_ac) / 2.0))
-n_ac =  (3.0 / (pH_UL_ac - pH_LL_ac))
-K_pH_h2 =  (10 ** (-1 * (pH_LL_h2 + pH_UL_h2) / 2.0))
-n_h2 =  (3.0 / (pH_UL_h2 - pH_LL_h2))
-
-# Module-level mutable state variables used by the DAE solver
-S_H_ion = 3.4227e-8
-S_va_ion = 0.011611
-S_bu_ion = 0.013237
-S_pro_ion = 0.017056
-S_ac_ion = 0.086831
-S_hco3_ion = 0.14253
-S_nh3 = 0.0041282
-S_h2 = 2.5055e-7
-S_gas_h2 = 1.1032e-5
-S_gas_ch4 = 1.6535
-S_gas_co2 = 0.013761
-S_nh4_ion = 0.0041
-S_co2 = 0.14
-p_gas = 0.0
-q_gas = 0.0
-q_ch4 = 0.0
-S_su = 0.0
-S_aa = 0.0
-S_fa = 0.0
-S_va = 0.0
-S_bu = 0.0
-S_pro = 0.0
-S_ac = 0.0
-S_ch4 = 0.0
-S_IC = 0.0
-S_IN = 0.0
-S_I = 0.0
-X_xc = 0.0
-X_ch = 0.0
-X_pr = 0.0
-X_li = 0.0
-X_su = 0.0
-X_aa = 0.0
-X_fa = 0.0
-X_c4 = 0.0
-X_pro = 0.0
-X_ac = 0.0
-X_h2 = 0.0
-X_I = 0.0
-S_cation = 0.0
-S_anion = 0.0
-state_zero = None
-pH = 7.4655377
-
-P_gas = 0.0
-
-
+# ----- VERBATIM MODEL FUNCTIONS (module level, unchanged) -----------------
 # Function to set influent values for influent state variables at each simulation step
 def setInfluent(i):
     global S_su_in, S_aa_in, S_fa_in, S_va_in, S_bu_in, S_pro_in, S_ac_in, S_h2_in,S_ch4_in, S_IC_in, S_IN_in, S_I_in,X_xc_in, X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in
     ##variable definition
-    # Input values (influent/feed)
+    # Input values (influent/feed) 
     S_su_in = influent_state['S_su'][i] #kg COD.m^-3
     S_aa_in = influent_state['S_aa'][i] #kg COD.m^-3
     S_fa_in = influent_state['S_fa'][i] #kg COD.m^-3
@@ -219,7 +174,7 @@ def setInfluent(i):
     S_IC_in = influent_state['S_IC'][i] #kmole C.m^-3
     S_IN_in = influent_state['S_IN'][i] #kmole N.m^-3
     S_I_in = influent_state['S_I'][i] #kg COD.m^-3
-
+    
     X_xc_in = influent_state['X_xc'][i] #kg COD.m^-3
     X_ch_in = influent_state['X_ch'][i] #kg COD.m^-3
     X_pr_in = influent_state['X_pr'][i] #kg COD.m^-3
@@ -232,7 +187,7 @@ def setInfluent(i):
     X_ac_in = influent_state['X_ac'][i] #kg COD.m^-3
     X_h2_in = influent_state['X_h2'][i] #kg COD.m^-3
     X_I_in = influent_state['X_I'][i] #kg COD.m^-3
-
+    
     S_cation_in = influent_state['S_cation'][i] #kmole.m^-3
     S_anion_in = influent_state['S_anion'][i] #kmole.m^-3
 
@@ -329,7 +284,7 @@ def ADM1_ODE(t, state_zero):
   I_11 =  (I_pH_ac * I_IN_lim * I_nh3)
   I_12 =  (I_pH_h2 * I_IN_lim)
 
-
+ 
 
   # biochemical process rates from Rosen et al (2006) BSM2 report
   Rho_1 =  (k_dis * X_xc)   # Disintegration
@@ -399,7 +354,7 @@ def ADM1_ODE(t, state_zero):
 
 
   ## eq10 start##
-  s_1 =  (-1 * C_xc + f_sI_xc * C_sI + f_ch_xc * C_ch + f_pr_xc * C_pr + f_li_xc * C_li + f_xI_xc * C_xI)
+  s_1 =  (-1 * C_xc + f_sI_xc * C_sI + f_ch_xc * C_ch + f_pr_xc * C_pr + f_li_xc * C_li + f_xI_xc * C_xI) 
   s_2 =  (-1 * C_ch + C_su)
   s_3 =  (-1 * C_pr + C_aa)
   s_4 =  (-1 * C_li + (1 - f_fa_li) * C_su + f_fa_li * C_fa)
@@ -411,7 +366,7 @@ def ADM1_ODE(t, state_zero):
   s_10 =  (-1 * C_pro + (1 - Y_pro) * 0.57 * C_ac + Y_pro * C_bac)
   s_11 =  (-1 * C_ac + (1 - Y_ac) * C_ch4 + Y_ac * C_bac)
   s_12 =  ((1 - Y_h2) * C_ch4 + Y_h2 * C_bac)
-  s_13 =  (-1 * C_bac + C_xc)
+  s_13 =  (-1 * C_bac + C_xc) 
 
   Sigma =  (s_1 * Rho_1 + s_2 * Rho_2 + s_3 * Rho_3 + s_4 * Rho_4 + s_5 * Rho_5 + s_6 * Rho_6 + s_7 * Rho_7 + s_8 * Rho_8 + s_9 * Rho_9 + s_10 * Rho_10 + s_11 * Rho_11 + s_12 * Rho_12 + s_13 * (Rho_13 + Rho_14 + Rho_15 + Rho_16 + Rho_17 + Rho_18 + Rho_19))
 
@@ -419,21 +374,21 @@ def ADM1_ODE(t, state_zero):
   ## eq10 end##
 
 
-
-  diff_S_IN = q_ad / V_liq * (S_IN_in - S_IN) + (N_xc - f_xI_xc * N_I - f_sI_xc * N_I-f_pr_xc * N_aa) * Rho_1 - Y_su * N_bac * Rho_5 + (N_aa - Y_aa * N_bac) * Rho_6 - Y_fa * N_bac * Rho_7 - Y_c4 * N_bac * Rho_8 - Y_c4 * N_bac * Rho_9 - Y_pro * N_bac * Rho_10 - Y_ac * N_bac * Rho_11 - Y_h2 * N_bac * Rho_12 + (N_bac - N_xc) * (Rho_13 + Rho_14 + Rho_15 + Rho_16 + Rho_17 + Rho_18 + Rho_19) # eq11
+ 
+  diff_S_IN = q_ad / V_liq * (S_IN_in - S_IN) + (N_xc - f_xI_xc * N_I - f_sI_xc * N_I-f_pr_xc * N_aa) * Rho_1 - Y_su * N_bac * Rho_5 + (N_aa - Y_aa * N_bac) * Rho_6 - Y_fa * N_bac * Rho_7 - Y_c4 * N_bac * Rho_8 - Y_c4 * N_bac * Rho_9 - Y_pro * N_bac * Rho_10 - Y_ac * N_bac * Rho_11 - Y_h2 * N_bac * Rho_12 + (N_bac - N_xc) * (Rho_13 + Rho_14 + Rho_15 + Rho_16 + Rho_17 + Rho_18 + Rho_19) # eq11 
 
 
   diff_S_I = q_ad / V_liq * (S_I_in - S_I) + f_sI_xc * Rho_1  # eq12
 
 
   # Differential equations 13 to 24 (particulate matter)
-  diff_X_xc = q_ad / V_liq * (X_xc_in - X_xc) - Rho_1 + Rho_13 + Rho_14 + Rho_15 + Rho_16 + Rho_17 + Rho_18 + Rho_19  # eq13
+  diff_X_xc = q_ad / V_liq * (X_xc_in - X_xc) - Rho_1 + Rho_13 + Rho_14 + Rho_15 + Rho_16 + Rho_17 + Rho_18 + Rho_19  # eq13 
 
-  diff_X_ch = q_ad / V_liq * (X_ch_in - X_ch) + f_ch_xc * Rho_1 - Rho_2  # eq14
+  diff_X_ch = q_ad / V_liq * (X_ch_in - X_ch) + f_ch_xc * Rho_1 - Rho_2  # eq14 
 
-  diff_X_pr = q_ad / V_liq * (X_pr_in - X_pr) + f_pr_xc * Rho_1 - Rho_3  # eq15
+  diff_X_pr = q_ad / V_liq * (X_pr_in - X_pr) + f_pr_xc * Rho_1 - Rho_3  # eq15 
 
-  diff_X_li = q_ad / V_liq * (X_li_in - X_li) + f_li_xc * Rho_1 - Rho_4  # eq16
+  diff_X_li = q_ad / V_liq * (X_li_in - X_li) + f_li_xc * Rho_1 - Rho_4  # eq16 
 
   diff_X_su = q_ad / V_liq * (X_su_in - X_su) + Y_su * Rho_5 - Rho_13  # eq17
 
@@ -449,7 +404,7 @@ def ADM1_ODE(t, state_zero):
 
   diff_X_h2 = q_ad / V_liq * (X_h2_in - X_h2) + Y_h2 * Rho_12 - Rho_19  # eq23
 
-  diff_X_I = q_ad / V_liq * (X_I_in - X_I) + f_xI_xc * Rho_1  # eq24
+  diff_X_I = q_ad / V_liq * (X_I_in - X_I) + f_xI_xc * Rho_1  # eq24 
 
   # Differential equations 25 and 26 (cations and anions)
   diff_S_cation = q_ad / V_liq * (S_cation_in - S_cation)  # eq25
@@ -485,7 +440,7 @@ def ADM1_ODE(t, state_zero):
 
   return diff_S_su, diff_S_aa, diff_S_fa, diff_S_va, diff_S_bu, diff_S_pro, diff_S_ac, diff_S_h2, diff_S_ch4, diff_S_IC, diff_S_IN, diff_S_I, diff_X_xc, diff_X_ch, diff_X_pr, diff_X_li, diff_X_su, diff_X_aa, diff_X_fa, diff_X_c4, diff_X_pro, diff_X_ac, diff_X_h2, diff_X_I, diff_S_cation, diff_S_anion, diff_S_H_ion, diff_S_va_ion,  diff_S_bu_ion, diff_S_pro_ion, diff_S_ac_ion, diff_S_hco3_ion, diff_S_co2,  diff_S_nh3, diff_S_nh4_ion, diff_S_gas_h2, diff_S_gas_ch4, diff_S_gas_co2
 
-# Function for integration of ADM1 differential equations
+# Function for integration of ADM1 differential equations 
 def simulate(t_step, solvermethod):
   r = scipy.integrate.solve_ivp(ADM1_ODE, t_step, state_zero, method= solvermethod)
   return r.y
@@ -493,11 +448,11 @@ def simulate(t_step, solvermethod):
 # Function for DAE equations adopted from the Rosen et al (2006) BSM2 report bmadm1_report
 def DAESolve():
   global S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3, S_H_ion, pH, p_gas_h2, S_h2, S_nh4_ion, S_co2, P_gas, q_gas
-
-  ##  DAE calculations
+  
+  ##  DAE calculations 
   eps = 0.0000001
   prevS_H_ion = S_H_ion
-
+  
   #initial values for Newton-Raphson solver parameter
   shdelta = 1.0
   shgradeq = 1.0
@@ -507,7 +462,7 @@ def DAESolve():
   maxIter = 1000 #maximum number of iterations for solver
   i = 1
   j = 1
-
+  
   ## DAE solver for S_H_ion from Rosen et al. (2006)
   while ((shdelta > tol or shdelta < -tol) and (i <= maxIter)):
     S_va_ion = K_a_va * S_va / (K_a_va + S_H_ion)
@@ -522,27 +477,27 @@ def DAESolve():
     if S_H_ion <= 0:
         S_H_ion = tol
     i+=1
-
+  
   # pH calculation
   pH = - np.log10(S_H_ion)
-
-  #DAE solver for S_h2 from Rosen et al. (2006)
+  
+  #DAE solver for S_h2 from Rosen et al. (2006) 
   while ((S_h2delta > tol or S_h2delta < -tol) and (j <= maxIter)):
     I_pH_aa = (K_pH_aa ** nn_aa) / (prevS_H_ion ** nn_aa + K_pH_aa ** nn_aa)
-
+  
     I_pH_h2 = (K_pH_h2 ** n_h2) / (prevS_H_ion ** n_h2 + K_pH_h2 ** n_h2)
     I_IN_lim = 1 / (1 + (K_S_IN / S_IN))
     I_h2_fa = 1 / (1 + (S_h2 / K_I_h2_fa))
     I_h2_c4 = 1 / (1 + (S_h2 / K_I_h2_c4))
     I_h2_pro = 1 / (1 + (S_h2 / K_I_h2_pro))
-
+  
     I_5 = I_pH_aa * I_IN_lim
     I_6 = I_5
     I_7 = I_pH_aa * I_IN_lim * I_h2_fa
     I_8 = I_pH_aa * I_IN_lim * I_h2_c4
     I_9 = I_8
     I_10 = I_pH_aa * I_IN_lim * I_h2_pro
-
+  
     I_12 = I_pH_h2 * I_IN_lim
     Rho_5 = k_m_su * (S_su / (K_S_su + S_su)) * X_su * I_5  # Uptake of sugars
     Rho_6 = k_m_aa * (S_aa / (K_S_aa + S_aa)) * X_aa * I_6  # Uptake of amino-acids
@@ -561,35 +516,24 @@ def DAESolve():
     j+=1
 
 
-# ============================================================
-# run_adm1_model: enclosure of the original script's main logic
-# Every statement's logic is preserved verbatim; only
-# (a) CSV paths are parameterised instead of hardcoded, and
-# (b) DataFrame.append() (removed in pandas 2.0) is replaced
-#     with pd.concat() which produces identical results.
-# ============================================================
-def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
-    global influent_state, initial_state, state_input, q_ad, state_zero
-    global S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4
-    global S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa
-    global X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion
-    global pH, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion
-    global S_hco3_ion, S_nh3, S_nh4_ion, S_co2, S_gas_h2, S_gas_ch4, S_gas_co2
-    global p_gas, q_gas, q_ch4, P_gas
+# ----- VERBATIM MODEL DRIVER (original top-level statements, enclosed) ----
+def run_pyadm1_model():
+    global influent_state, initial_state, S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, pH, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3, S_nh4_ion, S_co2, S_gas_h2, S_gas_ch4, S_gas_co2, K_pH_aa, nn_aa, K_pH_ac, n_ac, K_pH_h2, n_h2, q_ad, state_zero, state_input, p_gas, q_gas, q_ch4, p_gas_h2, p_gas_ch4, p_gas_co2
 
     # reading influent and initial condition data from csv files
-    influent_state = pd.read_csv(influent_csv_path)
-    initial_state = pd.read_csv(initial_csv_path)
+    influent_state = pd.read_csv("digester_influent.csv")
+    initial_state = pd.read_csv("digester_initial.csv")
+
 
     # initiate variables (initial values for the reactor state at the initial time (t0)
     S_su = initial_state['S_su'][0] #kg COD.m^-3 monosaccharides
     S_aa = initial_state['S_aa'][0] #kg COD.m^-3 amino acids
-    S_fa = initial_state['S_fa'][0] #kg COD.m^-3 total long chain fatty acids
+    S_fa = initial_state['S_fa'][0] #kg COD.m^-3 total long chain fatty acids 
     S_va = initial_state['S_va'][0] #kg COD.m^-3 total valerate
     S_bu = initial_state['S_bu'][0] #kg COD.m^-3 total butyrate
     S_pro = initial_state['S_pro'][0] #kg COD.m^-3 total propionate
     S_ac = initial_state['S_ac'][0] #kg COD.m^-3 total acetate
-    S_h2 = initial_state['S_h2'][0] #kg COD.m^-3 hydrogen gas
+    S_h2 = initial_state['S_h2'][0] #kg COD.m^-3 hydrogen gas 
     S_ch4 = initial_state['S_ch4'][0] #kg COD.m^-3 methane gas
     S_IC = initial_state['S_IC'][0] #kmole C.m^-3 inorganic carbon
     S_IN = initial_state['S_IN'][0] #kmole N.m^-3 inorganic nitrogen
@@ -600,7 +544,7 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
     X_pr = initial_state['X_pr'][0] #kg COD.m^-3 proteins
     X_li = initial_state['X_li'][0] #kg COD.m^-3 lipids
     X_su = initial_state['X_su'][0] #kg COD.m^-3 sugar degraders
-    X_aa = initial_state['X_aa'][0] #kg COD.m^-3 amino acid degraders
+    X_aa = initial_state['X_aa'][0] #kg COD.m^-3 amino acid degraders 
     X_fa = initial_state['X_fa'][0] #kg COD.m^-3 LCFA degraders
     X_c4 = initial_state['X_c4'][0] #kg COD.m^-3 valerate and butyrate degraders
     X_pro = initial_state['X_pro'][0] #kg COD.m^-3 propionate degraders
@@ -624,6 +568,14 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
     S_gas_h2 = initial_state['S_gas_h2'][0] #kg COD.m^-3 hydrogen concentration in gas phase
     S_gas_ch4 = initial_state['S_gas_ch4'][0] #kg COD.m^-3 methane concentration in gas phase
     S_gas_co2 = initial_state['S_gas_co2'][0]#kmole C.m^-3 carbon dioxide concentration in gas phas
+
+    # related to pH inhibition taken from BSM2 report, they are global variables to avoid repeating them in DAE part
+    K_pH_aa =  (10 ** (-1 * (pH_LL_aa + pH_UL_aa) / 2.0))
+    nn_aa =  (3.0 / (pH_UL_aa - pH_LL_aa)) #we need a differece between N_aa and n_aa to avoid typos and nn_aa refers to the n_aa in BSM2 report
+    K_pH_ac = (10 ** (-1 * (pH_LL_ac + pH_UL_ac) / 2.0))
+    n_ac =  (3.0 / (pH_UL_ac - pH_LL_ac))
+    K_pH_h2 =  (10 ** (-1 * (pH_LL_h2 + pH_UL_h2) / 2.0))
+    n_h2 =  (3.0 / (pH_UL_h2 - pH_LL_h2))
 
     #pH equation
     pH = - np.log10(S_H_ion)
@@ -697,9 +649,9 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
                   X_I_in,
                   S_cation_in,
                   S_anion_in]
-
     ## time array definition
     t = influent_state['time']
+
 
     # Initiate the cache data frame for storing simulation results
     simulate_results = pd.DataFrame([state_zero])
@@ -732,7 +684,7 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
       # Span for next time step
       tstep = [t0,u]
 
-      # Solve and store ODE results for next step
+      # Solve and store ODE results for next step 
       sim_S_su, sim_S_aa, sim_S_fa, sim_S_va, sim_S_bu, sim_S_pro, sim_S_ac, sim_S_h2, sim_S_ch4, sim_S_IC, sim_S_IN, sim_S_I, sim_X_xc, sim_X_ch, sim_X_pr, sim_X_li, sim_X_su, sim_X_aa, sim_X_fa, sim_X_c4, sim_X_pro, sim_X_ac, sim_X_h2, sim_X_I, sim_S_cation, sim_S_anion, sim_S_H_ion, sim_S_va_ion, sim_S_bu_ion, sim_S_pro_ion, sim_S_ac_ion, sim_S_hco3_ion, sim_S_co2, sim_S_nh3, sim_S_nh4_ion, sim_S_gas_h2, sim_S_gas_ch4, sim_S_gas_co2 = simulate(tstep, solvermethod)
 
       # Store ODE simulation result states
@@ -741,13 +693,13 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
       # Solve DAE states
       DAESolve()
 
-      # Algebraic equations
+      # Algebraic equations 
       p_gas_h2 =  (S_gas_h2 * R * T_op / 16)
       p_gas_ch4 =  (S_gas_ch4 * R * T_op / 64)
       p_gas_co2 =  (S_gas_co2 * R * T_op)
       p_gas=  (p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_gas_h2o)
       q_gas =  (k_p * (p_gas- p_atm))
-      if q_gas < 0:
+      if q_gas < 0:    
         q_gas = 0
 
       q_ch4 = q_gas * (p_gas_ch4/p_gas) # methane flow
@@ -755,66 +707,114 @@ def run_adm1_model(influent_csv_path, initial_csv_path, output_csv_path):
         q_ch4 = 0
 
       flowtemp = {'q_gas' : q_gas, 'q_ch4' : q_ch4}
-      # pandas >= 2.0: DataFrame.append() removed; use pd.concat() with same logic
-      gasflow = pd.concat([gasflow, pd.DataFrame([flowtemp])], ignore_index=True)
+      gasflow = gasflow.append(flowtemp, ignore_index=True)
 
       S_nh4_ion =  (S_IN - S_nh3)
       S_co2 =  (S_IC - S_hco3_ion)
-      total_ch4 = total_ch4 + q_ch4
+      total_ch4 = total_ch4 + q_ch4 
 
 
       #state transfer
       state_zero = [S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2]
 
       dfstate_zero = pd.DataFrame([state_zero], columns = columns)
-      # pandas >= 2.0: DataFrame.append() removed; use pd.concat() with same logic
-      simulate_results = pd.concat([simulate_results, dfstate_zero], ignore_index=True)
+      simulate_results = simulate_results.append(dfstate_zero)
       t0 = u
 
 
     # Write the dynamic simulation resutls to csv
     phlogarray = -1 * np.log10(simulate_results['pH'])
     simulate_results['pH'] = phlogarray
-    simulate_results.to_csv(output_csv_path, index = False)
+    simulate_results.to_csv("dynamic_out.csv", index = False)
 
-    return simulate_results
+    ## ring test begin
+    # to compare the resutls with the dynamic simulation data from the BSM2 Matlab implementation
+    # pyOut = pd.read_csv("dynamic_out.csv")
+    # pyIn = pd.read_csv("digester_influent.csv")
+    # MatlabOut = pd.read_csv("Matlabout_dyn.csv")
+
+    # pyOut.time = pyIn.time
+    # pyOut.Q = pyIn.Q
+    # MatlabOut.Q = pyOut.Q
+    # mvalue = pvalue = 0
+    # ringtest = pd.DataFrame(columns=["state", "Matlab", "Python", "error"])
+
+    # n = 0
+    # for i in pyOut.columns:
+    #   Matlabinteg = integrate.trapz(MatlabOut[i] , MatlabOut.time)
+    #   pyinteg = integrate.trapz(pyOut[i] , pyOut.time)
+    #   results =pd.DataFrame([[MatlabOut[i].name, Matlabinteg/280, pyinteg/280, abs(pyinteg-Matlabinteg)/280]], columns=["state", "Matlab", "Python", "error"])
+    #   ringtest = ringtest.append(results)
+    #   print("Matlab " + MatlabOut[i].name + " average = " + str(Matlabinteg/280) + " Python " +  pyOut[i].name + " average = " + str(pyinteg/280) + " Error =" + str(abs(pyinteg-Matlabinteg)/280))
+
+    # ringtest.to_csv("ringtest.csv", index = False)
 
 
-# ============================================================
-# FaaSr entry function
-# ============================================================
+    # for i in pyOut.columns:
+    #   plt.figure(figsize=(32, 8))
+    #   plt.plot(MatlabOut.time, MatlabOut[i], label = MatlabOut[i].name, linestyle="-", color = "red")
+    #   plt.plot(pyOut.time, pyOut[i], label = pyOut[i].name, linestyle="--", color = "blue")
+    #   plt.legend()
+    #   plt.show()
+
+    ## ring test end
+
+
+
+# ----- END VERBATIM MODEL -------------------------------------------------
+
+
+def _ensure_dataframe_append():
+    """pandas>=2.0 removed DataFrame.append, which the verbatim model relies on.
+    Restore an equivalent implemented on top of pd.concat when it is absent. This
+    is a runtime-compatibility shim only -- it does not alter any model logic."""
+    if hasattr(pd.DataFrame, "append"):
+        return
+
+    def _append(self, other, ignore_index=False, verify_integrity=False, sort=False):
+        if isinstance(other, dict):
+            other = pd.DataFrame([other])
+        elif isinstance(other, pd.Series):
+            other = other.to_frame().T
+        elif isinstance(other, list):
+            other = pd.DataFrame(other)
+        return pd.concat([self, other], ignore_index=ignore_index, sort=sort)
+
+    pd.DataFrame.append = _append
+
+
 def pyadm1(folder: str, input1: str, input2: str, output1: str) -> None:
-    """
-    FaaSr entry point for the ADM1 dynamic simulation.
+    faasr_log("pyadm1: starting PyADM1 anaerobic digestion dynamic simulation")
 
-    Downloads digester_influent.csv and digester_initial.csv from S3,
-    runs the ADM1 ODE/DAE model via run_adm1_model(), and uploads the
-    full dynamic simulation results to S3 as dynamic_out.csv.
-    """
-    faasr_log("pyadm1: starting ADM1 dynamic simulation")
+    influent_local = "digester_influent.csv"
+    initial_local = "digester_initial.csv"
 
-    local_influent = "digester_influent.csv"
-    local_initial  = "digester_initial.csv"
-    local_output   = "dynamic_out.csv"
+    # Download the two validated inputs to the EXACT filenames the model reads.
+    faasr_get_file(local_file=influent_local, remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file=initial_local, remote_folder=folder, remote_file=input2)
 
-    # Download inputs from S3
-    faasr_log(f"pyadm1: downloading {input1} from {folder}")
-    faasr_get_file(local_file=local_influent, remote_folder=folder, remote_file=input1)
+    for local_name, remote_name in ((influent_local, input1), (initial_local, input2)):
+        if not os.path.exists(local_name) or os.path.getsize(local_name) == 0:
+            msg = ("pyadm1: required input '%s' is missing or empty after download "
+                   "from folder '%s'" % (remote_name, folder))
+            faasr_log(msg)
+            raise FileNotFoundError(msg)
 
-    faasr_log(f"pyadm1: downloading {input2} from {folder}")
-    faasr_get_file(local_file=local_initial, remote_folder=folder, remote_file=input2)
+    # Runtime-compat shim (see above); no effect on pandas<2.0.
+    _ensure_dataframe_append()
 
-    # Run the ADM1 model (calls the preserved model functions)
-    faasr_log("pyadm1: running ADM1 ODE/DAE simulation")
-    run_adm1_model(local_influent, local_initial, local_output)
-    faasr_log("pyadm1: simulation complete")
+    output_local = "dynamic_out.csv"
+    if os.path.exists(output_local):
+        os.remove(output_local)
 
-    # Upload output to S3
-    faasr_log(f"pyadm1: uploading {output1} to {folder}")
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-    faasr_log("pyadm1: done")
+    faasr_log("pyadm1: running ADM1/BSM2 dynamic simulation via run_pyadm1_model()")
+    run_pyadm1_model()  # the preserved model writes 'dynamic_out.csv' in the cwd
 
-    # Clean up local temp files
-    for f in (local_influent, local_initial, local_output):
-        if os.path.exists(f):
-            os.remove(f)
+    if not os.path.exists(output_local) or os.path.getsize(output_local) == 0:
+        msg = "pyadm1: model did not produce a non-empty '%s'" % output_local
+        faasr_log(msg)
+        raise RuntimeError(msg)
+
+    faasr_put_file(local_file=output_local, remote_folder=folder, remote_file=output1)
+    faasr_log("pyadm1: simulation complete; wrote results to '%s'" % output1)
+
