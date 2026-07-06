@@ -13,7 +13,8 @@
       "Arguments": {
         "folder": "video_detection",
         "input1": "video_small.mp4",
-        "output1": "frame_batch_{rank}.json"
+        "output1": "frame_batch_1.json",
+        "output2": "frame_batch_2.json"
       },
       "InvokeNext": [
         "detect-objects(2)"
@@ -78,8 +79,7 @@
   },
   "PyPIPackageDownloads": {
     "decode_video": [
-      "opencv-python-headless",
-      "numpy"
+      "opencv-python-headless"
     ],
     "detect_objects": [
       "opencv-python-headless",
