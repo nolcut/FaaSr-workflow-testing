@@ -1,89 +1,91 @@
 import json
+import os
 
 
-def shuffle(folder: str, input1: str, input2: str, input3: str, output1: str, output2: str, output3: str, output4: str, output5: str) -> None:
-    """
-    Flatten and reorganize the word count results from all N=3 parallel map functions
-    to prepare data for M=5 parallel reducers.
+def shuffle(folder: str, input1: str, output1: str) -> None:
+    # Deterministic vocabulary / rank ordering shared across the MapReduce
+    # benchmark (matches split's vocabulary). Reducer rank i (1..M) handles
+    # vocabulary[i-1].
+    vocabulary = ["cat", "dog", "bird", "horse", "pig"]
+    M = len(vocabulary)  # number of distinct words / reducers (5)
 
-    Read the partial word count outputs from each map worker.
-    Reorganize the data so that each of the M=5 reducers receives all counts for one
-    specific word across all map outputs.
+    # Prefix of the per-map partial-count files (input1 without the {rank}
+    # placeholder), used to identify only the map outputs in the folder.
+    in_prefix = input1.split("{rank}")[0]  # "map_partial_counts_"
 
-    Output shards (by reducer rank):
-      Rank 1 = cat
-      Rank 2 = dog
-      Rank 3 = bird
-      Rank 4 = horse
-      Rank 5 = pig
-    """
-    faasr_log("Starting shuffle: reorganizing map outputs for parallel reducers")
+    faasr_log(
+        f"shuffle: discovering map partial-count files with prefix "
+        f"'{in_prefix}' in folder '{folder}'"
+    )
 
-    # Word-to-rank mapping as specified
-    word_to_rank = {
-        "cat": 1,
-        "dog": 2,
-        "bird": 3,
-        "horse": 4,
-        "pig": 5
-    }
+    # Discover ALL per-rank map outputs (fan-in from N ranked map instances).
+    all_names = faasr_get_folder_list(prefix=folder)
+    map_files = sorted(
+        name for name in all_names
+        if name.rsplit("/", 1)[-1].startswith(in_prefix)
+        and name.rsplit("/", 1)[-1].endswith(".json")
+    )
 
-    # Initialize accumulators for each word (to collect counts from all map workers)
-    word_counts = {
-        "cat": [],
-        "dog": [],
-        "bird": [],
-        "horse": [],
-        "pig": []
-    }
+    if not map_files:
+        msg = (
+            f"shuffle: no map partial-count files found with prefix "
+            f"'{in_prefix}' in folder '{folder}'"
+        )
+        faasr_log(msg)
+        raise FileNotFoundError(msg)
 
-    # Read all three input files from map workers
-    input_files = [input1, input2, input3]
+    faasr_log(f"shuffle: found {len(map_files)} map output(s): {map_files}")
 
-    for i, input_file in enumerate(input_files, start=1):
-        local_input = f"temp_shuffle_input_{i}.json"
-        faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
+    # Group all partial counts by word (flatten the array Yi).
+    grouped = {w: [] for w in vocabulary}
 
-        with open(local_input, 'r') as f:
-            counts = json.load(f)
+    for name in map_files:
+        basename = name.rsplit("/", 1)[-1]
+        local_in = basename
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=basename)
 
-        faasr_log(f"Read {input_file}: {len(counts)} words with counts")
+        with open(local_in, "r") as f:
+            partial = json.load(f)
 
-        # Collect the count for each word from this map worker
-        for word, count in counts.items():
-            if word in word_counts:
-                word_counts[word].append(count)
-            else:
-                faasr_log(f"Warning: unexpected word '{word}' in {input_file}")
+        if not isinstance(partial, dict):
+            raise ValueError(
+                f"shuffle: expected a JSON object of word->count in {basename}, "
+                f"got {type(partial).__name__}"
+            )
 
-    faasr_log(f"Collected counts from all {len(input_files)} map workers")
+        for word, count in partial.items():
+            if word not in grouped:
+                # A word appeared that is not in the known vocabulary — this
+                # indicates upstream data does not match the benchmark spec.
+                raise ValueError(
+                    f"shuffle: unexpected word '{word}' in {basename}; "
+                    f"vocabulary is {vocabulary}"
+                )
+            grouped[word].append(count)
 
-    # Create output shards - one per reducer rank, containing all partial counts for that word
-    # Output mapping: output1=cat (rank 1), output2=dog (rank 2), output3=bird (rank 3),
-    #                 output4=horse (rank 4), output5=pig (rank 5)
-    output_mapping = {
-        1: (output1, "cat"),
-        2: (output2, "dog"),
-        3: (output3, "bird"),
-        4: (output4, "horse"),
-        5: (output5, "pig")
-    }
+        if os.path.exists(local_in):
+            os.remove(local_in)
 
-    for rank in range(1, 6):
-        output_file, word = output_mapping[rank]
-        counts_list = word_counts[word]
+    faasr_log(f"shuffle: grouped partial counts by word: {grouped}")
 
-        # Shard contains all partial counts for this word from all map workers
-        shard_data = {
-            "word": word,
-            "partial_counts": counts_list
-        }
+    # Emit one output shard per distinct word (M=5), numbered by reducer rank.
+    # The rank -> word mapping is deterministic (vocabulary ordering).
+    for i in range(1, M + 1):
+        word = vocabulary[i - 1]
+        shard = {"word": word, "partial_counts": grouped[word]}
 
-        local_output = f"temp_shard_{rank}.json"
-        with open(local_output, 'w') as f:
-            json.dump(shard_data, f)
+        local_out = f"shuffle_word_shard_{i}.json"
+        with open(local_out, "w") as f:
+            json.dump(shard, f)
 
-        faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
-        faasr_log(f"Uploaded {output_file} for word '{word}' with {len(counts_list)} partial counts: {counts_list}")
+        remote_out = output1.replace("{rank}", str(i))
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
+        faasr_log(
+            f"shuffle: wrote shard rank={i} word='{word}' -> {remote_out} "
+            f"with {len(grouped[word])} partial counts"
+        )
 
-    faasr_log("Shuffle complete: 5 shards ready for parallel reduce processing")
+        if os.path.exists(local_out):
+            os.remove(local_out)
+
+    faasr_log(f"shuffle: completed, wrote {M} word shards")
