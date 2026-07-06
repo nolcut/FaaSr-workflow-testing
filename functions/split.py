@@ -1,51 +1,63 @@
 import json
+import os
 import random
 
 
-def split(folder: str, output1: str, output2: str, output3: str) -> None:
-    """
-    Generate input text with exactly 5000 words from vocabulary [cat, dog, bird, horse, pig],
-    each appearing exactly 1000 times. Shuffle with fixed seed and partition into 3 batches
-    for parallel map processing.
-    """
-    faasr_log("Starting split: generating 5000 words from vocabulary")
-
-    # Vocabulary with M=5 different words
+def split(folder: str, output1: str) -> None:
+    # MapReduce word-count benchmark parameters.
+    W = 5000                                     # total number of words
+    N = 3                                         # number of map functions (fan-out)
     vocabulary = ["cat", "dog", "bird", "horse", "pig"]
+    M = len(vocabulary)                           # number of distinct words (5)
 
-    # Generate exactly 5000 words with 1000 of each (evenly distributed)
+    faasr_log(
+        f"split: generating input text of W={W} words over M={M} vocabulary "
+        f"{vocabulary}, partitioning into N={N} batches"
+    )
+
+    if W % M != 0:
+        raise ValueError(f"W={W} is not evenly divisible by M={M}")
+
+    # Generate the input text: each word distributed evenly, then shuffled.
+    per_word = W // M                             # 1000 occurrences of each word
     words = []
-    for word in vocabulary:
-        words.extend([word] * 1000)
+    for w in vocabulary:
+        words.extend([w] * per_word)
 
-    faasr_log(f"Generated {len(words)} words with {len(vocabulary)} unique words")
-
-    # Shuffle with fixed random seed for reproducibility
-    random.seed(42)
+    # Shuffle randomly to interleave the words.
     random.shuffle(words)
 
-    faasr_log("Shuffled words with fixed seed for reproducibility")
+    if len(words) != W:
+        raise ValueError(f"generated {len(words)} words, expected {W}")
 
-    # Partition into N=3 batches:
-    # Batches 1 and 2 get 1667 words each, batch 3 gets 1666 words
-    batch1 = words[0:1667]      # 1667 words
-    batch2 = words[1667:3334]   # 1667 words
-    batch3 = words[3334:5000]   # 1666 words
+    # Partition the shuffled word list into N batches of roughly equal size.
+    base = len(words) // N
+    remainder = len(words) % N
+    batches = []
+    start = 0
+    for i in range(N):
+        size = base + (1 if i < remainder else 0)
+        batches.append(words[start:start + size])
+        start += size
 
-    faasr_log(f"Partitioned into 3 batches: {len(batch1)}, {len(batch2)}, {len(batch3)} words")
+    total_written = sum(len(b) for b in batches)
+    if total_written != W:
+        raise ValueError(f"partitioned {total_written} words, expected {W}")
 
-    # Write each batch as JSON to local temp files and upload
-    batches = [
-        (batch1, output1),
-        (batch2, output2),
-        (batch3, output3)
-    ]
+    # Write each batch as a separate ranked output file (one per map instance).
+    for i in range(1, N + 1):
+        batch = batches[i - 1]
+        remote_file = output1.replace("{rank}", str(i))
+        local_file = f"text_chunk_{i}.json"
+        with open(local_file, "w") as f:
+            json.dump(batch, f)
+        faasr_put_file(
+            local_file=local_file,
+            remote_folder=folder,
+            remote_file=remote_file,
+        )
+        faasr_log(f"split: wrote {remote_file} with {len(batch)} words")
+        if os.path.exists(local_file):
+            os.remove(local_file)
 
-    for batch_data, output_file in batches:
-        local_file = f"temp_{output_file}"
-        with open(local_file, 'w') as f:
-            json.dump(batch_data, f)
-        faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output_file)
-        faasr_log(f"Uploaded {output_file} with {len(batch_data)} words")
-
-    faasr_log("Split complete: 3 batches ready for parallel map processing")
+    faasr_log(f"split: completed, wrote {N} chunks totaling {W} words")
