@@ -5,79 +5,89 @@ import tempfile
 
 def accumulate(folder: str, input1: str, input2: str, output1: str) -> None:
     """
-    Collects detection results from parallel detect functions (N=2 batches from F=10 frames
-    with batch size B=5). Reads detection JSON files from each parallel detect worker,
-    accumulates all detections into a single final payload Y.
+    Accumulates all detections from the parallel detect functions into the final payload Y.
+    Reads detection results from each parallel detect worker (N=2 batch detection outputs from
+    the map phase). Combines all detections into a single unified result containing all objects
+    detected across all video frames with confidence score > 0.5. Each detection includes the
+    label (from COCO 80 dataset, zero-indexed), class_id, and confidence score.
     """
-    faasr_log("accumulate function starting")
+    faasr_log("Starting accumulate function")
 
-    # Use faasr_get_folder_list to discover detection files from ranked predecessor
-    # The function receives input1 and input2 as specific filenames, but we follow
-    # the fan-in pattern: discover files with faasr_get_folder_list and read each one
+    # Discover all detection files from the folder
+    # faasr_get_folder_list returns FULL object keys including the folder prefix
     all_files = faasr_get_folder_list(prefix=folder)
-    faasr_log(f"Found {len(all_files)} files in folder with prefix '{folder}'")
+    faasr_log(f"Found files in folder: {all_files}")
 
     # Filter for detection files (detections_*.json pattern)
     detection_files = []
-    for full_key in all_files:
-        basename = full_key.rsplit("/", 1)[-1]
+    for full_path in all_files:
+        # Extract basename from full path
+        basename = full_path.rsplit("/", 1)[-1]
         if basename.startswith("detections_") and basename.endswith(".json"):
             detection_files.append(basename)
 
     faasr_log(f"Found {len(detection_files)} detection files: {detection_files}")
 
     if not detection_files:
-        # Fall back to using the provided input parameters
-        detection_files = [input1, input2]
-        faasr_log(f"No detection files found via folder list, using provided inputs: {detection_files}")
+        faasr_log("ERROR: No detection files found")
+        raise RuntimeError("No detection files found in folder")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Accumulate all frames from all batches
-        all_frames = []
-        total_detections = 0
+    # Collect all frame detections from all detection files
+    all_frame_detections = []
+    total_batches_processed = 0
 
-        for detection_file in sorted(detection_files):
-            local_path = os.path.join(tmpdir, detection_file)
-            faasr_get_file(local_file=local_path, remote_folder=folder, remote_file=detection_file)
+    for det_file in sorted(detection_files):
+        faasr_log(f"Processing detection file: {det_file}")
 
-            if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-                faasr_log(f"ERROR: Failed to download detection file {detection_file} or file is empty")
-                raise RuntimeError(f"Failed to download detection file {detection_file}")
+        # Download the detection file
+        local_file = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=det_file)
 
-            with open(local_path, "r") as f:
-                batch_data = json.load(f)
+        # Verify file exists and has content
+        if not os.path.exists(local_file) or os.path.getsize(local_file) == 0:
+            faasr_log(f"ERROR: Failed to download detection file {det_file} or file is empty")
+            os.unlink(local_file)
+            raise RuntimeError(f"Failed to download detection file {det_file}")
 
-            rank = batch_data.get("rank", "unknown")
-            num_frames = batch_data.get("num_frames", 0)
-            frames = batch_data.get("frames", [])
+        # Load the detection data
+        with open(local_file, 'r') as f:
+            detection_data = json.load(f)
+        os.unlink(local_file)
 
-            faasr_log(f"Processing batch from rank {rank}: {num_frames} frames")
+        # Extract frame detections from this batch
+        frame_detections = detection_data.get('frame_detections', [])
+        batch_id = detection_data.get('batch_id', 'unknown')
+        rank = detection_data.get('rank', 'unknown')
 
-            # Add batch info to each frame for traceability
-            for frame in frames:
-                frame_detections = frame.get("detections", [])
-                total_detections += len(frame_detections)
-                # Store with batch rank info
-                all_frames.append({
-                    "batch_rank": rank,
-                    "frame_index": frame.get("frame_index"),
-                    "detections": frame_detections
-                })
+        faasr_log(f"Batch {batch_id} (rank {rank}): {len(frame_detections)} frames")
 
-        # Build final accumulated output
-        output_data = {
-            "total_batches": len(detection_files),
-            "total_frames": len(all_frames),
-            "total_detections": total_detections,
-            "frames": all_frames
-        }
+        all_frame_detections.extend(frame_detections)
+        total_batches_processed += 1
 
-        # Write output JSON
-        output_path = os.path.join(tmpdir, output1)
-        with open(output_path, "w") as f:
-            json.dump(output_data, f, indent=2)
+    # Sort frame detections by frame_index to ensure correct ordering
+    all_frame_detections.sort(key=lambda x: x.get('frame_index', 0))
 
-        # Upload results
-        faasr_put_file(local_file=output_path, remote_folder=folder, remote_file=output1)
+    # Calculate total detection count
+    total_detections = sum(len(fd.get('detections', [])) for fd in all_frame_detections)
+    total_frames = len(all_frame_detections)
 
-        faasr_log(f"accumulate complete: {total_detections} total detections from {len(all_frames)} frames across {len(detection_files)} batches")
+    faasr_log(f"Combined {total_frames} frames with {total_detections} total detections")
+
+    # Build the final output payload Y
+    final_output = {
+        "total_frames": total_frames,
+        "total_batches": total_batches_processed,
+        "total_detections": total_detections,
+        "frame_detections": all_frame_detections
+    }
+
+    # Write to local file and upload
+    local_output = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w').name
+    with open(local_output, 'w') as f:
+        json.dump(final_output, f, indent=2)
+
+    faasr_log(f"Uploading final detection results: {output1}")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    os.unlink(local_output)
+
+    faasr_log(f"Accumulate complete: {total_frames} frames, {total_detections} detections from {total_batches_processed} batches")
