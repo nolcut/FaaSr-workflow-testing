@@ -1,46 +1,47 @@
 import json
-from collections import Counter
+import os
 
 
 def map(folder: str, input1: str, output1: str) -> None:
-    """
-    Count how often each word occurs in the assigned text chunk.
-    Read the text batch assigned to this map instance (identified by rank).
-    Parse the text and count occurrences of each word using a dictionary/counter.
-    Output the word count results as a JSON file containing the word-to-count mapping.
-    """
-    # Get rank for this parallel instance
+    # Determine this instance's shard from its rank (1..N).
     r = faasr_rank()
-    rank = r['rank']
+    rank = r["rank"]
 
-    faasr_log(f"Map instance {rank} starting word count processing")
+    remote_in = input1.format(rank=rank)
+    remote_out = output1.format(rank=rank)
 
-    # Resolve input/output filenames using rank
-    input_file = input1.format(rank=rank)
-    output_file = output1.format(rank=rank)
+    local_in = f"text_chunk_{rank}.json"
+    local_out = f"map_partial_counts_{rank}.json"
 
-    # Download the input batch file
-    local_input = f"temp_input_batch_{rank}.json"
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input_file)
+    faasr_log(f"map: rank={rank} reading chunk {remote_in}")
 
-    # Read and parse the word list
-    with open(local_input, 'r') as f:
+    # Fetch this instance's assigned text chunk.
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+
+    with open(local_in, "r") as f:
         words = json.load(f)
 
-    faasr_log(f"Map instance {rank}: loaded {len(words)} words from {input_file}")
+    if not isinstance(words, list):
+        raise ValueError(
+            f"map: expected a JSON list of words in {remote_in}, got {type(words).__name__}"
+        )
 
-    # Count word occurrences using Counter
-    word_counts = Counter(words)
+    # Count how often each word occurs within this chunk (Yi).
+    counts = {}
+    for w in words:
+        counts[w] = counts.get(w, 0) + 1
 
-    faasr_log(f"Map instance {rank}: counted {len(word_counts)} unique words")
+    faasr_log(
+        f"map: rank={rank} counted {len(words)} words into "
+        f"{len(counts)} distinct entries: {counts}"
+    )
 
-    # Write word counts to local file
-    local_output = f"temp_output_counts_{rank}.json"
-    with open(local_output, 'w') as f:
-        json.dump(dict(word_counts), f)
+    with open(local_out, "w") as f:
+        json.dump(counts, f)
 
-    # Upload results to S3
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output_file)
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
+    faasr_log(f"map: rank={rank} wrote partial counts {remote_out}")
 
-    faasr_log(f"Map instance {rank}: uploaded word counts to {output_file}")
-    faasr_log(f"Map instance {rank} complete")
+    for p in (local_in, local_out):
+        if os.path.exists(p):
+            os.remove(p)
