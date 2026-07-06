@@ -1,36 +1,32 @@
 {
-  "FunctionInvoke": "generate-dataset",
+  "FunctionInvoke": "gen",
   "WorkflowName": "machine-learning-training-pipeline",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
-    "generate-dataset": {
+    "gen": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "generate_dataset",
+      "FunctionName": "gen",
       "Arguments": {
-        "folder": "ml_training_data",
-        "output1": "raw_features.npy",
-        "output2": "raw_labels.npy"
+        "folder": "workflow_data",
+        "output1": "raw_dataset.csv"
       },
       "InvokeNext": [
-        "preprocess-data"
+        "preprocess"
       ]
     },
-    "preprocess-data": {
+    "preprocess": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "preprocess_data",
+      "FunctionName": "preprocess",
       "Arguments": {
-        "folder": "ml_training_data",
-        "input1": "raw_features.npy",
-        "input2": "raw_labels.npy",
-        "output1": "X_train.npy",
-        "output2": "X_test.npy",
-        "output3": "y_train.npy",
-        "output4": "y_test.npy"
+        "folder": "workflow_data",
+        "input1": "raw_dataset.csv",
+        "output1": "train_set.csv",
+        "output2": "test_set.csv"
       },
       "InvokeNext": [
         "train-random-forest",
@@ -42,13 +38,10 @@
       "Type": "Python",
       "FunctionName": "train_random_forest",
       "Arguments": {
-        "folder": "ml_training_data",
-        "input1": "X_train.npy",
-        "input2": "X_test.npy",
-        "input3": "y_train.npy",
-        "input4": "y_test.npy",
-        "output1": "random_forest_model.joblib",
-        "output2": "random_forest_metrics.json"
+        "folder": "workflow_data",
+        "input1": "train_set.csv",
+        "input2": "test_set.csv",
+        "output1": "random_forest_accuracy.json"
       },
       "InvokeNext": []
     },
@@ -57,20 +50,17 @@
       "Type": "Python",
       "FunctionName": "train_svm",
       "Arguments": {
-        "folder": "ml_training_data",
-        "input1": "X_train.npy",
-        "input2": "X_test.npy",
-        "input3": "y_train.npy",
-        "input4": "y_test.npy",
-        "output1": "svm_model.joblib",
-        "output2": "svm_metrics.json"
+        "folder": "workflow_data",
+        "input1": "train_set.csv",
+        "input2": "test_set.csv",
+        "output1": "svm_accuracy.json"
       },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
-    "generate-dataset": "ghcr.io/faasr/github-actions-python:latest",
-    "preprocess-data": "ghcr.io/faasr/github-actions-python:latest",
+    "gen": "ghcr.io/faasr/github-actions-python:latest",
+    "preprocess": "ghcr.io/faasr/github-actions-python:latest",
     "train-random-forest": "ghcr.io/faasr/github-actions-python:latest",
     "train-svm": "ghcr.io/faasr/github-actions-python:latest"
   },
@@ -94,29 +84,31 @@
     }
   },
   "FunctionGitRepo": {
-    "generate_dataset": "nolcut/FaaSr-workflow-testing/main/functions/generate_dataset.py",
-    "preprocess_data": "nolcut/FaaSr-workflow-testing/main/functions/preprocess_data.py",
+    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
+    "preprocess": "nolcut/FaaSr-workflow-testing/main/functions/preprocess.py",
     "train_random_forest": "nolcut/FaaSr-workflow-testing/main/functions/train_random_forest.py",
     "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py"
   },
   "PyPIPackageDownloads": {
-    "generate_dataset": [
+    "gen": [
+      "scikit-learn",
       "numpy",
-      "scikit-learn"
+      "pandas"
     ],
-    "preprocess_data": [
-      "numpy",
-      "scikit-learn"
+    "preprocess": [
+      "scikit-learn",
+      "pandas",
+      "numpy"
     ],
     "train_random_forest": [
       "scikit-learn",
-      "numpy",
-      "joblib"
+      "pandas",
+      "numpy"
     ],
     "train_svm": [
       "scikit-learn",
       "numpy",
-      "joblib"
+      "pandas"
     ]
   }
 }
