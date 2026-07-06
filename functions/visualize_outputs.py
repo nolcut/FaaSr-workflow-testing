@@ -1,139 +1,142 @@
+import json
 import os
 
 import matplotlib
-matplotlib.use("Agg")  # headless backend: the runtime has no display server
+
+# Use a non-interactive/headless backend: the runtime has no display server.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import pandas as pd
 
 
 def visualize_outputs(folder: str, input1: str, output1: str) -> None:
-    """Visualize the PyADM1 dynamic simulation output.
+    """Collect the per-reducer word/total JSON files and render a bar chart.
 
-    Reads the simulation results CSV (input1 = 'dynamic_out.csv'), a time
-    series of anaerobic-digester state variables (concentrations, pH, gas-phase
-    species, etc.), and produces clearly labeled line plots of the key state
-    variables over the simulation time horizon, saved as a PNG (output1).
+    Fan-in sink for the MapReduce word-count workflow. Reads every rank-numbered
+    ``word_total_{rank}.json`` file produced by the parallel reducers, extracts
+    the (word, total) pair from each, and writes a single labeled PNG bar chart.
     """
-    faasr_log("visualize_outputs: starting visualization of PyADM1 outputs")
 
-    local_input = "dynamic_out.csv"
-    local_output = "simulation_plots.png"
+    # The rank-numbered input pattern, e.g. "word_total_{rank}.json".
+    # Derive the fixed prefix/suffix so we can recognize the reducer outputs
+    # among all keys in the folder.
+    pattern = input1
+    marker = "{rank}"
+    if marker in pattern:
+        prefix_part, suffix_part = pattern.split(marker, 1)
+    else:
+        # No template marker: treat the whole name as the recognizable stem.
+        prefix_part, suffix_part = pattern, ""
 
-    # ---- Download the simulation results produced by the pyadm1 node --------
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    base_prefix = prefix_part.rsplit("/", 1)[-1]
+    base_suffix = suffix_part
 
-    if not os.path.exists(local_input) or os.path.getsize(local_input) == 0:
-        msg = ("visualize_outputs: required input '%s' is missing or empty after "
-               "download from folder '%s'" % (input1, folder))
+    faasr_log(
+        f"visualize_outputs: discovering reducer outputs in folder '{folder}' "
+        f"matching '{base_prefix}<rank>{base_suffix}'"
+    )
+
+    # Discover the actual reducer output keys (do not assume a fixed count).
+    keys = faasr_get_folder_list(prefix=folder)
+
+    matched = []
+    for key in keys:
+        name = key.rsplit("/", 1)[-1]
+        if name.startswith(base_prefix) and name.endswith(base_suffix):
+            middle = name[len(base_prefix): len(name) - len(base_suffix)] if base_suffix else name[len(base_prefix):]
+            if base_prefix and middle.isdigit():
+                matched.append((int(middle), name))
+            elif base_prefix:
+                # Recognized stem but non-numeric middle: still include it.
+                matched.append((None, name))
+
+    if not matched:
+        msg = (
+            f"visualize_outputs: no reducer output files matching "
+            f"'{base_prefix}<rank>{base_suffix}' found in folder '{folder}'"
+        )
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
-    # ---- Parse the results --------------------------------------------------
-    df = pd.read_csv(local_input)
-    if df.shape[0] == 0 or df.shape[1] == 0:
-        msg = "visualize_outputs: parsed results '%s' contain no data" % input1
-        faasr_log(msg)
-        raise ValueError(msg)
+    # Sort by rank so the bars appear in reducer order.
+    matched.sort(key=lambda t: (t[0] is None, t[0] if t[0] is not None else 0, t[1]))
 
-    faasr_log("visualize_outputs: loaded %d rows x %d columns from '%s'"
-              % (df.shape[0], df.shape[1], input1))
+    words = []
+    totals = []
+    for rank, name in matched:
+        local_in = name
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=name)
 
-    # The PyADM1 output stores one row per simulation time step. It does not
-    # carry an explicit time column, so use the ordinal time-step index as the
-    # x-axis (the simulation time horizon).
-    if "time" in df.columns:
-        x = df["time"].values
-        x_label = "time [d]"
-        state_cols = [c for c in df.columns if c != "time"]
-    else:
-        x = list(range(len(df)))
-        x_label = "simulation time step"
-        state_cols = list(df.columns)
+        try:
+            with open(local_in, "r") as f:
+                record = json.load(f)
+        finally:
+            if os.path.exists(local_in):
+                os.remove(local_in)
 
-    # Keep only numeric state variables that are actually present in the file.
-    numeric_cols = [c for c in state_cols
-                    if pd.api.types.is_numeric_dtype(df[c])]
-    if not numeric_cols:
-        msg = "visualize_outputs: no numeric state variables found in '%s'" % input1
-        faasr_log(msg)
-        raise ValueError(msg)
+        if not isinstance(record, dict):
+            msg = (
+                f"visualize_outputs: expected a JSON object in '{name}', "
+                f"got {type(record).__name__}"
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
 
-    # ---- Group the key state variables into clearly labeled panels ----------
-    # Each group lists variables expected in the ADM1/BSM2 state vector; only
-    # those present in this particular file are drawn.
-    groups = [
-        ("Soluble substrates (kg COD / m^3)",
-         ["S_su", "S_aa", "S_fa"], "concentration [kg COD/m^3]"),
-        ("Volatile fatty acids (kg COD / m^3)",
-         ["S_va", "S_bu", "S_pro", "S_ac"], "concentration [kg COD/m^3]"),
-        ("Dissolved gases & inorganics",
-         ["S_h2", "S_ch4", "S_IC", "S_IN"], "concentration"),
-        ("Biomass / particulates (kg COD / m^3)",
-         ["X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2",
-          "X_xc", "X_ch", "X_pr", "X_li", "X_I"], "concentration [kg COD/m^3]"),
-        ("pH",
-         ["pH"], "pH"),
-        ("Gas-phase species",
-         ["S_gas_h2", "S_gas_ch4", "S_gas_co2"], "gas-phase concentration"),
-    ]
+        word = record.get("word")
+        # Reducer writes {"word": ..., "count": ...}; accept "total" as a
+        # synonym for robustness against upstream naming.
+        total = record.get("count", record.get("total"))
 
-    # Only keep groups that have at least one variable present in the file.
-    present = set(numeric_cols)
-    active_groups = []
-    for title, cols, ylabel in groups:
-        avail = [c for c in cols if c in present]
-        if avail:
-            active_groups.append((title, avail, ylabel))
+        if word is None or total is None:
+            msg = (
+                f"visualize_outputs: '{name}' missing required 'word'/'count' "
+                f"fields (got keys {sorted(record.keys())})"
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
 
-    # Any numeric column not covered by a named group gets its own catch-all
-    # panel so nothing is silently dropped from the visualization.
-    covered = set()
-    for _, cols, _ in active_groups:
-        covered.update(cols)
-    leftover = [c for c in numeric_cols if c not in covered]
-    if leftover:
-        active_groups.append(("Other state variables", leftover, "value"))
+        if isinstance(total, bool) or not isinstance(total, (int, float)):
+            msg = f"visualize_outputs: non-numeric count {total!r} in '{name}'"
+            faasr_log(msg)
+            raise ValueError(msg)
 
-    if not active_groups:
-        msg = "visualize_outputs: nothing plottable in '%s'" % input1
-        faasr_log(msg)
-        raise ValueError(msg)
+        words.append(str(word))
+        totals.append(total)
+        faasr_log(f"visualize_outputs: {name} -> word='{word}' total={total}")
 
-    # ---- Build the figure ---------------------------------------------------
-    n_panels = len(active_groups)
-    n_cols = 2 if n_panels > 1 else 1
-    n_rows = (n_panels + n_cols - 1) // n_cols
+    faasr_log(
+        f"visualize_outputs: rendering bar chart for {len(words)} words: {words}"
+    )
 
-    fig, axes = plt.subplots(n_rows, n_cols,
-                             figsize=(7.5 * n_cols, 4.0 * n_rows),
-                             squeeze=False)
-    fig.suptitle("PyADM1 anaerobic digester simulation: state variable dynamics",
-                 fontsize=15, fontweight="bold")
+    # Build the bar chart.
+    fig, ax = plt.subplots(figsize=(max(6, len(words) * 1.2), 5))
+    positions = range(len(words))
+    bars = ax.bar(positions, totals, color="steelblue", edgecolor="black")
 
-    for idx, (title, cols, ylabel) in enumerate(active_groups):
-        ax = axes[idx // n_cols][idx % n_cols]
-        for c in cols:
-            ax.plot(x, df[c].values, label=c, linewidth=1.3)
-        ax.set_title(title, fontsize=11)
-        ax.set_xlabel(x_label)
-        ax.set_ylabel(ylabel)
-        ax.grid(True, linestyle=":", alpha=0.5)
-        ax.legend(fontsize=8, ncol=2, loc="best")
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(words, rotation=45, ha="right")
+    ax.set_xlabel("Word")
+    ax.set_ylabel("Total occurrence count")
+    ax.set_title("Word Occurrence Totals (MapReduce)")
 
-    # Hide any unused axes in the grid.
-    for empty in range(n_panels, n_rows * n_cols):
-        axes[empty // n_cols][empty % n_cols].axis("off")
+    # Annotate each bar with its value for readability.
+    for rect, value in zip(bars, totals):
+        ax.text(
+            rect.get_x() + rect.get_width() / 2,
+            rect.get_height(),
+            str(int(value)) if float(value).is_integer() else str(value),
+            ha="center",
+            va="bottom",
+        )
 
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(local_output, dpi=120)
+    ax.margins(y=0.15)
+    fig.tight_layout()
+
+    local_out = output1.rsplit("/", 1)[-1]
+    fig.savefig(local_out, dpi=150, format="png")
     plt.close(fig)
 
-    if not os.path.exists(local_output) or os.path.getsize(local_output) == 0:
-        msg = "visualize_outputs: failed to produce a non-empty plot image"
-        faasr_log(msg)
-        raise RuntimeError(msg)
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+    faasr_log(f"visualize_outputs: wrote chart -> {output1}")
 
-    # ---- Upload the visualization ------------------------------------------
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-    faasr_log("visualize_outputs: wrote visualization to '%s' (%d panels)"
-              % (output1, n_panels))
+    if os.path.exists(local_out):
+        os.remove(local_out)
