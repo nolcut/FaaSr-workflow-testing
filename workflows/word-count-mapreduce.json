@@ -11,13 +11,11 @@
       "Type": "Python",
       "FunctionName": "split",
       "Arguments": {
-        "folder": "workflow_data2",
-        "input1": "input_text.txt",
-        "output1": "batch_{rank}.txt",
-        "output2": "manifest.json"
+        "folder": "workflow_data",
+        "output1": "text_chunk_{rank}.json"
       },
       "InvokeNext": [
-        "map(2)"
+        "map(3)"
       ]
     },
     "map": {
@@ -25,9 +23,9 @@
       "Type": "Python",
       "FunctionName": "map",
       "Arguments": {
-        "folder": "workflow_data2",
-        "input1": "batch_{rank}.txt",
-        "output1": "map_result_{rank}.json"
+        "folder": "workflow_data",
+        "input1": "text_chunk_{rank}.json",
+        "output1": "map_partial_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -38,13 +36,12 @@
       "Type": "Python",
       "FunctionName": "shuffle",
       "Arguments": {
-        "folder": "workflow_data2",
-        "input1": "map_result_{rank}.json",
-        "input2": "manifest.json",
-        "output1": "shuffle_shard_{rank}.json"
+        "folder": "workflow_data",
+        "input1": "map_partial_counts_{rank}.json",
+        "output1": "shuffle_word_shard_{rank}.json"
       },
       "InvokeNext": [
-        "reduce(2)"
+        "reduce(5)"
       ]
     },
     "reduce": {
@@ -52,10 +49,11 @@
       "Type": "Python",
       "FunctionName": "reduce",
       "Arguments": {
-        "folder": "workflow_data2",
-        "input1": "shuffle_shard_{rank}.json",
-        "output1": "reduce_result_{rank}.json"
-      }
+        "folder": "workflow_data",
+        "input1": "shuffle_word_shard_{rank}.json",
+        "output1": "word_total_{rank}.json"
+      },
+      "InvokeNext": []
     }
   },
   "ActionContainers": {
