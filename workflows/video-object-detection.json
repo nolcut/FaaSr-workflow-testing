@@ -12,9 +12,8 @@
       "FunctionName": "decode_video",
       "Arguments": {
         "folder": "video_detection",
-        "input1": "small_video.mp4",
-        "output1": "batch_1.json",
-        "output2": "batch_2.json"
+        "input1": "video_small.mp4",
+        "output1": "frame_batch_{rank}.json"
       },
       "InvokeNext": [
         "detect-objects(2)"
@@ -26,10 +25,10 @@
       "FunctionName": "detect_objects",
       "Arguments": {
         "folder": "video_detection",
-        "input1": "batch_{rank}.json",
+        "input1": "frame_batch_{rank}.json",
         "input2": "frozen_inference_graph.pb",
         "input3": "faster_rcnn_resnet50_coco_2018_01_28.pbtxt",
-        "output1": "batch_detections_{rank}.json"
+        "output1": "detections_{rank}.json"
       },
       "InvokeNext": [
         "accumulate-detections"
@@ -41,8 +40,8 @@
       "FunctionName": "accumulate_detections",
       "Arguments": {
         "folder": "video_detection",
-        "input1": "batch_detections_1.json",
-        "input2": "batch_detections_2.json",
+        "input1": "detections_1.json",
+        "input2": "detections_2.json",
         "output1": "final_detections.json"
       },
       "InvokeNext": []
@@ -79,7 +78,8 @@
   },
   "PyPIPackageDownloads": {
     "decode_video": [
-      "opencv-python-headless"
+      "opencv-python-headless",
+      "numpy"
     ],
     "detect_objects": [
       "opencv-python-headless",
