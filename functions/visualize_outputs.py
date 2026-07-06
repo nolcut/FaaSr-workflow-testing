@@ -1,161 +1,139 @@
 import os
-import tempfile
 
 import matplotlib
-matplotlib.use('Agg')  # headless — no display server
+matplotlib.use("Agg")  # headless backend: the runtime has no display server
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 
-def visualize_outputs(folder: str, input1: str, output1: str, output2: str) -> None:
+def visualize_outputs(folder: str, input1: str, output1: str) -> None:
+    """Visualize the PyADM1 dynamic simulation output.
+
+    Reads the simulation results CSV (input1 = 'dynamic_out.csv'), a time
+    series of anaerobic-digester state variables (concentrations, pH, gas-phase
+    species, etc.), and produces clearly labeled line plots of the key state
+    variables over the simulation time horizon, saved as a PNG (output1).
     """
-    FaaSr entry point: read ADM1 dynamic simulation results (dynamic_out.csv)
-    and produce two multi-panel PNG plots:
+    faasr_log("visualize_outputs: starting visualization of PyADM1 outputs")
 
-      output1 – key substrate and biomass state variables over time
-      output2 – effluent / gas-phase output characteristics over time
-    """
-    faasr_log("visualize_outputs: starting")
+    local_input = "dynamic_out.csv"
+    local_output = "simulation_plots.png"
 
-    # ------------------------------------------------------------------ #
-    # 1.  Download the simulation results from S3
-    # ------------------------------------------------------------------ #
-    local_csv = "dynamic_out.csv"
-    faasr_log(f"visualize_outputs: downloading {input1} from {folder}")
-    faasr_get_file(local_file=local_csv, remote_folder=folder, remote_file=input1)
+    # ---- Download the simulation results produced by the pyadm1 node --------
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
 
-    if not os.path.exists(local_csv) or os.path.getsize(local_csv) == 0:
-        msg = f"visualize_outputs: input file '{input1}' is missing or empty"
+    if not os.path.exists(local_input) or os.path.getsize(local_input) == 0:
+        msg = ("visualize_outputs: required input '%s' is missing or empty after "
+               "download from folder '%s'" % (input1, folder))
         faasr_log(msg)
-        raise RuntimeError(msg)
+        raise FileNotFoundError(msg)
 
-    # ------------------------------------------------------------------ #
-    # 2.  Parse results
-    # ------------------------------------------------------------------ #
-    faasr_log("visualize_outputs: parsing simulation results")
-    df = pd.read_csv(local_csv)
-
-    required_cols = [
-        "S_su", "S_aa", "S_fa", "S_ac", "S_pro", "S_bu", "S_va",
-        "X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2",
-        "pH", "S_gas_h2", "S_gas_ch4", "S_gas_co2", "S_IC", "S_IN",
-    ]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        msg = f"visualize_outputs: required columns missing from {input1}: {missing}"
+    # ---- Parse the results --------------------------------------------------
+    df = pd.read_csv(local_input)
+    if df.shape[0] == 0 or df.shape[1] == 0:
+        msg = "visualize_outputs: parsed results '%s' contain no data" % input1
         faasr_log(msg)
         raise ValueError(msg)
 
-    # Time axis: row index = simulation day (0 … n-1)
-    time = np.arange(len(df), dtype=float)
+    faasr_log("visualize_outputs: loaded %d rows x %d columns from '%s'"
+              % (df.shape[0], df.shape[1], input1))
 
-    # ------------------------------------------------------------------ #
-    # 3.  Plot 1 — Substrate and Biomass state variables
-    # ------------------------------------------------------------------ #
-    faasr_log("visualize_outputs: generating substrate/biomass plot")
+    # The PyADM1 output stores one row per simulation time step. It does not
+    # carry an explicit time column, so use the ordinal time-step index as the
+    # x-axis (the simulation time horizon).
+    if "time" in df.columns:
+        x = df["time"].values
+        x_label = "time [d]"
+        state_cols = [c for c in df.columns if c != "time"]
+    else:
+        x = list(range(len(df)))
+        x_label = "simulation time step"
+        state_cols = list(df.columns)
 
-    substrate_vars = [
-        ("S_su",  r"$S_{su}$ (kg COD m$^{-3}$)",   "monosaccharides"),
-        ("S_aa",  r"$S_{aa}$ (kg COD m$^{-3}$)",   "amino acids"),
-        ("S_fa",  r"$S_{fa}$ (kg COD m$^{-3}$)",   "LCFA"),
-        ("S_ac",  r"$S_{ac}$ (kg COD m$^{-3}$)",   "acetate"),
-        ("S_pro", r"$S_{pro}$ (kg COD m$^{-3}$)",  "propionate"),
-        ("S_bu",  r"$S_{bu}$ (kg COD m$^{-3}$)",   "butyrate"),
-        ("S_va",  r"$S_{va}$ (kg COD m$^{-3}$)",   "valerate"),
-    ]
-    biomass_vars = [
-        ("X_su",  r"$X_{su}$ (kg COD m$^{-3}$)",   "sugar degraders"),
-        ("X_aa",  r"$X_{aa}$ (kg COD m$^{-3}$)",   "aa degraders"),
-        ("X_fa",  r"$X_{fa}$ (kg COD m$^{-3}$)",   "LCFA degraders"),
-        ("X_c4",  r"$X_{c4}$ (kg COD m$^{-3}$)",   "C4 degraders"),
-        ("X_pro", r"$X_{pro}$ (kg COD m$^{-3}$)",  "propionate deg."),
-        ("X_ac",  r"$X_{ac}$ (kg COD m$^{-3}$)",   "acetate deg."),
-        ("X_h2",  r"$X_{h2}$ (kg COD m$^{-3}$)",   "H2 degraders"),
-    ]
+    # Keep only numeric state variables that are actually present in the file.
+    numeric_cols = [c for c in state_cols
+                    if pd.api.types.is_numeric_dtype(df[c])]
+    if not numeric_cols:
+        msg = "visualize_outputs: no numeric state variables found in '%s'" % input1
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    # Layout: 4 rows × 4 cols (16 slots) — 7 substrates top, 7 biomass bottom
-    ncols = 4
-    nrows = 4  # 2 rows substrates + 2 rows biomass
-    fig1, axes1 = plt.subplots(nrows, ncols, figsize=(16, 12))
-    fig1.suptitle("ADM1 Simulation — Substrate & Biomass State Variables", fontsize=14, fontweight='bold')
-
-    all_vars = substrate_vars + biomass_vars  # 14 variables
-    for idx, (col, ylabel, title) in enumerate(all_vars):
-        row, col_idx = divmod(idx, ncols)
-        ax = axes1[row, col_idx]
-        ax.plot(time, df[col].values, linewidth=1.5)
-        ax.set_title(title, fontsize=9)
-        ax.set_ylabel(ylabel, fontsize=7)
-        ax.set_xlabel("Time (days)", fontsize=7)
-        ax.tick_params(labelsize=7)
-        ax.grid(True, linestyle='--', alpha=0.5)
-
-    # Hide the two unused subplots (slots 14 and 15)
-    for unused_idx in range(len(all_vars), nrows * ncols):
-        row, col_idx = divmod(unused_idx, ncols)
-        axes1[row, col_idx].set_visible(False)
-
-    # Add section labels using text annotations
-    fig1.text(0.01, 0.97, "Substrates", fontsize=11, fontweight='bold', color='steelblue', va='top')
-    fig1.text(0.01, 0.50, "Biomass", fontsize=11, fontweight='bold', color='darkorange', va='top')
-
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-    local_plot1 = "adm1_substrate_biomass_plot.png"
-    fig1.savefig(local_plot1, dpi=150, bbox_inches='tight')
-    plt.close(fig1)
-    faasr_log(f"visualize_outputs: saved {local_plot1}")
-
-    # ------------------------------------------------------------------ #
-    # 4.  Plot 2 — Effluent and gas-flow output characteristics
-    # ------------------------------------------------------------------ #
-    faasr_log("visualize_outputs: generating effluent/gas-flow plot")
-
-    effluent_vars = [
-        ("pH",        "pH",                                            "pH"),
-        ("S_gas_h2",  r"$S_{gas,H_2}$ (kg COD m$^{-3}$)",            "gas H2"),
-        ("S_gas_ch4", r"$S_{gas,CH_4}$ (kg COD m$^{-3}$)",           "gas CH4"),
-        ("S_gas_co2", r"$S_{gas,CO_2}$ (kmol C m$^{-3}$)",           "gas CO2"),
-        ("S_IC",      r"$S_{IC}$ (kmol C m$^{-3}$)",                  "inorganic C"),
-        ("S_IN",      r"$S_{IN}$ (kmol N m$^{-3}$)",                  "inorganic N"),
+    # ---- Group the key state variables into clearly labeled panels ----------
+    # Each group lists variables expected in the ADM1/BSM2 state vector; only
+    # those present in this particular file are drawn.
+    groups = [
+        ("Soluble substrates (kg COD / m^3)",
+         ["S_su", "S_aa", "S_fa"], "concentration [kg COD/m^3]"),
+        ("Volatile fatty acids (kg COD / m^3)",
+         ["S_va", "S_bu", "S_pro", "S_ac"], "concentration [kg COD/m^3]"),
+        ("Dissolved gases & inorganics",
+         ["S_h2", "S_ch4", "S_IC", "S_IN"], "concentration"),
+        ("Biomass / particulates (kg COD / m^3)",
+         ["X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2",
+          "X_xc", "X_ch", "X_pr", "X_li", "X_I"], "concentration [kg COD/m^3]"),
+        ("pH",
+         ["pH"], "pH"),
+        ("Gas-phase species",
+         ["S_gas_h2", "S_gas_ch4", "S_gas_co2"], "gas-phase concentration"),
     ]
 
-    # Layout: 2 rows × 3 cols
-    fig2, axes2 = plt.subplots(2, 3, figsize=(14, 8))
-    fig2.suptitle("ADM1 Simulation — Effluent & Gas-Phase Output Characteristics", fontsize=14, fontweight='bold')
+    # Only keep groups that have at least one variable present in the file.
+    present = set(numeric_cols)
+    active_groups = []
+    for title, cols, ylabel in groups:
+        avail = [c for c in cols if c in present]
+        if avail:
+            active_groups.append((title, avail, ylabel))
 
-    for idx, (col, ylabel, title) in enumerate(effluent_vars):
-        row, col_idx = divmod(idx, 3)
-        ax = axes2[row, col_idx]
-        ax.plot(time, df[col].values, linewidth=1.5, color='darkgreen')
-        ax.set_title(title, fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=8)
-        ax.set_xlabel("Time (days)", fontsize=8)
-        ax.tick_params(labelsize=8)
-        ax.grid(True, linestyle='--', alpha=0.5)
+    # Any numeric column not covered by a named group gets its own catch-all
+    # panel so nothing is silently dropped from the visualization.
+    covered = set()
+    for _, cols, _ in active_groups:
+        covered.update(cols)
+    leftover = [c for c in numeric_cols if c not in covered]
+    if leftover:
+        active_groups.append(("Other state variables", leftover, "value"))
 
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    if not active_groups:
+        msg = "visualize_outputs: nothing plottable in '%s'" % input1
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    local_plot2 = "adm1_effluent_gasflow_plot.png"
-    fig2.savefig(local_plot2, dpi=150, bbox_inches='tight')
-    plt.close(fig2)
-    faasr_log(f"visualize_outputs: saved {local_plot2}")
+    # ---- Build the figure ---------------------------------------------------
+    n_panels = len(active_groups)
+    n_cols = 2 if n_panels > 1 else 1
+    n_rows = (n_panels + n_cols - 1) // n_cols
 
-    # ------------------------------------------------------------------ #
-    # 5.  Upload plots to S3
-    # ------------------------------------------------------------------ #
-    faasr_log(f"visualize_outputs: uploading {output1} to {folder}")
-    faasr_put_file(local_file=local_plot1, remote_folder=folder, remote_file=output1)
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(7.5 * n_cols, 4.0 * n_rows),
+                             squeeze=False)
+    fig.suptitle("PyADM1 anaerobic digester simulation: state variable dynamics",
+                 fontsize=15, fontweight="bold")
 
-    faasr_log(f"visualize_outputs: uploading {output2} to {folder}")
-    faasr_put_file(local_file=local_plot2, remote_folder=folder, remote_file=output2)
+    for idx, (title, cols, ylabel) in enumerate(active_groups):
+        ax = axes[idx // n_cols][idx % n_cols]
+        for c in cols:
+            ax.plot(x, df[c].values, label=c, linewidth=1.3)
+        ax.set_title(title, fontsize=11)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.legend(fontsize=8, ncol=2, loc="best")
 
-    # ------------------------------------------------------------------ #
-    # 6.  Clean up local temp files
-    # ------------------------------------------------------------------ #
-    for f in (local_csv, local_plot1, local_plot2):
-        if os.path.exists(f):
-            os.remove(f)
+    # Hide any unused axes in the grid.
+    for empty in range(n_panels, n_rows * n_cols):
+        axes[empty // n_cols][empty % n_cols].axis("off")
 
-    faasr_log("visualize_outputs: complete")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(local_output, dpi=120)
+    plt.close(fig)
+
+    if not os.path.exists(local_output) or os.path.getsize(local_output) == 0:
+        msg = "visualize_outputs: failed to produce a non-empty plot image"
+        faasr_log(msg)
+        raise RuntimeError(msg)
+
+    # ---- Upload the visualization ------------------------------------------
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log("visualize_outputs: wrote visualization to '%s' (%d panels)"
+              % (output1, n_panels))
