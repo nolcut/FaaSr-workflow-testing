@@ -29,13 +29,13 @@
         "output1": "map_batch_{rank}.json"
       },
       "InvokeNext": [
-        "map(3)"
+        "map-transcription(3)"
       ]
     },
-    "map": {
+    "map-transcription": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map",
+      "FunctionName": "map_transcription",
       "Arguments": {
         "folder": "workflow_data",
         "input1": "map_batch_{rank}.json",
@@ -86,7 +86,7 @@
   "ActionContainers": {
     "transcribe-pdf": "ghcr.io/faasr/github-actions-python:latest",
     "split-transcription": "ghcr.io/faasr/github-actions-python:latest",
-    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "map-transcription": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
     "reduce": "ghcr.io/faasr/github-actions-python:latest",
     "visualize-histogram": "ghcr.io/faasr/github-actions-python:latest"
@@ -113,7 +113,7 @@
   "FunctionGitRepo": {
     "transcribe_pdf": "nolcut/FaaSr-workflow-testing/main/functions/transcribe_pdf.py",
     "split_transcription": "nolcut/FaaSr-workflow-testing/main/functions/split_transcription.py",
-    "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
+    "map_transcription": "nolcut/FaaSr-workflow-testing/main/functions/map_transcription.py",
     "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
     "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py",
     "visualize_histogram": "nolcut/FaaSr-workflow-testing/main/functions/visualize_histogram.py"
