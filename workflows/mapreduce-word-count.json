@@ -12,7 +12,7 @@
       "FunctionName": "split",
       "Arguments": {
         "folder": "workflow_data",
-        "output1": "batch_{rank}.json"
+        "output1": "map_batch_{rank}.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -24,8 +24,8 @@
       "FunctionName": "map",
       "Arguments": {
         "folder": "workflow_data",
-        "input1": "batch_{rank}.json",
-        "output1": "partial_counts_{rank}.json"
+        "input1": "map_batch_{rank}.json",
+        "output1": "map_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -37,8 +37,8 @@
       "FunctionName": "shuffle",
       "Arguments": {
         "folder": "workflow_data",
-        "input1": "partial_counts_{rank}.json",
-        "output1": "word_group_{rank}.json"
+        "input1": "map_counts_{rank}.json",
+        "output1": "shuffle_word_{rank}.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -50,8 +50,8 @@
       "FunctionName": "reduce",
       "Arguments": {
         "folder": "workflow_data",
-        "input1": "word_group_{rank}.json",
-        "output1": "word_total_{rank}.json"
+        "input1": "shuffle_word_{rank}.json",
+        "output1": "reduce_total_{rank}.json"
       },
       "InvokeNext": []
     }
