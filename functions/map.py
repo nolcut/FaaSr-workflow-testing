@@ -3,45 +3,54 @@ import os
 
 
 def map(folder: str, input1: str, output1: str) -> None:
-    # Determine this instance's shard from its rank (1..N).
+    # Fixed vocabulary (M = 5 distinct words) for the word-count benchmark.
+    WORDS = ["cat", "dog", "bird", "horse", "pig"]
+
+    # This ranked instance's own index (1..N).
     r = faasr_rank()
     rank = r["rank"]
 
-    remote_in = input1.format(rank=rank)
-    remote_out = output1.format(rank=rank)
+    in_name = input1.replace("{rank}", str(rank))
+    out_name = output1.replace("{rank}", str(rank))
 
-    local_in = f"text_chunk_{rank}.json"
-    local_out = f"map_partial_counts_{rank}.json"
+    faasr_log(f"map[rank={rank}]: reading input partition {in_name}")
 
-    faasr_log(f"map: rank={rank} reading chunk {remote_in}")
-
-    # Fetch this instance's assigned text chunk.
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+    local_in = f"batch_{rank}.json"
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)
 
     with open(local_in, "r") as f:
-        words = json.load(f)
+        tokens = json.load(f)
 
-    if not isinstance(words, list):
+    if not isinstance(tokens, list):
         raise ValueError(
-            f"map: expected a JSON list of words in {remote_in}, got {type(words).__name__}"
+            f"map[rank={rank}]: expected a JSON list of words in {in_name}, "
+            f"got {type(tokens).__name__}"
         )
 
-    # Count how often each word occurs within this chunk (Yi).
-    counts = {}
-    for w in words:
-        counts[w] = counts.get(w, 0) + 1
+    # Count how often each vocabulary word occurs in this chunk.
+    counts = {w: 0 for w in WORDS}
+    for tok in tokens:
+        if tok in counts:
+            counts[tok] += 1
+        else:
+            raise ValueError(
+                f"map[rank={rank}]: encountered token '{tok}' not in the fixed "
+                f"vocabulary {WORDS}"
+            )
 
     faasr_log(
-        f"map: rank={rank} counted {len(words)} words into "
-        f"{len(counts)} distinct entries: {counts}"
+        f"map[rank={rank}]: counted {len(tokens)} tokens -> {counts}"
     )
 
+    local_out = f"partial_counts_{rank}.json"
     with open(local_out, "w") as f:
         json.dump(counts, f)
 
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
-    faasr_log(f"map: rank={rank} wrote partial counts {remote_out}")
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)
+    faasr_log(f"map[rank={rank}]: wrote partial counts to {out_name}")
 
     for p in (local_in, local_out):
         if os.path.exists(p):
             os.remove(p)
+
+    faasr_log(f"map[rank={rank}]: complete")
