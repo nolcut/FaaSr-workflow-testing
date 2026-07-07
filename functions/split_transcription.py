@@ -4,40 +4,39 @@ import json
 
 
 def split_transcription(folder: str, input1: str, output1: str) -> None:
-    # Number of parallel map tasks to fan out to (`map_transcription` runs x3).
-    # Kept generalizable via a constant.
+    """Read the real transcription text, tokenize into words, and split the
+    full word list into N contiguous, roughly-equal ranked JSON shards for the
+    downstream parallel map tasks. No synthetic vocabulary is generated.
+    """
+    # Number of parallel map tasks (fan-out to `map_words`). Kept as a constant
+    # so it is generalizable; must match the ranked successor's instance count.
     N = 3
 
     local_in = "transcription.txt"
 
-    # Retrieve the real transcription text produced by the upstream PDF step.
     faasr_log(f"split_transcription: downloading '{input1}' from folder '{folder}'")
     faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
     if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
-        msg = f"split_transcription: input text '{input1}' is missing or empty after download"
+        msg = f"split_transcription: input '{input1}' is missing or empty after download"
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
     with open(local_in, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # Tokenize the real transcription into a word list. Generalizable
-    # tokenization: extract maximal runs of alphanumeric characters and
-    # lowercase them so downstream counting groups equivalent words.
-    words = re.findall(r"[A-Za-z0-9]+", text)
-    words = [w.lower() for w in words]
+    # Normalize and tokenize: lowercase, extract alphanumeric word tokens.
+    # The word count is NOT known ahead of time — handle arbitrary input size.
+    words = re.findall(r"[a-z0-9]+", text.lower())
 
-    faasr_log(
-        f"split_transcription: tokenized '{input1}' into {len(words)} words"
-    )
-
-    if len(words) == 0:
+    if not words:
         msg = f"split_transcription: no words found in transcription '{input1}'"
         faasr_log(msg)
         raise ValueError(msg)
 
-    # Partition the word list into N contiguous, roughly equal batches.
+    faasr_log(f"split_transcription: tokenized {len(words)} words from '{input1}'")
+
+    # Partition the word list into N contiguous, roughly-equal batches.
     base = len(words) // N
     remainder = len(words) % N
     batches = []
@@ -65,11 +64,12 @@ def split_transcription(folder: str, input1: str, output1: str) -> None:
         )
 
     if total_written != len(words):
-        faasr_log(
+        msg = (
             f"split_transcription: word count mismatch after partitioning "
             f"({total_written} != {len(words)})"
         )
-        raise RuntimeError("split_transcription: partitioning lost or duplicated words")
+        faasr_log(msg)
+        raise RuntimeError(msg)
 
     faasr_log(
         f"split_transcription: complete, {N} shards written totaling {total_written} words"
