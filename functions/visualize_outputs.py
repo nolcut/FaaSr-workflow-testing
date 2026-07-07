@@ -1,117 +1,138 @@
-import json
 import os
+import json
 
 import matplotlib
-
-# Force a non-interactive, headless backend BEFORE importing pyplot so the
-# function works in a display-less container.
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # headless, no display server available
 import matplotlib.pyplot as plt
 
 
 def visualize_outputs(folder: str, input1: str, output1: str) -> None:
-    """Fan-in visualizer for the MapReduce word-count workflow.
+    # Visualization / sink stage of the MapReduce word-count benchmark.
+    #
+    # Fan-in: this function runs ONCE after all M=5 parallel `reduce` instances
+    # finish. Each reducer wrote reduce_total_{rank}.json holding a single word
+    # and its total occurrence count summed across all map partitions. Here we
+    # discover every such output (without assuming a fixed count or a fixed
+    # vocabulary), aggregate them into one word -> total dataset, and render a
+    # bar chart to a single PNG using a headless matplotlib backend.
 
-    Reads every per-word aggregated total file produced by the ranked `reduce`
-    instances (word_total_1.json .. word_total_5.json), each a JSON object of
-    the form {"word": <str>, "total": <number>}, and renders a bar chart of the
-    total occurrence count per word to a single PNG output (word_counts.png).
-    """
-    faasr_log(f"visualize_outputs: discovering reducer outputs in folder '{folder}'")
-
-    # Derive the fixed part of the ranked input filename (strip the {rank}
-    # placeholder) so we can identify the reducer outputs among the folder keys.
-    # e.g. "word_total_{rank}.json" -> prefix "word_total_", suffix ".json"
+    # Derive the filename prefix/suffix from the input template so we can
+    # discover the reduce outputs without hardcoding words or ranks.
     if "{rank}" in input1:
-        prefix_frag, suffix_frag = input1.split("{rank}", 1)
+        in_prefix, in_suffix = input1.split("{rank}", 1)
     else:
-        prefix_frag, suffix_frag = input1, ""
+        in_prefix, in_suffix = input1, ""
 
-    all_keys = faasr_get_folder_list(prefix=folder)
-    faasr_log(f"visualize_outputs: folder listing returned {len(all_keys)} keys")
+    faasr_log(
+        f"visualize_outputs: discovering reduce outputs matching "
+        f"'{in_prefix}*{in_suffix}' in folder '{folder}'"
+    )
 
-    # Keep only the reducer total files, matching on basename.
-    matched = []
-    for key in all_keys:
+    # Discover all object keys in the folder (full keys incl. folder prefix).
+    keys = faasr_get_folder_list(prefix=folder)
+
+    reduce_files = []
+    for key in keys:
         base = key.rsplit("/", 1)[-1]
-        if base.startswith(prefix_frag) and base.endswith(suffix_frag):
-            matched.append(base)
+        if (
+            base.startswith(in_prefix)
+            and base.endswith(in_suffix)
+            and base != in_prefix + in_suffix
+        ):
+            reduce_files.append(base)
 
-    # Deduplicate and order deterministically.
-    matched = sorted(set(matched))
+    reduce_files = sorted(set(reduce_files))
 
-    if not matched:
+    if not reduce_files:
         msg = (
-            f"visualize_outputs: no reducer output files matching "
-            f"'{input1}' found in folder '{folder}'"
+            f"visualize_outputs: no reduce outputs matching "
+            f"'{in_prefix}*{in_suffix}' found in folder '{folder}'"
         )
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
-    faasr_log(f"visualize_outputs: found {len(matched)} reducer output files: {matched}")
+    faasr_log(
+        f"visualize_outputs: found {len(reduce_files)} reduce output(s): "
+        f"{reduce_files}"
+    )
 
-    pairs = []  # list of (word, total)
-    for base in matched:
-        local_in = os.path.basename(base)
-        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=local_in)
+    # Read each reduce output and aggregate word -> total count.
+    word_totals = {}
+    for base in reduce_files:
+        local_in = base
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)
+
+        if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
+            msg = f"visualize_outputs: reduce output '{base}' is missing or empty"
+            faasr_log(msg)
+            raise FileNotFoundError(msg)
 
         with open(local_in, "r") as f:
-            data = json.load(f)
+            result = json.load(f)
 
-        if not isinstance(data, dict):
+        if not isinstance(result, dict) or "word" not in result or "total" not in result:
             msg = (
-                f"visualize_outputs: expected a JSON object in {base}, "
-                f"got {type(data).__name__}"
+                f"visualize_outputs: reduce output '{base}' has an unexpected "
+                f"structure (expected object with 'word' and 'total'): {result!r}"
             )
             faasr_log(msg)
             raise ValueError(msg)
 
-        word = data.get("word")
-        total = data.get("total")
+        word = result["word"]
+        total = result["total"]
 
-        if word is None or total is None:
-            msg = f"visualize_outputs: file {base} missing 'word' or 'total': {data!r}"
+        if not isinstance(total, int):
+            msg = (
+                f"visualize_outputs: reduce output '{base}' 'total' is not an "
+                f"integer: {total!r}"
+            )
             faasr_log(msg)
             raise ValueError(msg)
 
-        if not isinstance(total, (int, float)) or isinstance(total, bool):
-            msg = f"visualize_outputs: non-numeric total {total!r} in {base}"
-            faasr_log(msg)
-            raise ValueError(msg)
+        if word in word_totals:
+            # Same word reported by more than one reducer: accumulate.
+            word_totals[word] += total
+        else:
+            word_totals[word] = total
 
-        pairs.append((str(word), total))
-        faasr_log(f"visualize_outputs: {base} -> word='{word}' total={total}")
+        faasr_log(
+            f"visualize_outputs: read '{base}' -> word '{word}' total {total}"
+        )
 
-        if os.path.exists(local_in):
-            os.remove(local_in)
-
-    # Sort words for a stable, readable chart ordering.
-    pairs.sort(key=lambda p: p[0])
-    words = [p[0] for p in pairs]
-    totals = [p[1] for p in pairs]
+    # Deterministic ordering by word for a stable chart.
+    words = sorted(word_totals.keys())
+    totals = [word_totals[w] for w in words]
 
     faasr_log(
-        f"visualize_outputs: rendering bar chart for {len(words)} words: "
-        + ", ".join(f"{w}={t}" for w, t in pairs)
+        f"visualize_outputs: aggregated {len(words)} distinct word(s): "
+        f"{dict(zip(words, totals))}"
     )
 
-    local_out = os.path.basename(output1)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(words, totals, color="#4C72B0")
+    # Render the bar chart with the headless (Agg) backend.
+    fig, ax = plt.subplots(figsize=(max(6, len(words) * 1.2), 6))
+    positions = range(len(words))
+    ax.bar(positions, totals, color="steelblue")
+    ax.set_xticks(list(positions))
+    ax.set_xticklabels(words, rotation=45, ha="right")
     ax.set_xlabel("Word")
     ax.set_ylabel("Total occurrence count")
-    ax.set_title("Word occurrence counts (MapReduce word-count)")
-    ax.bar_label(bars)
-    ax.margins(y=0.1)
+    ax.set_title("MapReduce Word-Count Totals")
+
+    for pos, total in zip(positions, totals):
+        ax.text(pos, total, str(total), ha="center", va="bottom")
+
     fig.tight_layout()
-    fig.savefig(local_out, dpi=150)
+
+    local_out = output1
+    fig.savefig(local_out, format="png", dpi=150)
     plt.close(fig)
 
+    if not os.path.exists(local_out) or os.path.getsize(local_out) == 0:
+        msg = f"visualize_outputs: failed to render chart to '{local_out}'"
+        faasr_log(msg)
+        raise RuntimeError(msg)
+
     faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"visualize_outputs: wrote bar chart -> {output1}")
-
-    if os.path.exists(local_out):
-        os.remove(local_out)
-
-    faasr_log("visualize_outputs: complete")
+    faasr_log(
+        f"visualize_outputs: wrote bar chart of {len(words)} word total(s) -> {output1}"
+    )
