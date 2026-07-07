@@ -1,0 +1,93 @@
+{
+  "FunctionInvoke": "validate-inputs",
+  "WorkflowName": "digester-pyadm1-pipeline",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "validate-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "validate_inputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "validation_report.json"
+      },
+      "InvokeNext": [
+        "pyadm1"
+      ]
+    },
+    "pyadm1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "pyadm1",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "dynamic_out.csv"
+      },
+      "InvokeNext": [
+        "visualize-outputs"
+      ]
+    },
+    "visualize-outputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_outputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "dynamic_out.csv",
+        "output1": "simulation_plots.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "validate-inputs": "ghcr.io/faasr/github-actions-python:latest",
+    "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-outputs": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "validate_inputs": "nolcut/FaaSr-workflow-testing/main/functions/validate_inputs.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
+    "visualize_outputs": "nolcut/FaaSr-workflow-testing/main/functions/visualize_outputs.py"
+  },
+  "PyPIPackageDownloads": {
+    "validate_inputs": [
+      "pandas"
+    ],
+    "pyadm1": [
+      "numpy",
+      "scipy",
+      "pandas<2.0",
+      "matplotlib"
+    ],
+    "visualize_outputs": [
+      "matplotlib",
+      "pandas"
+    ]
+  }
+}
