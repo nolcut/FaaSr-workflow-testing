@@ -1,93 +1,124 @@
-import json
 import os
+import json
 
 
 def shuffle(folder: str, input1: str, output1: str) -> None:
-    # Fixed vocabulary (M = 5 distinct words) for the word-count benchmark.
-    # Rank -> word mapping is deterministic via sorted word order.
-    WORDS = ["cat", "dog", "bird", "horse", "pig"]
-    SORTED_WORDS = sorted(WORDS)  # ['bird', 'cat', 'dog', 'horse', 'pig']
-    M = len(SORTED_WORDS)
+    # Shuffle stage of the MapReduce word-count benchmark.
+    #
+    # Fan-in: this function runs ONCE after all N=3 parallel `map` instances
+    # finish. It reads every per-chunk word-count object produced by map
+    # (map_counts_{rank}.json), regroups the partial counts by word, and emits
+    # one JSON file per reducer (M=5 shards keyed by {rank}), each holding a
+    # single word and the list of its partial counts across all map outputs.
 
-    # Derive the filename prefix/suffix used by the ranked `map` predecessor so
-    # we can discover ALL of its per-rank outputs regardless of how many ran.
-    if "{rank}" not in input1:
-        raise ValueError(
-            f"shuffle: expected '{{rank}}' template in input1, got {input1!r}"
-        )
-    in_prefix, in_suffix = input1.split("{rank}", 1)  # 'partial_counts_', '.json'
+    # Number of ranked `reduce` successors (fan-out). Fixed by the workflow.
+    NUM_REDUCERS = 5
+
+    # Derive the map-output filename prefix/suffix from the input template so
+    # we can discover map outputs without assuming a fixed count.
+    if "{rank}" in input1:
+        in_prefix, in_suffix = input1.split("{rank}", 1)
+    else:
+        in_prefix, in_suffix = input1, ""
 
     faasr_log(
-        f"shuffle: discovering map outputs in folder '{folder}' "
-        f"matching '{in_prefix}*{in_suffix}'"
+        f"shuffle: discovering map outputs matching '{in_prefix}*{in_suffix}' "
+        f"in folder '{folder}'"
     )
 
-    # Discover every partial-counts file produced by the map stage. FaaSr returns
-    # FULL object keys including the folder prefix; strip to the basename.
-    all_names = faasr_get_folder_list(prefix=folder)
-    partial_names = []
-    for name in all_names:
-        base = name.rsplit("/", 1)[-1]
-        if base.startswith(in_prefix) and base.endswith(in_suffix):
-            partial_names.append(base)
-    partial_names = sorted(set(partial_names))
+    # Discover all map output object keys in the folder (full keys incl. prefix).
+    keys = faasr_get_folder_list(prefix=folder)
 
-    if not partial_names:
+    map_files = []
+    for key in keys:
+        base = key.rsplit("/", 1)[-1]
+        if base.startswith(in_prefix) and base.endswith(in_suffix) and base != in_prefix + in_suffix:
+            map_files.append(base)
+
+    map_files = sorted(set(map_files))
+
+    if not map_files:
         msg = (
-            f"shuffle: no map outputs found matching "
-            f"'{in_prefix}*{in_suffix}' in folder '{folder}'"
+            f"shuffle: no map outputs matching '{in_prefix}*{in_suffix}' found "
+            f"in folder '{folder}'"
         )
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
-    faasr_log(f"shuffle: found {len(partial_names)} map outputs: {partial_names}")
+    faasr_log(f"shuffle: found {len(map_files)} map output(s): {map_files}")
 
-    # Read each mapper's partial word-count map and regroup by word.
-    grouped = {w: [] for w in SORTED_WORDS}
-    for base in partial_names:
+    # Read each map output and collect, for each word, the list of partial counts.
+    # dict: word -> list of (source_file, count) so ordering is deterministic.
+    partials = {}
+    for base in map_files:
         local_in = base
         faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)
+
+        if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
+            msg = f"shuffle: map output '{base}' is missing or empty"
+            faasr_log(msg)
+            raise FileNotFoundError(msg)
 
         with open(local_in, "r") as f:
             counts = json.load(f)
 
         if not isinstance(counts, dict):
-            raise ValueError(
-                f"shuffle: expected a JSON object (word -> count) in {base}, "
-                f"got {type(counts).__name__}"
+            msg = (
+                f"shuffle: map output '{base}' is not a JSON object of "
+                f"word->count (got {type(counts).__name__})"
             )
+            faasr_log(msg)
+            raise ValueError(msg)
 
         for word, count in counts.items():
-            if word not in grouped:
-                raise ValueError(
-                    f"shuffle: encountered word '{word}' in {base} not in the "
-                    f"fixed vocabulary {SORTED_WORDS}"
-                )
-            grouped[word].append(count)
+            partials.setdefault(word, []).append((base, count))
 
-        faasr_log(f"shuffle: merged partial counts from {base}: {counts}")
-
-        if os.path.exists(local_in):
-            os.remove(local_in)
-
-    # Emit exactly M=5 per-word group files, one per downstream reducer instance.
-    # Rank i (1..M) maps to the i-th word in sorted order.
-    for i in range(1, M + 1):
-        word = SORTED_WORDS[i - 1]
-        group = {"word": word, "counts": grouped[word]}
-
-        out_name = output1.replace("{rank}", str(i))
-        local_out = f"word_group_{i}.json"
-        with open(local_out, "w") as f:
-            json.dump(group, f)
-
-        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)
         faasr_log(
-            f"shuffle: wrote group for word '{word}' "
-            f"({len(group['counts'])} partial counts) to {out_name}"
+            f"shuffle: read '{base}' with {len(counts)} distinct words "
+            f"(total {sum(counts.values())})"
         )
 
-        if os.path.exists(local_out):
-            os.remove(local_out)
+    # Deterministic rank-to-word assignment: sorted vocabulary order.
+    vocabulary = sorted(partials.keys())
+    faasr_log(
+        f"shuffle: discovered vocabulary of {len(vocabulary)} distinct words: "
+        f"{vocabulary}"
+    )
 
-    faasr_log("shuffle: complete")
+    if len(vocabulary) != NUM_REDUCERS:
+        msg = (
+            f"shuffle: discovered vocabulary size {len(vocabulary)} does not "
+            f"match the number of reducers ({NUM_REDUCERS}); cannot assign one "
+            f"word per reducer. Vocabulary: {vocabulary}"
+        )
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    # Emit exactly NUM_REDUCERS shards, one per word, keyed by rank 1..M.
+    for i in range(1, NUM_REDUCERS + 1):
+        word = vocabulary[i - 1]
+        contributions = partials[word]
+        counts_list = [count for (_src, count) in contributions]
+
+        shard = {
+            "word": word,
+            "partial_counts": counts_list,
+            "num_partials": len(counts_list),
+            "sources": [src for (src, _count) in contributions],
+        }
+
+        remote_out = output1.replace("{rank}", str(i))
+        local_out = remote_out
+        with open(local_out, "w") as f:
+            json.dump(shard, f)
+
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
+        faasr_log(
+            f"shuffle: reducer rank {i} <- word '{word}' with "
+            f"{len(counts_list)} partial counts {counts_list} -> {remote_out}"
+        )
+
+    faasr_log(
+        f"shuffle: complete, wrote {NUM_REDUCERS} per-word shards from "
+        f"{len(map_files)} map output(s)"
+    )
