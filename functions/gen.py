@@ -1,8 +1,10 @@
-def gen(folder: str, output1: str) -> None:
-    import pandas as pd
+def gen(folder: str, output1: str, output2: str, output3: str, output4: str) -> None:
+    import numpy as np
     from sklearn.datasets import make_classification
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
 
-    faasr_log("gen: generating synthetic classification dataset with make_classification")
+    faasr_log("gen: generating synthetic binary classification dataset with make_classification")
 
     X, y = make_classification(
         n_samples=500,
@@ -14,17 +16,28 @@ def gen(folder: str, output1: str) -> None:
         random_state=123,
     )
 
-    faasr_log(f"gen: generated X with shape {X.shape} and y with shape {y.shape}")
+    faasr_log(f"gen: generated data X shape={X.shape}, y shape={y.shape}")
 
-    feature_columns = [f"feature_{i}" for i in range(X.shape[1])]
-    df = pd.DataFrame(X, columns=feature_columns)
-    df["target"] = y
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.4, random_state=123
+    )
 
-    local_file = "raw_dataset.csv"
-    df.to_csv(local_file, index=False)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
-    faasr_log(f"gen: wrote dataset with {df.shape[0]} rows and {df.shape[1]} columns to {local_file}")
+    faasr_log(
+        f"gen: split and scaled data X_train={X_train.shape}, X_test={X_test.shape}"
+    )
 
-    faasr_put_file(local_file=local_file, remote_folder=folder, remote_file=output1)
+    np.save("X_train.npy", X_train)
+    np.save("X_test.npy", X_test)
+    np.save("y_train.npy", y_train)
+    np.save("y_test.npy", y_test)
 
-    faasr_log(f"gen: uploaded {output1} to folder {folder}")
+    faasr_put_file(local_file="X_train.npy", remote_folder=folder, remote_file=output1)
+    faasr_put_file(local_file="X_test.npy", remote_folder=folder, remote_file=output2)
+    faasr_put_file(local_file="y_train.npy", remote_folder=folder, remote_file=output3)
+    faasr_put_file(local_file="y_test.npy", remote_folder=folder, remote_file=output4)
+
+    faasr_log("gen: uploaded preprocessed train/test features and labels")
