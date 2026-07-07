@@ -1,87 +1,70 @@
-import json
 import os
+import json
 
 
 def reduce(folder: str, input1: str, output1: str) -> None:
-    # Fixed vocabulary (M = 5 distinct words) for the word-count benchmark.
-    # Rank -> word mapping is deterministic via sorted word order, matching the
-    # upstream `shuffle` step which emits one group file per sorted word index.
-    WORDS = ["cat", "dog", "bird", "horse", "pig"]
-    SORTED_WORDS = sorted(WORDS)  # ['bird', 'cat', 'dog', 'horse', 'pig']
-    M = len(SORTED_WORDS)
+    # Reduce stage of the MapReduce word-count benchmark.
+    #
+    # Runs as M=5 parallel ranked instances. Each reducer reads the flattened
+    # shuffle output assigned to its rank (shuffle_word_{rank}.json), which holds
+    # a single word plus the list of that word's partial counts aggregated across
+    # all N map outputs. The reducer sums those partial counts to yield Zi, the
+    # final total occurrences of its word, and writes it to reduce_total_{rank}.json.
 
     r = faasr_rank()
     rank = r["rank"]
-    faasr_log(f"reduce: starting instance rank={rank} (max_rank={r.get('max_rank')})")
 
-    if not (1 <= rank <= M):
-        msg = f"reduce: rank {rank} out of range 1..{M}"
+    remote_in = input1.replace("{rank}", str(rank))
+    remote_out = output1.replace("{rank}", str(rank))
+
+    local_in = remote_in
+    faasr_log(f"reduce: rank {rank} fetching shuffle shard '{remote_in}' from folder '{folder}'")
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+
+    if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
+        msg = f"reduce: shuffle shard '{remote_in}' is missing or empty"
+        faasr_log(msg)
+        raise FileNotFoundError(msg)
+
+    with open(local_in, "r") as f:
+        shard = json.load(f)
+
+    if not isinstance(shard, dict) or "word" not in shard or "partial_counts" not in shard:
+        msg = (
+            f"reduce: shuffle shard '{remote_in}' has an unexpected structure "
+            f"(expected object with 'word' and 'partial_counts'): {shard!r}"
+        )
         faasr_log(msg)
         raise ValueError(msg)
 
-    assigned_word = SORTED_WORDS[rank - 1]
+    word = shard["word"]
+    partial_counts = shard["partial_counts"]
 
-    in_name = input1.format(rank=rank)
-    out_name = output1.format(rank=rank)
+    if not isinstance(partial_counts, list) or not all(isinstance(c, int) for c in partial_counts):
+        msg = (
+            f"reduce: shuffle shard '{remote_in}' 'partial_counts' is not a list "
+            f"of integers: {partial_counts!r}"
+        )
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    local_in = os.path.basename(in_name)
+    total = sum(partial_counts)
+
     faasr_log(
-        f"reduce[{rank}]: fetching group file '{in_name}' for word '{assigned_word}'"
+        f"reduce: rank {rank} word '{word}' summed {len(partial_counts)} partial "
+        f"counts {partial_counts} -> total {total}"
     )
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=in_name)
 
-    with open(local_in, "r") as f:
-        group = json.load(f)
+    result = {
+        "word": word,
+        "total": total,
+        "num_partials": len(partial_counts),
+        "partial_counts": partial_counts,
+    }
 
-    if not isinstance(group, dict):
-        raise ValueError(
-            f"reduce[{rank}]: expected a JSON object in {in_name}, "
-            f"got {type(group).__name__}"
-        )
-
-    word = group.get("word")
-    counts = group.get("counts")
-
-    if word is None or counts is None:
-        raise ValueError(
-            f"reduce[{rank}]: group file {in_name} missing 'word' or 'counts': {group!r}"
-        )
-
-    if word != assigned_word:
-        raise ValueError(
-            f"reduce[{rank}]: group file word '{word}' does not match rank-assigned "
-            f"word '{assigned_word}'"
-        )
-
-    if not isinstance(counts, list):
-        raise ValueError(
-            f"reduce[{rank}]: expected 'counts' to be a list in {in_name}, "
-            f"got {type(counts).__name__}"
-        )
-
-    total = 0
-    for c in counts:
-        if not isinstance(c, (int, float)) or isinstance(c, bool):
-            raise ValueError(
-                f"reduce[{rank}]: non-numeric partial count {c!r} in {in_name}"
-            )
-        total += c
-
-    result = {"word": word, "total": total}
-
-    local_out = os.path.basename(out_name)
+    local_out = remote_out
     with open(local_out, "w") as f:
         json.dump(result, f)
 
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=out_name)
-    faasr_log(
-        f"reduce[{rank}]: word '{word}' total={total} "
-        f"(from {len(counts)} partial counts) -> {out_name}"
-    )
-
-    if os.path.exists(local_in):
-        os.remove(local_in)
-    if os.path.exists(local_out):
-        os.remove(local_out)
-
-    faasr_log(f"reduce[{rank}]: complete")
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
+    faasr_log(f"reduce: rank {rank} wrote final total for '{word}' -> {remote_out}")
