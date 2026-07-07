@@ -29,7 +29,7 @@
         "output1": "map_batch_{rank}.json"
       },
       "InvokeNext": [
-        "map(4)"
+        "map(3)"
       ]
     },
     "map": {
@@ -78,7 +78,7 @@
       "Arguments": {
         "folder": "workflow_data",
         "input1": "reduce_total_{rank}.json",
-        "output1": "word_counts_chart.png"
+        "output1": "word_counts.png"
       },
       "InvokeNext": []
     }
