@@ -4,32 +4,40 @@ import json
 
 
 def split_transcription(folder: str, input1: str, output1: str) -> None:
-    # Number of parallel map tasks (fan-out to `map`). Generalizable via constant.
+    # Number of parallel map tasks to fan out to (`map_transcription` runs x3).
+    # Kept generalizable via a constant.
     N = 3
 
-    local_txt = "transcription.txt"
+    local_in = "transcription.txt"
 
-    faasr_log(f"split_transcription: fetching transcription '{input1}' from folder '{folder}'")
-    faasr_get_file(local_file=local_txt, remote_folder=folder, remote_file=input1)
+    # Retrieve the real transcription text produced by the upstream PDF step.
+    faasr_log(f"split_transcription: downloading '{input1}' from folder '{folder}'")
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
-    if not os.path.exists(local_txt) or os.path.getsize(local_txt) == 0:
-        msg = f"split_transcription: input transcription '{input1}' is missing or empty"
+    if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
+        msg = f"split_transcription: input text '{input1}' is missing or empty after download"
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
-    with open(local_txt, "r", encoding="utf-8") as f:
+    with open(local_in, "r", encoding="utf-8") as f:
         text = f.read()
 
-    # Tokenize the transcription text into words.
-    words = re.findall(r"\b\w+\b", text.lower())
-    faasr_log(f"split_transcription: tokenized transcription into {len(words)} words")
+    # Tokenize the real transcription into a word list. Generalizable
+    # tokenization: extract maximal runs of alphanumeric characters and
+    # lowercase them so downstream counting groups equivalent words.
+    words = re.findall(r"[A-Za-z0-9]+", text)
+    words = [w.lower() for w in words]
 
-    if not words:
-        msg = f"split_transcription: transcription '{input1}' contained no words to split"
+    faasr_log(
+        f"split_transcription: tokenized '{input1}' into {len(words)} words"
+    )
+
+    if len(words) == 0:
+        msg = f"split_transcription: no words found in transcription '{input1}'"
         faasr_log(msg)
         raise ValueError(msg)
 
-    # Partition the word list into N contiguous, roughly-equal batches.
+    # Partition the word list into N contiguous, roughly equal batches.
     base = len(words) // N
     remainder = len(words) % N
     batches = []
@@ -44,7 +52,7 @@ def split_transcription(folder: str, input1: str, output1: str) -> None:
         batch = batches[i - 1]
         remote_file = output1.replace("{rank}", str(i))
         local_file = f"map_batch_{i}.json"
-        with open(local_file, "w") as f:
+        with open(local_file, "w", encoding="utf-8") as f:
             json.dump(batch, f)
         faasr_put_file(
             local_file=local_file,
