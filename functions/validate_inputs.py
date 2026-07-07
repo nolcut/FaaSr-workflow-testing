@@ -1,151 +1,188 @@
+import json
 import os
+
 import pandas as pd
 
-
-# --- ADM1 / BSM2 required column definitions -------------------------------
-# These are the exact column names consumed by the downstream PyADM1 simulation
-# (see the ADM1 setInfluent() / initial-state assignments). They MUST all be
-# present in the corresponding input files or the simulation cannot run.
-
-# Influent time-series file: a leading time column plus the 26 ADM1 input
-# (feed) state variables read via influent_state[<col>][i].
-INFLUENT_STATE_COLS = [
+# Columns the PyADM1 simulation (context/00_pyadm1.py) reads from each CSV.
+# These MUST match the exact names indexed in setInfluent(...) / initial_state[...].
+_INFLUENT_STATE_COLUMNS = [
     "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
     "S_IC", "S_IN", "S_I", "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa",
     "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I", "S_cation", "S_anion",
 ]
-INFLUENT_REQUIRED_COLS = ["time"] + INFLUENT_STATE_COLS
+# The simulation also does `t = influent_state['time']`, so 'time' is required.
+_INFLUENT_REQUIRED_COLUMNS = ["time"] + _INFLUENT_STATE_COLUMNS
 
-# Initial reactor-state file: the 26 base state variables plus the ion / gas
-# phase state variables read via initial_state[<col>][0].
-INITIAL_REQUIRED_COLS = INFLUENT_STATE_COLS + [
+# initial_state additionally supplies the reactor's initial ion/gas states.
+_INITIAL_REQUIRED_COLUMNS = _INFLUENT_STATE_COLUMNS + [
     "S_H_ion", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion",
     "S_nh3", "S_gas_h2", "S_gas_ch4", "S_gas_co2",
 ]
 
+# Columns that represent concentrations / flows and must be non-negative.
+# (Every state variable in ADM1 is a non-negative concentration.)
+_NONNEGATIVE_EXEMPT = set()  # cations/anions are still non-negative concentrations here
 
-def validate_inputs(folder: str, input1: str, input2: str, output1: str) -> None:
-    faasr_log("validate_inputs: starting validation of PyADM1 digester inputs")
 
-    influent_local = "digester_influent.csv"
-    initial_local = "digester_initial.csv"
-
-    faasr_get_file(local_file=influent_local, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=initial_local, remote_folder=folder, remote_file=input2)
-
-    # Each entry: (file_label, check_name, status, details)
-    report_rows = []
-
-    def record(file_label, check_name, ok, details=""):
-        status = "PASS" if ok else "FAIL"
-        report_rows.append(
-            {"file": file_label, "check": check_name, "status": status, "details": details}
-        )
-        faasr_log(f"[{status}] {file_label} :: {check_name} :: {details}")
-        return ok
-
-    def validate_file(file_label, local_path, remote_name, required_cols, require_time):
-        # --- readability -----------------------------------------------------
-        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-            record(file_label, "file_present_and_nonempty", False,
-                   f"'{remote_name}' is missing or empty after download")
-            return
-        record(file_label, "file_present_and_nonempty", True,
-               f"'{remote_name}' downloaded ({os.path.getsize(local_path)} bytes)")
-
-        try:
-            df = pd.read_csv(local_path)
-        except Exception as exc:  # malformed CSV — a genuine defect, not fabricated
-            record(file_label, "csv_parseable", False, f"failed to parse CSV: {exc}")
-            return
-        record(file_label, "csv_parseable", True, f"parsed shape={df.shape}")
-
-        # --- non-empty rows --------------------------------------------------
-        record(file_label, "has_rows", len(df) > 0,
-               f"row count = {len(df)}")
-
-        # --- required columns present ---------------------------------------
-        missing = [c for c in required_cols if c not in df.columns]
-        record(file_label, "required_columns_present", len(missing) == 0,
-               "all required columns present" if not missing
-               else f"missing columns: {missing}")
-
-        # Columns available for numeric checks (only those that exist).
-        present_cols = [c for c in required_cols if c in df.columns]
-
-        # --- numeric values --------------------------------------------------
-        non_numeric = []
-        for col in present_cols:
-            coerced = pd.to_numeric(df[col], errors="coerce")
-            # A value is non-numeric if coercion produced NaN where the source
-            # was not itself an empty/NaN entry (empty entries handled below).
-            introduced = coerced.isna() & df[col].notna()
-            if introduced.any():
-                non_numeric.append(col)
-        record(file_label, "all_values_numeric", len(non_numeric) == 0,
-               "all required columns numeric" if not non_numeric
-               else f"non-numeric values in columns: {non_numeric}")
-
-        # --- no missing entries ---------------------------------------------
-        cols_with_na = [c for c in present_cols
-                        if pd.to_numeric(df[c], errors="coerce").isna().any()]
-        record(file_label, "no_missing_values", len(cols_with_na) == 0,
-               "no missing entries in required columns" if not cols_with_na
-               else f"missing/NaN entries in columns: {cols_with_na}")
-
-        # --- non-negative concentrations ------------------------------------
-        # 'time' is not a concentration; every ADM1 state variable is a
-        # concentration and must be >= 0.
-        conc_cols = [c for c in present_cols if c != "time"]
-        negative_cols = []
-        for col in conc_cols:
-            vals = pd.to_numeric(df[col], errors="coerce")
-            if (vals < 0).any():
-                negative_cols.append(col)
-        record(file_label, "non_negative_concentrations", len(negative_cols) == 0,
-               "all concentrations non-negative" if not negative_cols
-               else f"negative values in columns: {negative_cols}")
-
-        # --- time column checks (influent only) -----------------------------
-        if require_time:
-            if "time" not in df.columns:
-                record(file_label, "time_column_present", False,
-                       "influent file has no 'time' column")
-            else:
-                record(file_label, "time_column_present", True, "'time' column present")
-                time_vals = pd.to_numeric(df["time"], errors="coerce")
-                if time_vals.isna().any():
-                    record(file_label, "time_ordered", False,
-                           "'time' column contains non-numeric/missing entries")
-                else:
-                    ordered = time_vals.is_monotonic_increasing
-                    strictly = (time_vals.diff().dropna() > 0).all()
-                    record(file_label, "time_ordered", bool(ordered),
-                           "'time' is monotonically increasing" if ordered
-                           else "'time' is not in increasing order")
-                    record(file_label, "time_strictly_increasing", bool(strictly),
-                           "'time' strictly increasing (no duplicates)" if strictly
-                           else "'time' has duplicate or non-increasing steps")
-
-    validate_file("digester_influent.csv", influent_local, input1,
-                  INFLUENT_REQUIRED_COLS, require_time=True)
-    validate_file("digester_initial.csv", initial_local, input2,
-                  INITIAL_REQUIRED_COLS, require_time=False)
-
-    # --- assemble and upload the report -------------------------------------
-    report_df = pd.DataFrame(report_rows, columns=["file", "check", "status", "details"])
-    report_local = "validation_report.csv"
-    report_df.to_csv(report_local, index=False)
-    faasr_put_file(local_file=report_local, remote_folder=folder, remote_file=output1)
-    faasr_log(f"validate_inputs: wrote validation report '{output1}' with {len(report_df)} checks")
-
-    failures = report_df[report_df["status"] == "FAIL"]
-    if len(failures) > 0:
-        summary = "; ".join(
-            f"{r.file}/{r.check}: {r.details}" for r in failures.itertuples(index=False)
-        )
-        msg = f"Input validation FAILED with {len(failures)} issue(s): {summary}"
+def _validate_csv(local_path, file_label, required_columns, *, is_influent):
+    """Validate one digester CSV. Returns a report dict. Raises ValueError on failure."""
+    if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        msg = f"Validation failed for {file_label}: file is missing or empty."
         faasr_log(msg)
         raise ValueError(msg)
 
-    faasr_log("validate_inputs: all checks passed — inputs are valid for PyADM1 simulation")
+    try:
+        df = pd.read_csv(local_path)
+    except Exception as exc:
+        msg = f"Validation failed for {file_label}: could not parse CSV ({exc})."
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    report = {
+        "file": file_label,
+        "n_rows": int(len(df)),
+        "columns_checked": list(required_columns),
+        "checks": [],
+    }
+
+    # --- Required columns present ---
+    missing = [c for c in required_columns if c not in df.columns]
+    if missing:
+        msg = (
+            f"Validation failed for {file_label}: missing required column(s): "
+            f"{', '.join(missing)}."
+        )
+        faasr_log(msg)
+        raise ValueError(msg)
+    report["checks"].append("all required columns present")
+
+    if len(df) == 0:
+        msg = f"Validation failed for {file_label}: contains no data rows."
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    # For the initial-state file, PyADM1 reads only row 0 but it must exist.
+    if not is_influent and len(df) < 1:
+        msg = f"Validation failed for {file_label}: initial state requires at least one row."
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    # --- Numeric type check for every required column ---
+    for col in required_columns:
+        coerced = pd.to_numeric(df[col], errors="coerce")
+        bad_mask = coerced.isna() & df[col].notna()
+        if bad_mask.any() or coerced.isna().any():
+            bad_idx = df.index[coerced.isna()].tolist()
+            msg = (
+                f"Validation failed for {file_label}: column '{col}' contains "
+                f"non-numeric or missing values at row(s) {bad_idx[:10]}."
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+    report["checks"].append("all columns parse as numeric with no missing values")
+
+    # --- Physical range checks ---
+    # Concentration / state columns must be non-negative.
+    for col in _INFLUENT_STATE_COLUMNS:
+        vals = pd.to_numeric(df[col])
+        neg_idx = df.index[vals < 0].tolist()
+        if neg_idx:
+            msg = (
+                f"Validation failed for {file_label}: column '{col}' has negative "
+                f"value(s) at row(s) {neg_idx[:10]} (concentrations must be non-negative)."
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+    report["checks"].append("all concentration columns non-negative")
+
+    if is_influent:
+        # 'time' must be non-negative and strictly increasing (a valid time series).
+        t = pd.to_numeric(df["time"])
+        if (t < 0).any():
+            msg = f"Validation failed for {file_label}: 'time' column has negative value(s)."
+            faasr_log(msg)
+            raise ValueError(msg)
+        diffs = t.diff().dropna()
+        if (diffs <= 0).any():
+            msg = (
+                f"Validation failed for {file_label}: 'time' column must be strictly "
+                f"increasing."
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+        report["checks"].append("'time' non-negative and strictly increasing")
+    else:
+        # Initial-state ion/gas columns must be non-negative too.
+        for col in ("S_H_ion", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion",
+                    "S_hco3_ion", "S_nh3", "S_gas_h2", "S_gas_ch4", "S_gas_co2"):
+            vals = pd.to_numeric(df[col])
+            neg_idx = df.index[vals < 0].tolist()
+            if neg_idx:
+                msg = (
+                    f"Validation failed for {file_label}: column '{col}' has negative "
+                    f"value(s) at row(s) {neg_idx[:10]}."
+                )
+                faasr_log(msg)
+                raise ValueError(msg)
+        # S_H_ion must be strictly positive so pH = -log10(S_H_ion) is defined & plausible.
+        s_h = pd.to_numeric(df["S_H_ion"])
+        if (s_h <= 0).any():
+            msg = (
+                f"Validation failed for {file_label}: 'S_H_ion' must be strictly positive "
+                f"to compute a valid pH."
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+        import math
+        ph0 = -math.log10(float(s_h.iloc[0]))
+        if not (0.0 <= ph0 <= 14.0):
+            msg = (
+                f"Validation failed for {file_label}: derived initial pH {ph0:.3f} is "
+                f"outside the plausible range 0-14."
+            )
+            faasr_log(msg)
+            raise ValueError(msg)
+        report["checks"].append("ion/gas columns non-negative; derived pH within 0-14")
+        report["derived_initial_pH"] = round(ph0, 4)
+
+    report["passed"] = True
+    faasr_log(f"Validation passed for {file_label} ({report['n_rows']} rows).")
+    return report
+
+
+def validate_inputs(folder: str, input1: str, input2: str, output1: str) -> None:
+    faasr_log(f"Starting validate_inputs for '{input1}' and '{input2}' in folder '{folder}'.")
+
+    local_influent = "digester_influent_local.csv"
+    local_initial = "digester_initial_local.csv"
+
+    # --- Fetch the two external input CSVs from S3 ---
+    faasr_get_file(local_file=local_influent, remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file=local_initial, remote_folder=folder, remote_file=input2)
+
+    # --- Validate each file (raises loudly on any failure) ---
+    influent_report = _validate_csv(
+        local_influent, input1, _INFLUENT_REQUIRED_COLUMNS, is_influent=True
+    )
+    initial_report = _validate_csv(
+        local_initial, input2, _INITIAL_REQUIRED_COLUMNS, is_influent=False
+    )
+
+    report = {
+        "workflow": "digester_pyadm1_pipeline",
+        "step": "validate_inputs",
+        "status": "passed",
+        "files": [influent_report, initial_report],
+        "summary": (
+            f"Both input files passed all validation checks: "
+            f"{input1} ({influent_report['n_rows']} rows) and "
+            f"{input2} ({initial_report['n_rows']} rows)."
+        ),
+    }
+
+    local_report = "validation_report_local.json"
+    with open(local_report, "w") as fh:
+        json.dump(report, fh, indent=2)
+
+    faasr_put_file(local_file=local_report, remote_folder=folder, remote_file=output1)
+    faasr_log(f"Validation report written to '{output1}'. All checks passed.")
