@@ -1,48 +1,36 @@
-def train_svm(folder: str, input1: str, input2: str, output1: str) -> None:
+def train_svm(folder: str, input1: str, input2: str, input3: str, input4: str, output1: str) -> None:
     import json
-    import pandas as pd
+    import numpy as np
     from sklearn.svm import SVC
 
-    faasr_log("train_svm: starting")
+    faasr_log("train_svm: downloading preprocessed train/test split arrays")
 
-    local_train = "train_set.csv"
-    local_test = "test_set.csv"
+    faasr_get_file(local_file="X_train.npy", remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="X_test.npy", remote_folder=folder, remote_file=input2)
+    faasr_get_file(local_file="y_train.npy", remote_folder=folder, remote_file=input3)
+    faasr_get_file(local_file="y_test.npy", remote_folder=folder, remote_file=input4)
 
-    faasr_get_file(local_file=local_train, remote_folder=folder, remote_file=input1)
-    faasr_log(f"train_svm: downloaded {input1} from folder {folder}")
+    X_train = np.load("X_train.npy")
+    X_test = np.load("X_test.npy")
+    y_train = np.load("y_train.npy")
+    y_test = np.load("y_test.npy")
 
-    faasr_get_file(local_file=local_test, remote_folder=folder, remote_file=input2)
-    faasr_log(f"train_svm: downloaded {input2} from folder {folder}")
-
-    train_df = pd.read_csv(local_train)
-    test_df = pd.read_csv(local_test)
     faasr_log(
-        f"train_svm: loaded {train_df.shape[0]} train rows and "
-        f"{test_df.shape[0]} test rows"
+        f"train_svm: loaded X_train={X_train.shape}, X_test={X_test.shape}, "
+        f"y_train={y_train.shape}, y_test={y_test.shape}"
     )
-
-    if "target" not in train_df.columns or "target" not in test_df.columns:
-        msg = "train_svm: 'target' column not found in input data"
-        faasr_log(msg)
-        raise ValueError(msg)
-
-    feature_columns = [c for c in train_df.columns if c != "target"]
-
-    X_train = train_df[feature_columns].values
-    y_train = train_df["target"].values
-    X_test = test_df[feature_columns].values
-    y_test = test_df["target"].values
 
     clf = SVC(kernel="linear", C=0.025)
     clf.fit(X_train, y_train)
-    faasr_log("train_svm: fitted SVC (kernel='linear', C=0.025)")
 
-    accuracy = clf.score(X_test, y_test)
-    faasr_log(f"train_svm: test-set accuracy = {accuracy}")
+    accuracy = float(clf.score(X_test, y_test))
+    faasr_log(f"train_svm: SVM test-set accuracy = {accuracy}")
 
-    local_output = "svm_accuracy.json"
-    with open(local_output, "w") as f:
-        json.dump({"accuracy": float(accuracy)}, f)
+    result = {"classifier": "SVM", "accuracy": accuracy}
 
-    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
-    faasr_log(f"train_svm: uploaded {output1} to folder {folder}")
+    with open("svm_result.json", "w") as f:
+        json.dump(result, f)
+
+    faasr_put_file(local_file="svm_result.json", remote_folder=folder, remote_file=output1)
+
+    faasr_log(f"train_svm: uploaded {output1}")
