@@ -78,43 +78,23 @@ def shuffle(folder: str, input1: str, output1: str) -> None:
             f"(total {sum(counts.values())})"
         )
 
-    # Deterministic rank-to-word assignment: build the sorted set of distinct
-    # words from the union of ALL map output keys. The vocabulary and its size
-    # are discovered dynamically here (the transcription's word set is not known
-    # in advance) rather than being fixed to a hardcoded word list.
+    # Deterministic rank-to-word assignment: sorted vocabulary order.
     vocabulary = sorted(partials.keys())
     faasr_log(
         f"shuffle: discovered vocabulary of {len(vocabulary)} distinct words: "
         f"{vocabulary}"
     )
 
-    # The number of reducers is derived from the discovered vocabulary, but the
-    # deployment fans out to exactly NUM_REDUCERS ranked `reduce` instances, each
-    # of which reads shuffle_word_{rank}.json for rank 1..NUM_REDUCERS. We must
-    # therefore emit exactly NUM_REDUCERS shards. With more reducer slots than
-    # distinct words we cannot invent words to fill the extra reducers, so fail
-    # loudly rather than fabricate data.
-    if len(vocabulary) < NUM_REDUCERS:
+    if len(vocabulary) != NUM_REDUCERS:
         msg = (
-            f"shuffle: discovered vocabulary size {len(vocabulary)} is smaller "
-            f"than the number of reducers ({NUM_REDUCERS}); cannot assign a "
-            f"distinct word to every reducer without fabricating data. "
-            f"Vocabulary: {vocabulary}"
+            f"shuffle: discovered vocabulary size {len(vocabulary)} does not "
+            f"match the number of reducers ({NUM_REDUCERS}); cannot assign one "
+            f"word per reducer. Vocabulary: {vocabulary}"
         )
         faasr_log(msg)
         raise ValueError(msg)
 
-    if len(vocabulary) > NUM_REDUCERS:
-        faasr_log(
-            f"shuffle: discovered vocabulary ({len(vocabulary)} words) exceeds "
-            f"the fixed reducer count ({NUM_REDUCERS}); the first {NUM_REDUCERS} "
-            f"words in sorted order are assigned to the {NUM_REDUCERS} reducers "
-            f"and the remaining {len(vocabulary) - NUM_REDUCERS} word(s) "
-            f"({vocabulary[NUM_REDUCERS:]}) are not reduced by this deployment."
-        )
-
-    # Emit exactly NUM_REDUCERS shards, one word per reducer, keyed by rank 1..M.
-    # Rank-to-word assignment is deterministic: sorted vocabulary indexed by rank.
+    # Emit exactly NUM_REDUCERS shards, one per word, keyed by rank 1..M.
     for i in range(1, NUM_REDUCERS + 1):
         word = vocabulary[i - 1]
         contributions = partials[word]
