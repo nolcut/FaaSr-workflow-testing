@@ -2,134 +2,121 @@ import os
 import json
 
 import matplotlib
-matplotlib.use("Agg")  # headless / non-interactive backend
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
 def visualize_histogram(folder: str, input1: str, output1: str) -> None:
-    # Sink node of the PDF-transcription MapReduce word count.
+    # Sink node of the MapReduce word-count pipeline.
     #
-    # The upstream reduce_step ran once and wrote one ranked JSON file per
-    # distinct word (reduce_total_{rank}.json), each containing that word and its
-    # final total occurrence count. Here we discover every such file in the
-    # folder, aggregate the per-word totals, select the 10 words with the highest
-    # counts (descending), and render a bar-chart histogram to a single PNG.
+    # Runs ONCE after all M=5 parallel `reduce` instances finish. Each reducer
+    # wrote reduce_total_{rank}.json containing a single word and its final total
+    # occurrence count. This function discovers every such per-rank output,
+    # aggregates the word->total pairs, selects the top 10 most frequent words,
+    # and renders a bar-chart histogram to a PNG using the headless Agg backend.
 
-    # Derive prefix/suffix from the input template so we can discover the ranked
-    # reduce outputs without assuming a fixed count or word set.
-    if "{rank}" in input1:
-        in_prefix, in_suffix = input1.split("{rank}", 1)
+    # Derive the filename prefix that every reduce output shares, e.g.
+    # "reduce_total_{rank}.json" -> "reduce_total_".
+    marker = "{rank}"
+    if marker in input1:
+        name_prefix = input1.split(marker, 1)[0]
     else:
-        in_prefix, in_suffix = input1, ""
+        name_prefix = input1
 
     faasr_log(
-        f"visualize_histogram: discovering reduce totals matching "
-        f"'{in_prefix}{{rank}}{in_suffix}' in folder '{folder}'"
+        f"visualize_histogram: discovering reduce outputs with basename prefix "
+        f"'{name_prefix}' in folder '{folder}'"
     )
 
-    # Discover all object keys in the folder (full keys incl. prefix).
-    keys = faasr_get_folder_list(prefix=folder)
+    listing = faasr_get_folder_list(prefix=folder)
 
-    # Collect (rank, basename) for every reduce output whose name matches the
-    # template and whose {rank} slot is a valid integer.
-    shards = []
-    for key in keys:
+    shard_basenames = []
+    for key in listing:
         base = key.rsplit("/", 1)[-1]
-        if not (base.startswith(in_prefix) and base.endswith(in_suffix)):
-            continue
-        middle = base[len(in_prefix): len(base) - len(in_suffix) if in_suffix else len(base)]
-        if not middle.isdigit():
-            continue
-        shards.append((int(middle), base))
+        if base.startswith(name_prefix) and base.endswith(".json"):
+            shard_basenames.append(base)
 
-    # Deduplicate by rank and process in ascending rank order.
-    shards = sorted(set(shards))
+    # De-duplicate while keeping deterministic order.
+    shard_basenames = sorted(set(shard_basenames))
 
-    if not shards:
+    if not shard_basenames:
         msg = (
-            f"visualize_histogram: no reduce totals matching "
-            f"'{in_prefix}{{rank}}{in_suffix}' found in folder '{folder}'"
+            f"visualize_histogram: no reduce output files matching "
+            f"'{name_prefix}*.json' were found in folder '{folder}'"
         )
         faasr_log(msg)
         raise FileNotFoundError(msg)
 
     faasr_log(
-        f"visualize_histogram: found {len(shards)} reduce total(s): "
-        f"{[b for _, b in shards]}"
+        f"visualize_histogram: found {len(shard_basenames)} reduce output(s): "
+        f"{shard_basenames}"
     )
 
-    # Aggregate per-word totals. Sum totals if the same word appears more than
-    # once across shards (each rank is normally a distinct word, but we combine
-    # defensively rather than dropping data).
     word_totals = {}
-    for rank, remote_in in shards:
-        local_in = remote_in
-        faasr_log(
-            f"visualize_histogram: fetching reduce total '{remote_in}' "
-            f"from folder '{folder}'"
-        )
-        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+    for base in shard_basenames:
+        local_in = base
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)
 
         if not os.path.exists(local_in) or os.path.getsize(local_in) == 0:
-            msg = f"visualize_histogram: reduce total '{remote_in}' is missing or empty"
+            msg = f"visualize_histogram: reduce output '{base}' is missing or empty"
             faasr_log(msg)
             raise FileNotFoundError(msg)
 
         with open(local_in, "r") as f:
-            record = json.load(f)
+            shard = json.load(f)
 
-        if not isinstance(record, dict) or "word" not in record or "total" not in record:
+        if not isinstance(shard, dict) or "word" not in shard or "total" not in shard:
             msg = (
-                f"visualize_histogram: reduce total '{remote_in}' has an unexpected "
-                f"structure (expected object with 'word' and 'total'): {record!r}"
+                f"visualize_histogram: reduce output '{base}' has an unexpected "
+                f"structure (expected object with 'word' and 'total'): {shard!r}"
             )
             faasr_log(msg)
             raise ValueError(msg)
 
-        word = record["word"]
-        total = record["total"]
+        word = shard["word"]
+        total = shard["total"]
 
-        if not isinstance(word, str):
-            msg = f"visualize_histogram: reduce total '{remote_in}' 'word' is not a string: {word!r}"
+        if not isinstance(total, int):
+            msg = (
+                f"visualize_histogram: reduce output '{base}' 'total' is not an "
+                f"integer: {total!r}"
+            )
             faasr_log(msg)
             raise ValueError(msg)
 
-        if not isinstance(total, int) or isinstance(total, bool):
-            msg = f"visualize_histogram: reduce total '{remote_in}' 'total' is not an integer: {total!r}"
-            faasr_log(msg)
-            raise ValueError(msg)
-
+        # Multiple reducers should own distinct words; if a word repeats, sum it.
         word_totals[word] = word_totals.get(word, 0) + total
 
-    faasr_log(f"visualize_histogram: aggregated {len(word_totals)} distinct word(s)")
+    if not word_totals:
+        msg = "visualize_histogram: no word->total pairs were aggregated from reduce outputs"
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    # Select the top 10 words by count (descending). Break ties by word for a
-    # stable, deterministic ordering. If fewer than 10 words exist, plot all.
+    # Sort by count descending (ties broken by word for determinism) and take top 10.
     ranked = sorted(word_totals.items(), key=lambda kv: (-kv[1], kv[0]))
     top = ranked[:10]
+
+    faasr_log(f"visualize_histogram: top {len(top)} words -> {top}")
 
     words = [w for w, _ in top]
     counts = [c for _, c in top]
 
-    faasr_log(f"visualize_histogram: top {len(top)} words: {list(zip(words, counts))}")
-
-    # Render the histogram (bar chart) with the headless Agg backend.
-    fig, ax = plt.subplots(figsize=(max(6, len(words) * 0.9), 6))
+    fig, ax = plt.subplots(figsize=(max(6, len(words) * 0.8), 5))
     positions = range(len(words))
     ax.bar(positions, counts, color="steelblue")
     ax.set_xticks(list(positions))
     ax.set_xticklabels(words, rotation=45, ha="right")
     ax.set_xlabel("Word")
-    ax.set_ylabel("Count")
-    ax.set_title(f"Top {len(words)} Most Frequent Words")
+    ax.set_ylabel("Total count")
+    ax.set_title("Top 10 Most Frequent Words")
     fig.tight_layout()
 
-    local_out = os.path.basename(output1)
+    local_out = output1
     fig.savefig(local_out, format="png", dpi=150)
     plt.close(fig)
 
     if not os.path.exists(local_out) or os.path.getsize(local_out) == 0:
-        msg = f"visualize_histogram: failed to produce histogram PNG '{local_out}'"
+        msg = f"visualize_histogram: failed to render histogram PNG '{local_out}'"
         faasr_log(msg)
         raise RuntimeError(msg)
 
