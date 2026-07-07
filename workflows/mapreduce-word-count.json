@@ -11,10 +11,8 @@
       "Type": "Python",
       "FunctionName": "split",
       "Arguments": {
-        "folder": "mapreduce_word_count",
-        "output1": "batch_1.json",
-        "output2": "batch_2.json",
-        "output3": "batch_3.json"
+        "folder": "workflow_data",
+        "output1": "batch_{rank}.json"
       },
       "InvokeNext": [
         "map(3)"
@@ -25,9 +23,9 @@
       "Type": "Python",
       "FunctionName": "map",
       "Arguments": {
-        "folder": "mapreduce_word_count",
+        "folder": "workflow_data",
         "input1": "batch_{rank}.json",
-        "output1": "map_counts_{rank}.json"
+        "output1": "partial_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -38,15 +36,9 @@
       "Type": "Python",
       "FunctionName": "shuffle",
       "Arguments": {
-        "folder": "mapreduce_word_count",
-        "input1": "map_counts_1.json",
-        "input2": "map_counts_2.json",
-        "input3": "map_counts_3.json",
-        "output1": "shard_1.json",
-        "output2": "shard_2.json",
-        "output3": "shard_3.json",
-        "output4": "shard_4.json",
-        "output5": "shard_5.json"
+        "folder": "workflow_data",
+        "input1": "partial_counts_{rank}.json",
+        "output1": "word_group_{rank}.json"
       },
       "InvokeNext": [
         "reduce(5)"
@@ -57,9 +49,9 @@
       "Type": "Python",
       "FunctionName": "reduce",
       "Arguments": {
-        "folder": "mapreduce_word_count",
-        "input1": "shard_{rank}.json",
-        "output1": "final_count_{rank}.json"
+        "folder": "workflow_data",
+        "input1": "word_group_{rank}.json",
+        "output1": "word_total_{rank}.json"
       },
       "InvokeNext": []
     }
