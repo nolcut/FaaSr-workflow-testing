@@ -1,0 +1,85 @@
+{
+  "WorkflowName": "VideoAnalysis",
+  "FunctionInvoke": "decode",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationID": "",
+  "ActionList": {
+    "decode": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "decode",
+      "Arguments": {
+        "folder": "video_analysis",
+        "video_file": "video_small.mp4",
+        "F": 10,
+        "B": 5
+      },
+      "InvokeNext": [
+        "detect(2)"
+      ]
+    },
+    "detect": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "detect",
+      "Arguments": {
+        "folder": "video_analysis",
+        "score_threshold": 0.5
+      },
+      "InvokeNext": [
+        "accumulate"
+      ]
+    },
+    "accumulate": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "accumulate",
+      "Arguments": {
+        "folder": "video_analysis"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "ActionContainers": {
+    "decode": "ghcr.io/faasr/github-actions-python:latest",
+    "detect": "ghcr.io/faasr/github-actions-python:latest",
+    "accumulate": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "FunctionGitRepo": {
+    "decode": "nolcut/FaaSr-workflow-testing/main/functions/decode.py",
+    "detect": "nolcut/FaaSr-workflow-testing/main/functions/detect.py",
+    "accumulate": "nolcut/FaaSr-workflow-testing/main/functions/accumulate.py"
+  },
+  "PyPIPackageDownloads": {
+    "decode": [
+      "opencv-python-headless",
+      "numpy"
+    ],
+    "detect": [
+      "opencv-python-headless",
+      "numpy"
+    ],
+    "accumulate": []
+  }
+}
