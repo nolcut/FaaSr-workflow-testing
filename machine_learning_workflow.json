@@ -12,30 +12,25 @@
       "Type": "Python",
       "Arguments": {
         "N": 500,
-        "M": 1024,
-        "folder": "ml-pipeline"
+        "M": 1024
       },
       "InvokeNext": [
-        "train_svm",
-        "train_rf"
+        "train-svm",
+        "train-rf"
       ]
     },
-    "train_svm": {
+    "train-svm": {
       "FunctionName": "train_svm",
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {
-        "folder": "ml-pipeline"
-      },
+      "Arguments": {},
       "InvokeNext": []
     },
-    "train_rf": {
+    "train-rf": {
       "FunctionName": "train_rf",
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {
-        "folder": "ml-pipeline"
-      },
+      "Arguments": {},
       "InvokeNext": []
     }
   },
@@ -60,8 +55,8 @@
   },
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
-    "train_svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train_rf": "ghcr.io/faasr/github-actions-python:latest"
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest",
+    "train-rf": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
     "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",

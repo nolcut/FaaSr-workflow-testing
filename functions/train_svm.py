@@ -1,28 +1,34 @@
-def train_svm(folder="ml-pipeline"):
+def train_svm():
     """
-    Train a linear Support Vector Machine on the preprocessed dataset
-    and report its test-set accuracy.
+    Train a linear Support Vector Machine (SVC, kernel='linear', C=0.025) on the
+    preprocessed dataset produced by gen(), report accuracy via clf.score, and
+    persist the accuracy result back to S3.
     """
     import numpy as np
     from sklearn.svm import SVC
 
-    # ---- Load preprocessed data from S3 ----
-    faasr_get_file(remote_folder=folder, remote_file="dataset.npz", local_file="dataset.npz")
-    data = np.load("dataset.npz")
-    X_train, X_test = data["X_train"], data["X_test"]
-    y_train, y_test = data["y_train"], data["y_test"]
+    # Download preprocessed arrays produced by gen()
+    for fname in ["X_train.npy", "X_test.npy", "y_train.npy", "y_test.npy"]:
+        faasr_get_file(remote_folder="ml-data", remote_file=fname, local_file=fname)
 
-    # ---- Train SVM classifier ----
+    X_train = np.load("X_train.npy")
+    X_test = np.load("X_test.npy")
+    y_train = np.load("y_train.npy")
+    y_test = np.load("y_test.npy")
+
+    faasr_log("train_svm: training SVC(kernel='linear', C=0.025)")
+
     clf = SVC(kernel="linear", C=0.025)
     clf.fit(X_train, y_train)
 
-    # ---- Evaluate ----
     accuracy = clf.score(X_test, y_test)
-    faasr_log(f"train_svm: SVC(kernel=linear, C=0.025) test accuracy = {accuracy}")
+    faasr_log(f"train_svm: SVM test accuracy = {accuracy}")
 
-    # ---- Persist result ----
     with open("svm_accuracy.txt", "w") as f:
-        f.write(f"SVM accuracy: {accuracy}\n")
+        f.write(f"SVM (linear, C=0.025) accuracy: {accuracy}\n")
+
     faasr_put_file(
-        local_file="svm_accuracy.txt", remote_folder=folder, remote_file="svm_accuracy.txt"
+        local_file="svm_accuracy.txt",
+        remote_folder="ml-results",
+        remote_file="svm_accuracy.txt",
     )
