@@ -1,68 +1,90 @@
+import json
+import os
 import random
 
+from FaaSr_py.client.py_client_stubs import (
+    faasr_invocation_id,
+    faasr_log,
+    faasr_put_file,
+)
 
-def split(folder, N=3, W=5000, vocab=None, seed=42):
+
+def split(
+    folder="mapreduce",
+    num_maps=3,
+    total_words=5000,
+    vocabulary=None,
+    seed=42,
+):
     """
     MapReduce SPLIT stage.
 
-    Generates the input text (W words drawn evenly from `vocab` and shuffled
-    randomly) and partitions it into N batches, one per map worker.
+    Generates the input text (``total_words`` words drawn from ``vocabulary``,
+    each word distributed evenly and then shuffled randomly) and partitions it
+    into ``num_maps`` (=N) roughly equal text chunks, one per downstream map
+    invocation. Chunk i is written to ``<folder>/<invocation_id>/chunks/chunk_i.txt``.
 
-    Each chunk is written to S3 at:
-        {folder}/{invocation_id}/input/chunk_{r}.txt   (r = 1 .. N)
-
-    Args are provided by the workflow JSON "Arguments" block:
-        folder : base S3 prefix for this workflow's artifacts
-        N      : number of map workers / chunks
-        W      : total number of words to generate
-        vocab  : list of vocabulary words (default: cat/dog/bird/horse/pig)
-        seed   : RNG seed so the run is reproducible
+    Although the default vocabulary is the fixed 5-word set, this stage is
+    generalizable to any vocabulary / N / W passed via the workflow Arguments.
     """
-    if vocab is None:
-        vocab = ["cat", "dog", "bird", "horse", "pig"]
-    N = int(N)
-    W = int(W)
+    if vocabulary is None:
+        vocabulary = ["cat", "dog", "bird", "horse", "pig"]
+
+    num_maps = int(num_maps)
+    total_words = int(total_words)
     seed = int(seed)
+    vocab = list(vocabulary)
 
-    inv = faasr_invocation_id()
-    base = f"{folder}/{inv}"
+    base_path = f"{folder}/{faasr_invocation_id()}"
 
-    # --- Build an evenly-distributed multiset of W words over the vocabulary ---
-    V = len(vocab)
-    per_word = [W // V] * V
-    for i in range(W % V):          # spread any remainder across the first words
-        per_word[i] += 1
-
+    # --- Build the input text: even distribution across the vocabulary --------
     words = []
-    for w, c in zip(vocab, per_word):
-        words.extend([w] * c)
+    per_word = total_words // len(vocab)
+    remainder = total_words % len(vocab)
+    for i, w in enumerate(vocab):
+        count = per_word + (1 if i < remainder else 0)
+        words.extend([w] * count)
 
-    # --- Shuffle randomly (seeded for reproducibility) ---
+    # --- Shuffle randomly (deterministic via seed for reproducibility) --------
     rng = random.Random(seed)
     rng.shuffle(words)
 
-    # --- Partition into N chunks as evenly as possible ---
-    chunk_sizes = [W // N] * N
-    for i in range(W % N):
-        chunk_sizes[i] += 1
+    faasr_log(
+        f"split: generated {len(words)} words from vocabulary {vocab} "
+        f"(target W={total_words}, N={num_maps})"
+    )
 
+    # --- Partition into N roughly equal contiguous chunks ---------------------
+    chunk_base = len(words) // num_maps
+    chunk_rem = len(words) % num_maps
     idx = 0
-    for r in range(1, N + 1):
-        size = chunk_sizes[r - 1]
-        chunk = words[idx:idx + size]
+    for rank in range(1, num_maps + 1):
+        size = chunk_base + (1 if rank <= chunk_rem else 0)
+        chunk_words = words[idx:idx + size]
         idx += size
 
-        local_file = f"chunk_{r}.txt"
+        local_file = f"chunk_{rank}.txt"
         with open(local_file, "w") as f:
-            f.write(" ".join(chunk))
-
+            f.write(" ".join(chunk_words))
         faasr_put_file(
             local_file=local_file,
-            remote_folder=f"{base}/input",
-            remote_file=f"chunk_{r}.txt",
+            remote_folder=f"{base_path}/chunks",
+            remote_file=f"chunk_{rank}.txt",
         )
+        faasr_log(f"split: wrote chunk {rank}/{num_maps} with {len(chunk_words)} words")
 
-    faasr_log(
-        f"split: generated W={W} words from {V}-word vocab, "
-        f"partitioned into N={N} chunks under {base}/input"
+    # --- Persist a small manifest describing this run ------------------------
+    manifest = {
+        "num_maps": num_maps,
+        "total_words": len(words),
+        "vocabulary": vocab,
+        "seed": seed,
+    }
+    with open("split_manifest.json", "w") as f:
+        json.dump(manifest, f)
+    faasr_put_file(
+        local_file="split_manifest.json",
+        remote_folder=base_path,
+        remote_file="split_manifest.json",
     )
+    faasr_log(f"split: complete; {num_maps} chunks ready under {base_path}/chunks")

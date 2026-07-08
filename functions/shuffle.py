@@ -1,73 +1,78 @@
 import json
 import os
+from collections import defaultdict
+
+from FaaSr_py.client.py_client_stubs import (
+    faasr_get_file,
+    faasr_get_folder_list,
+    faasr_invocation_id,
+    faasr_log,
+    faasr_put_file,
+)
 
 
-def shuffle(folder, M=5):
+def shuffle(folder="mapreduce"):
     """
-    MapReduce SHUFFLE stage (single action; runs after ALL map ranks finish).
+    MapReduce SHUFFLE stage (runs once, after all N map ranks complete).
 
-    Flattens the array of per-map partial results { Y_i | i < N } into one
-    group per distinct word. Because the workflow primitives cannot pass the
-    Y_i array object directly, shuffle materializes the flattened groups as
-    individual S3 objects so the reduce stage can fan out over them.
-
-    Reads : {folder}/{invocation_id}/map/map_out_*.json
-    Writes: {folder}/{invocation_id}/shuffle/word_{k}.json
-            -> {"word": w, "counts": [partial_count_from_each_map, ...]}
-            {folder}/{invocation_id}/shuffle/manifest.json
-            -> {"1": word1, "2": word2, ...}   (reducer rank -> word)
-
-    Distinct words are sorted so the rank -> word assignment is deterministic.
-    M is the configured number of reducers (should equal the number of distinct
-    words); it is used only for a sanity-check log.
+    Because the workflow primitives cannot pass the array Y_i directly to the
+    reducers, shuffle *flattens* the partial map outputs {Y_i | i < N}: it
+    groups the per-chunk counts by word, producing, for each distinct word, a
+    flat list of that word's partial counts across all maps. Each group is
+    written to ``<folder>/<invocation_id>/shuffle/word_<word>.json`` and a
+    manifest listing the words (in deterministic sorted order) is written so
+    that M reducers can each pick up exactly one word by rank.
     """
-    M = int(M)
-    inv = faasr_invocation_id()
-    base = f"{folder}/{inv}"
+    base_path = f"{folder}/{faasr_invocation_id()}"
 
-    listing = faasr_get_folder_list(faasr_prefix=f"{base}/map")
-    map_files = [p for p in listing if os.path.basename(p).startswith("map_out_")
-                 and p.endswith(".json")]
+    # --- Discover all map outputs Y_i ---------------------------------------
+    listing = faasr_get_folder_list(faasr_prefix=f"{base_path}/map")
+    y_files = sorted(
+        {
+            os.path.basename(p)
+            for p in listing
+            if os.path.basename(p).startswith("Y_")
+            and os.path.basename(p).endswith(".json")
+        }
+    )
+    faasr_log(f"shuffle: found {len(y_files)} map outputs: {y_files}")
 
-    # word -> flattened list of partial counts (one entry per map that saw it)
-    flattened = {}
-    for p in sorted(map_files):
-        fname = os.path.basename(p)
-        faasr_get_file(remote_folder=f"{base}/map", remote_file=fname, local_file=fname)
-        with open(fname) as f:
-            data = json.load(f)
-        for word, count in data["counts"].items():
-            flattened.setdefault(word, []).append(count)
+    # --- Flatten: group partial counts by word ------------------------------
+    grouped = defaultdict(list)
+    for yf in y_files:
+        faasr_get_file(
+            local_file=yf,
+            remote_folder=f"{base_path}/map",
+            remote_file=yf,
+        )
+        with open(yf) as f:
+            partial = json.load(f)
+        for word, count in partial.items():
+            grouped[word].append(count)
 
-    words = sorted(flattened.keys())
-
-    manifest = {}
-    for k, word in enumerate(words, start=1):
-        manifest[str(k)] = word
-        group = {"word": word, "counts": flattened[word]}
-        local = f"word_{k}.json"
-        with open(local, "w") as f:
-            json.dump(group, f)
+    # --- Emit one flattened group per word ----------------------------------
+    words_sorted = sorted(grouped.keys())
+    for word in words_sorted:
+        wf = f"word_{word}.json"
+        with open(wf, "w") as f:
+            json.dump({"word": word, "counts": grouped[word]}, f)
         faasr_put_file(
-            local_file=local,
-            remote_folder=f"{base}/shuffle",
-            remote_file=f"word_{k}.json",
+            local_file=wf,
+            remote_folder=f"{base_path}/shuffle",
+            remote_file=wf,
         )
 
-    with open("manifest.json", "w") as f:
+    # --- Manifest so reducers can address words by rank ---------------------
+    manifest = {"words": words_sorted, "num_reducers": len(words_sorted)}
+    with open("shuffle_manifest.json", "w") as f:
         json.dump(manifest, f)
     faasr_put_file(
-        local_file="manifest.json",
-        remote_folder=f"{base}/shuffle",
-        remote_file="manifest.json",
+        local_file="shuffle_manifest.json",
+        remote_folder=f"{base_path}/shuffle",
+        remote_file="words.json",
     )
 
     faasr_log(
-        f"shuffle: flattened {len(map_files)} map outputs into "
-        f"{len(words)} word groups (configured M={M})"
+        f"shuffle: flattened {len(y_files)} map outputs into "
+        f"{len(words_sorted)} word groups (M={len(words_sorted)}): {words_sorted}"
     )
-    if len(words) != M:
-        faasr_log(
-            f"shuffle WARNING: distinct words ({len(words)}) != configured "
-            f"reducers M={M}; reducers beyond the number of words will no-op"
-        )
