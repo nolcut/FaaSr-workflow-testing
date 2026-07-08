@@ -1,0 +1,79 @@
+{
+  "WorkflowName": "MachineLearning",
+  "FunctionInvoke": "gen",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationID": "",
+
+  "ActionList": {
+    "gen": {
+      "FunctionName": "gen",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "N": 500,
+        "M": 1024,
+        "folder": "ml-pipeline"
+      },
+      "InvokeNext": [
+        "train_svm",
+        "train_rf"
+      ]
+    },
+    "train_svm": {
+      "FunctionName": "train_svm",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "ml-pipeline"
+      },
+      "InvokeNext": []
+    },
+    "train_rf": {
+      "FunctionName": "train_rf",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "ml-pipeline"
+      },
+      "InvokeNext": []
+    }
+  },
+
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "<GITHUB_USERNAME>",
+      "ActionRepoName": "<ACTION_REPO_NAME>",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+
+  "DataStores": {
+    "S3": {
+      "Endpoint": "<S3_ENDPOINT>",
+      "Bucket": "<S3_BUCKET>",
+      "Region": "<S3_REGION>"
+    }
+  },
+
+  "ActionContainers": {
+    "gen": "ghcr.io/faasr/github-actions-python:latest",
+    "train_svm": "ghcr.io/faasr/github-actions-python:latest",
+    "train_rf": "ghcr.io/faasr/github-actions-python:latest"
+  },
+
+  "FunctionGitRepo": {
+    "gen": "<ORG>/<REPO>/<PATH>",
+    "train_svm": "<ORG>/<REPO>/<PATH>",
+    "train_rf": "<ORG>/<REPO>/<PATH>"
+  },
+
+  "PyPIPackageDownloads": {
+    "gen": ["scikit-learn", "numpy"],
+    "train_svm": ["scikit-learn", "numpy"],
+    "train_rf": ["scikit-learn", "numpy"]
+  }
+}
