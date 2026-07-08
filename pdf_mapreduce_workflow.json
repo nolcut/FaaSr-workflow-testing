@@ -1,0 +1,134 @@
+{
+  "ActionList": {
+    "transcribe": {
+      "FunctionName": "transcribe_pdf",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "pdf_file": "turing.pdf",
+        "output": "transcription.txt"
+      },
+      "InvokeNext": [
+        "split"
+      ]
+    },
+    "split": {
+      "FunctionName": "split_transcription",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "input_file": "transcription.txt",
+        "num_maps": 3,
+        "output_prefix": "split"
+      },
+      "InvokeNext": [
+        "map(3)"
+      ]
+    },
+    "map": {
+      "FunctionName": "map_wordcount",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "input_prefix": "split",
+        "output_prefix": "map_out"
+      },
+      "InvokeNext": [
+        "shuffle"
+      ]
+    },
+    "shuffle": {
+      "FunctionName": "shuffle_counts",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "map_prefix": "map_out",
+        "num_maps": 3,
+        "shuffle_prefix": "shuffle",
+        "num_reduces": 5
+      },
+      "InvokeNext": [
+        "reduce(5)"
+      ]
+    },
+    "reduce": {
+      "FunctionName": "reduce_counts",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "shuffle_prefix": "shuffle",
+        "output_prefix": "reduce_out"
+      },
+      "InvokeNext": [
+        "visualize"
+      ]
+    },
+    "visualize": {
+      "FunctionName": "visualize_histogram",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "wordcount",
+        "reduce_prefix": "reduce_out",
+        "num_reduces": 5,
+        "top_n": 10,
+        "output": "histogram.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "ActionContainers": {
+    "transcribe": "ghcr.io/faasr/github-actions-python:latest",
+    "split": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "FunctionGitRepo": {
+    "transcribe_pdf": "nolcut/FaaSr-workflow-testing/main/functions/transcribe_pdf.py",
+    "split_transcription": "nolcut/FaaSr-workflow-testing/main/functions/split_transcription.py",
+    "map_wordcount": "nolcut/FaaSr-workflow-testing/main/functions/map_wordcount.py",
+    "shuffle_counts": "nolcut/FaaSr-workflow-testing/main/functions/shuffle_counts.py",
+    "reduce_counts": "nolcut/FaaSr-workflow-testing/main/functions/reduce_counts.py",
+    "visualize_histogram": "nolcut/FaaSr-workflow-testing/main/functions/visualize_histogram.py"
+  },
+  "PyPIPackageDownloads": {
+    "transcribe_pdf": [
+      "pypdf"
+    ],
+    "visualize_histogram": [
+      "matplotlib"
+    ]
+  },
+  "FunctionInvoke": "transcribe",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationID": "pdf-mapreduce-wordcount",
+  "WorkflowName": "PdfMapReduceWordCount"
+}
