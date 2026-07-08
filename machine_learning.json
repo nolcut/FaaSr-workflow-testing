@@ -7,14 +7,14 @@
         "n_features": 1024
       },
       "InvokeNext": [
-        "train_svm",
-        "train_rf"
+        "train-svm",
+        "train-rf"
       ],
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "gen"
     },
-    "train_svm": {
+    "train-svm": {
       "Arguments": {
         "folder": "MachineLearning"
       },
@@ -23,7 +23,7 @@
       "Type": "Python",
       "FunctionName": "train_svm"
     },
-    "train_rf": {
+    "train-rf": {
       "Arguments": {
         "folder": "MachineLearning"
       },
@@ -54,8 +54,8 @@
   },
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
-    "train_svm": "ghcr.io/faasr/github-actions-python:latest",
-    "train_rf": "ghcr.io/faasr/github-actions-python:latest"
+    "train-svm": "ghcr.io/faasr/github-actions-python:latest",
+    "train-rf": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionInvoke": "gen",
   "DefaultDataStore": "S3",
