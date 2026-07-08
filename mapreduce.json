@@ -1,0 +1,100 @@
+{
+  "WorkflowName": "MapReduceWordCount",
+  "FunctionInvoke": "split",
+  "InvocationID": "mapreduce",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "ActionList": {
+    "split": {
+      "FunctionName": "split",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "mapreduce",
+        "N": 3,
+        "W": 5000,
+        "vocab": [
+          "cat",
+          "dog",
+          "bird",
+          "horse",
+          "pig"
+        ],
+        "seed": 42
+      },
+      "InvokeNext": [
+        "map(3)"
+      ]
+    },
+    "map": {
+      "FunctionName": "map_count",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "mapreduce"
+      },
+      "InvokeNext": [
+        "shuffle"
+      ]
+    },
+    "shuffle": {
+      "FunctionName": "shuffle",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "mapreduce",
+        "M": 5
+      },
+      "InvokeNext": [
+        "reduce(5)"
+      ]
+    },
+    "reduce": {
+      "FunctionName": "reduce_count",
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "Arguments": {
+        "folder": "mapreduce"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "ActionContainers": {
+    "split": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "FunctionGitRepo": {
+    "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
+    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
+    "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
+    "reduce_count": "nolcut/FaaSr-workflow-testing/main/functions/reduce_count.py"
+  },
+  "PyPIPackageDownloads": {
+    "split": [],
+    "map_count": [],
+    "shuffle": [],
+    "reduce_count": []
+  }
+}
