@@ -5,7 +5,6 @@
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationID": "",
-
   "ActionList": {
     "gen": {
       "FunctionName": "gen",
@@ -40,40 +39,47 @@
       "InvokeNext": []
     }
   },
-
   "ComputeServers": {
     "GH": {
       "FaaSType": "GitHubActions",
-      "UserName": "<GITHUB_USERNAME>",
-      "ActionRepoName": "<ACTION_REPO_NAME>",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
       "Branch": "main",
       "UseSecretStore": true
     }
   },
-
   "DataStores": {
     "S3": {
-      "Endpoint": "<S3_ENDPOINT>",
-      "Bucket": "<S3_BUCKET>",
-      "Region": "<S3_REGION>"
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
     }
   },
-
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "train_svm": "ghcr.io/faasr/github-actions-python:latest",
     "train_rf": "ghcr.io/faasr/github-actions-python:latest"
   },
-
   "FunctionGitRepo": {
-    "gen": "<ORG>/<REPO>/<PATH>",
-    "train_svm": "<ORG>/<REPO>/<PATH>",
-    "train_rf": "<ORG>/<REPO>/<PATH>"
+    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
+    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py"
   },
-
   "PyPIPackageDownloads": {
-    "gen": ["scikit-learn", "numpy"],
-    "train_svm": ["scikit-learn", "numpy"],
-    "train_rf": ["scikit-learn", "numpy"]
+    "gen": [
+      "scikit-learn",
+      "numpy"
+    ],
+    "train_svm": [
+      "scikit-learn",
+      "numpy"
+    ],
+    "train_rf": [
+      "scikit-learn",
+      "numpy"
+    ]
   }
 }
