@@ -12,7 +12,8 @@
       "Type": "Python",
       "Arguments": {
         "N": 500,
-        "M": 1024
+        "M": 1024,
+        "folder": "ml_data"
       },
       "InvokeNext": [
         "train-svm",
@@ -23,14 +24,18 @@
       "FunctionName": "train_svm",
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {},
+      "Arguments": {
+        "folder": "ml_data"
+      },
       "InvokeNext": []
     },
     "train-rf": {
       "FunctionName": "train_rf",
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {},
+      "Arguments": {
+        "folder": "ml_data"
+      },
       "InvokeNext": []
     }
   },
