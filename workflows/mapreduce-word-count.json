@@ -12,7 +12,7 @@
       "FunctionName": "generate_input_text",
       "Arguments": {
         "folder": "MapReduce",
-        "output1": "raw_input_text.json"
+        "output1": "input_text.json"
       },
       "InvokeNext": [
         "split"
@@ -24,20 +24,20 @@
       "FunctionName": "split",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "raw_input_text.json",
-        "output1": "text_chunk_{rank}.json"
+        "input1": "input_text.json",
+        "output1": "text_batch_{rank}.json"
       },
       "InvokeNext": [
-        "map-word-count(3)"
+        "map-count(3)"
       ]
     },
-    "map-word-count": {
+    "map-count": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map_word_count",
+      "FunctionName": "map_count",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "text_chunk_{rank}.json",
+        "input1": "text_batch_{rank}.json",
         "output1": "map_result_{rank}.json"
       },
       "InvokeNext": [
@@ -51,20 +51,20 @@
       "Arguments": {
         "folder": "MapReduce",
         "input1": "map_result_{rank}.json",
-        "output1": "shuffled_word_{rank}.json"
+        "output1": "shuffle_group_{rank}.json"
       },
       "InvokeNext": [
-        "reduce-word-totals(5)"
+        "reduce-count(5)"
       ]
     },
-    "reduce-word-totals": {
+    "reduce-count": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "reduce_word_totals",
+      "FunctionName": "reduce_count",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "shuffled_word_{rank}.json",
-        "output1": "word_total_{rank}.json"
+        "input1": "shuffle_group_{rank}.json",
+        "output1": "reduce_result_{rank}.json"
       },
       "InvokeNext": []
     }
@@ -72,9 +72,9 @@
   "ActionContainers": {
     "generate-input-text": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
-    "map-word-count": "ghcr.io/faasr/github-actions-python:latest",
+    "map-count": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce-word-totals": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce-count": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -98,8 +98,8 @@
   "FunctionGitRepo": {
     "generate_input_text": "nolcut/FaaSr-workflow-testing/main/functions/generate_input_text.py",
     "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
-    "map_word_count": "nolcut/FaaSr-workflow-testing/main/functions/map_word_count.py",
+    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
     "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
-    "reduce_word_totals": "nolcut/FaaSr-workflow-testing/main/functions/reduce_word_totals.py"
+    "reduce_count": "nolcut/FaaSr-workflow-testing/main/functions/reduce_count.py"
   }
 }
