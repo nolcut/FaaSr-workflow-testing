@@ -25,20 +25,20 @@
       "Arguments": {
         "folder": "MapReduce",
         "input1": "input_text.json",
-        "output1": "text_batch_{rank}.json"
+        "output1": "chunk_{rank}.json"
       },
       "InvokeNext": [
-        "map-count(3)"
+        "map(3)"
       ]
     },
-    "map-count": {
+    "map": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map_count",
+      "FunctionName": "map",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "text_batch_{rank}.json",
-        "output1": "map_result_{rank}.json"
+        "input1": "chunk_{rank}.json",
+        "output1": "partial_counts_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -50,21 +50,23 @@
       "FunctionName": "shuffle",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "map_result_{rank}.json",
-        "output1": "shuffle_group_{rank}.json"
+        "input1": "partial_counts_{rank}.json",
+        "output1": "word_counts_{rank}.json",
+        "output2": "rank_word_map.json"
       },
       "InvokeNext": [
-        "reduce-count(5)"
+        "reduce(5)"
       ]
     },
-    "reduce-count": {
+    "reduce": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "reduce_count",
+      "FunctionName": "reduce",
       "Arguments": {
         "folder": "MapReduce",
-        "input1": "shuffle_group_{rank}.json",
-        "output1": "reduce_result_{rank}.json"
+        "input1": "word_counts_{rank}.json",
+        "input2": "rank_word_map.json",
+        "output1": "final_count_{rank}.json"
       },
       "InvokeNext": []
     }
@@ -72,9 +74,9 @@
   "ActionContainers": {
     "generate-input-text": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
-    "map-count": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce-count": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -98,8 +100,8 @@
   "FunctionGitRepo": {
     "generate_input_text": "nolcut/FaaSr-workflow-testing/main/functions/generate_input_text.py",
     "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
-    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
+    "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
     "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
-    "reduce_count": "nolcut/FaaSr-workflow-testing/main/functions/reduce_count.py"
+    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py"
   }
 }
