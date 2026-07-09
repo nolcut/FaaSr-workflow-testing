@@ -1,4 +1,4 @@
-name: VideoAnalysis-detect
+name: VideoAnalysis-Detect
 
 on:
     workflow_dispatch:
