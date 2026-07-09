@@ -1,88 +1,74 @@
-import os
 import json
+import os
 
 
 def shuffle(folder: str, input1: str, output1: str) -> None:
-    # Number of reducers (M). This function feeds the ranked successor
-    # reduce_word_count, which runs as exactly 5 parallel instances, so we
-    # must emit exactly 5 output shards. This function is NOT itself ranked,
-    # so we do NOT call faasr_rank(); the count is the literal fan-out value.
-    num_reducers = 5
+    # Fan-in from ranked predecessor map_word_count (x3). Discover ALL of its
+    # per-rank outputs at runtime (do not assume a fixed count, no boto3).
+    prefix_part, suffix_part = input1.split("{rank}")  # "map_result_", ".json"
 
-    # Fan-in from the ranked predecessor map_word_count: discover ALL of its
-    # per-rank outputs (do not assume a fixed count, do not use boto3).
-    # input1 is a pattern like "map_counts_{rank}.json"; match basenames by
-    # its literal prefix/suffix around the {rank} placeholder.
-    prefix_part, suffix_part = input1.split("{rank}")
-    all_keys = faasr_get_folder_list(prefix=folder)
+    names = faasr_get_folder_list(prefix=folder)
     map_files = []
-    for key in all_keys:
-        base = key.rsplit("/", 1)[-1]
-        if base.startswith(prefix_part) and base.endswith(suffix_part) and base != prefix_part + suffix_part:
-            map_files.append(base)
-    map_files = sorted(set(map_files))
+    for name in names:
+        base = name.rsplit("/", 1)[-1]
+        middle = base[len(prefix_part):-len(suffix_part)] if suffix_part else base[len(prefix_part):]
+        if base.startswith(prefix_part) and base.endswith(suffix_part) and middle.isdigit():
+            map_files.append((int(middle), base))
 
     if not map_files:
-        faasr_log(
-            f"shuffle: found no map outputs matching '{input1}' under {folder}."
-        )
-        raise ValueError("No map_word_count outputs found to shuffle")
+        msg = f"shuffle: no map-result files matching '{input1}' found in folder '{folder}'"
+        faasr_log(msg)
+        raise FileNotFoundError(msg)
 
-    faasr_log(f"shuffle: found {len(map_files)} map outputs: {map_files}")
+    # Deterministic order of mapper contributions (by mapper rank).
+    map_files.sort(key=lambda t: t[0])
+    faasr_log(f"shuffle: found {len(map_files)} map outputs: {[b for _, b in map_files]}")
 
-    # Flatten the per-map partial counts and regroup by word: each word maps
-    # to the list of its partial counts collected from every map output.
-    grouped = {}
-    for base in map_files:
+    # Flatten/regroup: gather all partial counts belonging to the same word.
+    # Vocabulary M is derived at runtime from the union of words across maps.
+    word_to_counts = {}
+    for _, base in map_files:
         local_in = base
         faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=base)
         with open(local_in, "r") as f:
-            content = f.read()
-        if not content.strip():
-            faasr_log(f"shuffle: map output {base} is empty or missing.")
-            raise ValueError(f"Map output {base} is empty")
-        partial = json.loads(content)
+            partial = json.load(f)
         if not isinstance(partial, dict):
-            faasr_log(
-                f"shuffle: expected a JSON object (word->count) in {base}, "
-                f"got {type(partial).__name__}."
+            raise ValueError(
+                f"shuffle: expected {base} to contain a JSON object word->count, "
+                f"got {type(partial).__name__}"
             )
-            raise ValueError(f"Map output {base} is not a word->count object")
         for word, count in partial.items():
-            grouped.setdefault(word, []).append(count)
+            word_to_counts.setdefault(word, []).append(count)
         if os.path.exists(local_in):
             os.remove(local_in)
 
-    # Discover the full vocabulary as the sorted union of all words, and assign
-    # words to reducers deterministically by sorted order (reducer of a given
-    # rank always handles the same word). Generalizable to any vocabulary size.
-    vocabulary = sorted(grouped.keys())
+    # Assign each distinct word a deterministic rank by sorted word order.
+    distinct_words = sorted(word_to_counts.keys())
+    num_words = len(distinct_words)
     faasr_log(
-        f"shuffle: regrouped {len(vocabulary)} distinct words {vocabulary} "
-        f"across {num_reducers} reducers."
+        f"shuffle: {num_words} distinct words derived at runtime -> "
+        f"writing {num_words} ranked shuffled shards: {distinct_words}"
     )
 
-    for i in range(1, num_reducers + 1):
-        # Reducer i (1-based) handles the (i-1)-th sorted word, if present.
-        if i - 1 < len(vocabulary):
-            word = vocabulary[i - 1]
-            counts = grouped[word]
-        else:
-            # Fewer distinct words than reducers: emit an empty group so the
-            # ranked successor still has an input for every rank.
-            word = None
-            counts = []
-
-        group = {"word": word, "counts": counts}
-        local_out = f"shuffle_group_{i}.json"
+    # Emit one ranked shard per distinct word. Each shard is self-describing:
+    # it carries the sorted word set so the reducer can derive its assigned word
+    # by rank index, plus this word's partial counts from every mapper.
+    for i, word in enumerate(distinct_words, start=1):
+        payload = {
+            "rank": i,
+            "word": word,
+            "words": distinct_words,
+            "counts": word_to_counts[word],
+        }
+        local_out = f"shuffled_word_{i}.json"
         with open(local_out, "w") as f:
-            json.dump(group, f)
+            json.dump(payload, f)
 
         remote_out = output1.replace("{rank}", str(i))
         faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
         faasr_log(
-            f"shuffle: reducer {i} assigned word={word!r} with partial counts "
-            f"{counts} -> {folder}/{remote_out}."
+            f"shuffle: wrote {remote_out} for word '{word}' with "
+            f"counts {word_to_counts[word]}"
         )
         if os.path.exists(local_out):
             os.remove(local_out)
