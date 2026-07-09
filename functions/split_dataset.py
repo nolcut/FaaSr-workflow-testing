@@ -1,40 +1,53 @@
-import math
+def split_dataset(folder="MapReduce", input_file="words.txt", num_parts=3):
+    """
+    Stage 2 of the MapReduce pipeline.
 
-
-def split_dataset(folder="MapReduce", input_file="words.txt",
-                  part_prefix="part", num_parts=3):
-    """Split the extracted word list into num_parts roughly-equal shards.
-
-    Reads  : <folder>/<input_file>
-    Writes : <folder>/<part_prefix>_1.txt ... <part_prefix>_<num_parts>.txt
-
-    The shard files are consumed by the concurrent rank-based map_words action,
-    where rank r reads <part_prefix>_r.txt.
+    Downloads the extracted word list, splits it into `num_parts` roughly-equal
+    shards and uploads each shard to `folder`/splits/part_<rank>.txt. The number
+    of shards MUST match the rank count used to fan out `map_words` in the
+    workflow JSON (map_words(N)), so each map invocation with rank R reads
+    part_R.txt.
     """
     num_parts = int(num_parts)
 
-    # Download the full word list produced by extract_words.
-    faasr_get_file(remote_folder=folder, remote_file=input_file,
-                   local_folder=".", local_file=input_file)
+    # 1. Download the full word list produced by extract_words.
+    faasr_log(f"split_dataset: downloading {folder}/{input_file}")
+    faasr_get_file(
+        remote_folder=folder,
+        remote_file=input_file,
+        local_folder=".",
+        local_file="words.txt",
+    )
 
-    with open(input_file, "r", encoding="utf-8") as f:
-        words = [w for w in f.read().splitlines() if w.strip()]
+    with open("words.txt") as fh:
+        words = fh.read().split()
 
-    # Compute a chunk size so the words are distributed across num_parts shards.
-    chunk_size = max(1, math.ceil(len(words) / num_parts))
+    total = len(words)
+    faasr_log(f"split_dataset: splitting {total} words into {num_parts} parts")
 
-    for r in range(1, num_parts + 1):
-        start = (r - 1) * chunk_size
-        end = start + chunk_size
-        shard = words[start:end]  # may be empty for trailing ranks
+    # 2. Compute contiguous, balanced chunk boundaries.
+    #    Ranks are 1-indexed in FaaSr, so part files are named part_1..part_N.
+    base = total // num_parts
+    remainder = total % num_parts
 
-        part_file = f"{part_prefix}_{r}.txt"
-        with open(part_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(shard))
+    start = 0
+    for i in range(num_parts):
+        rank = i + 1
+        size = base + (1 if i < remainder else 0)
+        chunk = words[start:start + size]
+        start += size
 
-        faasr_put_file(local_folder=".", local_file=part_file,
-                       remote_folder=folder, remote_file=part_file)
-        faasr_log(f"split_dataset: wrote {len(shard)} words to "
-                  f"{folder}/{part_file}")
+        local_name = f"part_{rank}.txt"
+        with open(local_name, "w") as fh:
+            fh.write(" ".join(chunk))
 
-    faasr_log(f"split_dataset: split {len(words)} words into {num_parts} parts")
+        faasr_put_file(
+            local_folder=".",
+            local_file=local_name,
+            remote_folder=f"{folder}/splits",
+            remote_file=f"part_{rank}.txt",
+        )
+        faasr_log(
+            f"split_dataset: wrote {len(chunk)} words to "
+            f"{folder}/splits/part_{rank}.txt"
+        )
