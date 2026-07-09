@@ -8,35 +8,30 @@
 
   "ActionList": {
     "gen": {
+      "FunctionName": "gen",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "gen",
       "Arguments": {
         "N": 500,
-        "M": 1024,
-        "folder": "ml"
+        "M": 1024
       },
       "InvokeNext": [
         "svm",
-        "rf"
+        "random-forest"
       ]
     },
     "svm": {
+      "FunctionName": "svm",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_svm",
-      "Arguments": {
-        "folder": "ml"
-      },
+      "Arguments": {},
       "InvokeNext": []
     },
-    "rf": {
+    "random-forest": {
+      "FunctionName": "random_forest",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_rf",
-      "Arguments": {
-        "folder": "ml"
-      },
+      "Arguments": {},
       "InvokeNext": []
     }
   },
@@ -45,9 +40,9 @@
     "GH": {
       "FaaSType": "GitHubActions",
       "UserName": "<GITHUB_USERNAME>",
-      "UseSecretStore": true,
       "ActionRepoName": "<ACTION_REPO_NAME>",
-      "Branch": "main"
+      "Branch": "main",
+      "UseSecretStore": true
     }
   },
 
@@ -62,27 +57,18 @@
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "svm": "ghcr.io/faasr/github-actions-python:latest",
-    "rf": "ghcr.io/faasr/github-actions-python:latest"
+    "random-forest": "ghcr.io/faasr/github-actions-python:latest"
   },
 
   "FunctionGitRepo": {
     "gen": "<ORG>/<REPO>/<PATH>",
-    "train_svm": "<ORG>/<REPO>/<PATH>",
-    "train_rf": "<ORG>/<REPO>/<PATH>"
+    "svm": "<ORG>/<REPO>/<PATH>",
+    "random_forest": "<ORG>/<REPO>/<PATH>"
   },
 
   "PyPIPackageDownloads": {
-    "gen": [
-      "scikit-learn",
-      "numpy"
-    ],
-    "svm": [
-      "scikit-learn",
-      "numpy"
-    ],
-    "rf": [
-      "scikit-learn",
-      "numpy"
-    ]
+    "gen": ["numpy", "scikit-learn"],
+    "svm": ["numpy", "scikit-learn"],
+    "random_forest": ["numpy", "scikit-learn"]
   }
 }
