@@ -1,0 +1,90 @@
+{
+  "ActionList": {
+    "Decode": {
+      "Arguments": {
+        "folder": "video_analysis",
+        "video_file": "video_small.mp4",
+        "num_frames": 10,
+        "batch_size": 5,
+        "num_batches": 2
+      },
+      "InvokeNext": [
+        "Detect(2)"
+      ],
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "decode"
+    },
+    "Detect": {
+      "Arguments": {
+        "folder": "video_analysis",
+        "batch_size": 5,
+        "score_threshold": 0.5,
+        "model_weights": "frozen_inference_graph.pb",
+        "model_config": "faster_rcnn_resnet50_coco_2018_01_28.pbtxt"
+      },
+      "InvokeNext": [
+        "Accumulate"
+      ],
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "detect"
+    },
+    "Accumulate": {
+      "Arguments": {
+        "folder": "video_analysis",
+        "num_batches": 2,
+        "output_file": "detections.json"
+      },
+      "InvokeNext": [],
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "accumulate"
+    }
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "ActionContainers": {
+    "Decode": "ghcr.io/faasr/github-actions-python:latest",
+    "Detect": "ghcr.io/faasr/github-actions-python:latest",
+    "Accumulate": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "FunctionInvoke": "Decode",
+  "DefaultDataStore": "S3",
+  "FunctionGitRepo": {
+    "decode": "nolcut/FaaSr-workflow-testing/main/functions/decode.py",
+    "detect": "nolcut/FaaSr-workflow-testing/main/functions/detect.py",
+    "accumulate": "nolcut/FaaSr-workflow-testing/main/functions/accumulate.py"
+  },
+  "PyPIPackageDownloads": {
+    "decode": [
+      "opencv-python-headless",
+      "numpy"
+    ],
+    "detect": [
+      "opencv-python-headless",
+      "numpy"
+    ]
+  },
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "WorkflowName": "VideoAnalysis",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S"
+}
