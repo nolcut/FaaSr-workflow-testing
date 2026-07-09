@@ -6,54 +6,51 @@ from pypdf import PdfReader
 
 
 def extract_words(folder: str, input1: str, output1: str) -> None:
-    # Fetch the source PDF from the MapReduce/ folder into a local temp file.
-    local_pdf = "words.pdf"
-    faasr_get_file(local_file=local_pdf, remote_folder=folder, remote_file=input1)
+    # Download the source PDF from the MapReduce/ folder and derive the word
+    # list purely from its text contents (no synthetic vocabulary generation).
+    local_input = "words.pdf"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
 
-    if not os.path.exists(local_pdf) or os.path.getsize(local_pdf) == 0:
-        msg = f"Input PDF {folder}/{input1} is missing or empty; cannot extract words"
+    if not os.path.exists(local_input) or os.path.getsize(local_input) == 0:
+        msg = f"PDF {folder}/{input1} is missing or empty; cannot extract words"
         faasr_log(msg)
-        raise FileNotFoundError(msg)
+        raise RuntimeError(msg)
 
-    # Read the PDF and extract text from every page.
     try:
-        reader = PdfReader(local_pdf)
+        reader = PdfReader(local_input)
     except Exception as e:
-        msg = f"Failed to parse PDF {folder}/{input1}: {e}"
+        msg = f"Failed to read PDF {folder}/{input1}: {e}"
         faasr_log(msg)
         raise
 
+    faasr_log(f"Read PDF {folder}/{input1} with {len(reader.pages)} page(s)")
+
     text_parts = []
-    for page_num, page in enumerate(reader.pages):
+    for page in reader.pages:
         page_text = page.extract_text() or ""
         text_parts.append(page_text)
-    faasr_log(f"Extracted text from {len(reader.pages)} page(s) of {folder}/{input1}")
-
     full_text = "\n".join(text_parts)
 
-    # Tokenize into words. Derive the vocabulary purely from the PDF content:
-    # a word is a maximal run of letters/digits (with internal apostrophes/hyphens),
-    # lowercased for consistent downstream counting.
-    tokens = re.findall(r"[A-Za-z0-9]+(?:['\-][A-Za-z0-9]+)*", full_text)
-    words = [t.lower() for t in tokens]
+    # Tokenize into words: sequences of alphanumeric characters (and apostrophes),
+    # lowercased so the downstream word count is case-insensitive.
+    words = re.findall(r"[A-Za-z0-9']+", full_text.lower())
 
     if not words:
-        msg = f"No words could be extracted from {folder}/{input1}"
+        msg = f"No words extracted from PDF {folder}/{input1}"
         faasr_log(msg)
-        raise ValueError(msg)
+        raise RuntimeError(msg)
 
-    faasr_log(f"Tokenized {len(words)} words from {folder}/{input1}")
+    faasr_log(f"Extracted {len(words)} words from PDF text")
 
-    # Write the word list as a JSON array to the local temp file, then upload.
-    local_out = "input_text.json"
-    with open(local_out, "w") as f:
+    local_output = "input_text.json"
+    with open(local_output, "w") as f:
         json.dump(words, f)
 
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"Wrote {len(words)} words to {folder}/{output1}")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=output1)
+    faasr_log(f"Wrote word list ({len(words)} words) to {folder}/{output1}")
 
-    for tmp in (local_pdf, local_out):
+    for f in (local_input, local_output):
         try:
-            os.remove(tmp)
+            os.remove(f)
         except OSError:
             pass
