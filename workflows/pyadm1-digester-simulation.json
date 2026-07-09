@@ -11,10 +11,10 @@
       "Type": "Python",
       "FunctionName": "validate_inputs",
       "Arguments": {
-        "folder": "workflow_data",
+        "folder": "PyADM1-orig",
         "input1": "digester_influent.csv",
         "input2": "digester_initial.csv",
-        "output1": "validation_report.csv"
+        "output1": "validation_report.json"
       },
       "InvokeNext": [
         "pyadm1"
@@ -25,7 +25,7 @@
       "Type": "Python",
       "FunctionName": "pyadm1",
       "Arguments": {
-        "folder": "workflow_data",
+        "folder": "PyADM1-orig",
         "input1": "digester_influent.csv",
         "input2": "digester_initial.csv",
         "output1": "dynamic_out.csv"
@@ -39,7 +39,7 @@
       "Type": "Python",
       "FunctionName": "visualize_outputs",
       "Arguments": {
-        "folder": "workflow_data",
+        "folder": "PyADM1-orig",
         "input1": "dynamic_out.csv",
         "output1": "simulation_plots.png"
       },
@@ -80,9 +80,9 @@
       "pandas"
     ],
     "pyadm1": [
-      "numpy",
+      "numpy<2",
+      "pandas<2",
       "scipy",
-      "pandas",
       "matplotlib"
     ],
     "visualize_outputs": [
