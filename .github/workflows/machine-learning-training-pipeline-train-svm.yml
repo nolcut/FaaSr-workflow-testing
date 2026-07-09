@@ -16,6 +16,7 @@ jobs:
         container: ghcr.io/faasr/github-actions-python:latest
 
         env:
+            AGENT_KEY: ${{ secrets.AGENT_KEY}}
             GH_PAT: ${{ secrets.GH_PAT}}
             S3_AccessKey: ${{ secrets.S3_AccessKey}}
             S3_SecretKey: ${{ secrets.S3_SecretKey}}
