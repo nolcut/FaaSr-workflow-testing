@@ -1,17 +1,17 @@
 {
-  "WorkflowName": "PyADM1Pipeline",
+  "WorkflowName": "PyADM1Workflow",
   "FunctionInvoke": "validate",
-  "InvocationID": "",
-  "FaaSrLog": "FaaSrLog",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationID": "",
   "ActionList": {
     "validate": {
       "FunctionName": "validate_inputs",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "input_folder": "pyadm1-inputs",
+        "folder": "pyadm1",
         "influent_file": "digester_influent.csv",
         "initial_file": "digester_initial.csv"
       },
@@ -24,8 +24,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "validated_folder": "pyadm1-validated",
-        "output_folder": "pyadm1-outputs",
+        "folder": "pyadm1",
         "influent_file": "digester_influent.csv",
         "initial_file": "digester_initial.csv",
         "output_file": "dynamic_out.csv"
@@ -35,16 +34,15 @@
       ]
     },
     "visualize": {
-      "FunctionName": "visualize_outputs",
+      "FunctionName": "visualize_adm1",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "output_folder": "pyadm1-outputs",
-        "validated_folder": "pyadm1-validated",
-        "output_file": "dynamic_out.csv",
-        "influent_file": "digester_influent.csv",
-        "plot_file": "pyadm1_results.png"
-      }
+        "folder": "pyadm1",
+        "results_file": "dynamic_out.csv",
+        "output_file": "adm1_dashboard.png"
+      },
+      "InvokeNext": []
     }
   },
   "ComputeServers": {
@@ -74,23 +72,20 @@
   "FunctionGitRepo": {
     "validate_inputs": "nolcut/FaaSr-workflow-testing/main/functions/validate_inputs.py",
     "run_pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/run_pyadm1.py",
-    "visualize_outputs": "nolcut/FaaSr-workflow-testing/main/functions/visualize_outputs.py"
+    "visualize_adm1": "nolcut/FaaSr-workflow-testing/main/functions/visualize_adm1.py"
   },
   "PyPIPackageDownloads": {
     "validate_inputs": [
-      "pandas==1.5.3",
-      "numpy==1.24.4"
+      "pandas"
     ],
     "run_pyadm1": [
-      "pandas==1.5.3",
-      "numpy==1.24.4",
-      "scipy==1.10.1",
-      "matplotlib==3.7.5"
+      "numpy",
+      "scipy",
+      "pandas"
     ],
-    "visualize_outputs": [
-      "pandas==1.5.3",
-      "numpy==1.24.4",
-      "matplotlib==3.7.5"
+    "visualize_adm1": [
+      "pandas",
+      "matplotlib"
     ]
   }
 }
