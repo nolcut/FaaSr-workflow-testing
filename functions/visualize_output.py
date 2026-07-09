@@ -2,100 +2,86 @@ import json
 import os
 
 import matplotlib
-matplotlib.use("Agg")  # headless, non-interactive backend (no display in container)
+matplotlib.use("Agg")  # headless backend — no display server in the container
 import matplotlib.pyplot as plt
 
 
 def visualize_output(folder: str, input1: str, output1: str) -> None:
-    # input1 is a rank-templated name like "word_total_{rank}.json". Derive the
-    # static prefix/suffix so we can discover ALL reducer outputs at runtime
-    # (do not hardcode any count or word list).
-    if "{rank}" in input1:
-        prefix_frag, suffix_frag = input1.split("{rank}", 1)
-    else:
-        prefix_frag, suffix_frag = input1, ""
+    # input1 is a template like "final_count_{rank}.json". Derive the static
+    # prefix/suffix so we can discover every per-reducer result file at runtime
+    # without hardcoding the number of reducers.
+    prefix_part = input1.split("{rank}")[0]  # "final_count_"
+    suffix_part = input1.split("{rank}")[-1]  # ".json"
 
-    # Discover every reducer output in the folder. faasr_get_folder_list returns
-    # FULL object keys including the folder prefix; match on the basename.
-    all_keys = faasr_get_folder_list(prefix=folder)
-    basenames = sorted(
-        {
-            k.rsplit("/", 1)[-1]
-            for k in all_keys
-            if k.rsplit("/", 1)[-1].startswith(prefix_frag)
-            and k.rsplit("/", 1)[-1].endswith(suffix_frag)
-        }
-    )
+    # Discover the ranked final-count files in the folder (FULL object keys).
+    keys = faasr_get_folder_list(prefix=f"{folder}/{prefix_part}")
+    result_files = []
+    for key in keys:
+        base = key.rsplit("/", 1)[-1]
+        if base.startswith(prefix_part) and base.endswith(suffix_part):
+            result_files.append(base)
+    result_files = sorted(set(result_files))
 
-    if not basenames:
+    if not result_files:
         msg = (
-            f"visualize_output: no reducer outputs matching '{prefix_frag}*{suffix_frag}' "
-            f"found in folder {folder}"
+            f"No reducer result files matching '{prefix_part}*{suffix_part}' "
+            f"found in {folder}"
         )
         faasr_log(msg)
-        raise RuntimeError(msg)
+        raise FileNotFoundError(msg)
 
-    faasr_log(
-        f"visualize_output: discovered {len(basenames)} reducer output(s): {basenames}"
-    )
+    faasr_log(f"Discovered {len(result_files)} reducer result file(s): {result_files}")
 
-    # Assemble the word -> total-count mapping across all reducers.
-    word_totals = {}
-    for name in basenames:
-        local_file = name
-        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=name)
-
+    # Load each result and merge into the combined word->count mapping.
+    word_counts = {}
+    for base in result_files:
+        local_file = base
+        faasr_get_file(local_file=local_file, remote_folder=folder, remote_file=base)
         with open(local_file, "r") as f:
-            data = json.load(f)
-
-        if not isinstance(data, dict) or "word" not in data or "total" not in data:
-            msg = (
-                f"visualize_output: {name} is missing expected keys "
-                f"('word', 'total'); got {type(data).__name__}"
+            part = json.load(f)
+        if not isinstance(part, dict):
+            raise ValueError(
+                f"Expected a JSON object (word->count) in {base}, "
+                f"got {type(part).__name__}"
             )
-            faasr_log(msg)
-            raise ValueError(msg)
-
-        word = data["word"]
-        total = data["total"]
-        # Combine defensively in case two reducers report the same word.
-        word_totals[word] = word_totals.get(word, 0) + total
-
-        if os.path.exists(local_file):
+        for word, count in part.items():
+            word_counts[word] = word_counts.get(word, 0) + count
+        try:
             os.remove(local_file)
+        except OSError:
+            pass
 
-    if not word_totals:
-        msg = "visualize_output: no word totals assembled from reducer outputs"
+    if not word_counts:
+        msg = f"Reducer result files in {folder} contained no word counts"
         faasr_log(msg)
-        raise RuntimeError(msg)
+        raise ValueError(msg)
 
-    # Order words by descending count for a readable chart.
-    items = sorted(word_totals.items(), key=lambda kv: (-kv[1], kv[0]))
+    faasr_log(f"Aggregated {len(word_counts)} words: {word_counts}")
+
+    # Sort by descending count (then word) for a readable chart.
+    items = sorted(word_counts.items(), key=lambda kv: (-kv[1], kv[0]))
     words = [w for w, _ in items]
     counts = [c for _, c in items]
 
-    faasr_log(
-        f"visualize_output: rendering bar chart for {len(words)} words; "
-        f"totals sum to {sum(counts)}"
-    )
-
-    # Render the bar chart, scaling width with the vocabulary size.
+    local_out = "word_count_chart.png"
     fig_width = max(6.0, 0.5 * len(words))
     fig, ax = plt.subplots(figsize=(fig_width, 6.0))
     ax.bar(range(len(words)), counts, color="steelblue")
     ax.set_xticks(range(len(words)))
-    ax.set_xticklabels(words, rotation=90, ha="center")
+    ax.set_xticklabels(words, rotation=45, ha="right")
     ax.set_xlabel("Word")
-    ax.set_ylabel("Total occurrence count")
-    ax.set_title("MapReduce word count totals")
+    ax.set_ylabel("Count")
+    ax.set_title("Word Count")
+    for i, c in enumerate(counts):
+        ax.text(i, c, str(c), ha="center", va="bottom")
     fig.tight_layout()
-
-    local_out = "word_count_chart.png"
     fig.savefig(local_out, dpi=150)
     plt.close(fig)
 
     faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"visualize_output: wrote chart {output1} to {folder}")
+    faasr_log(f"Wrote word-count chart to {folder}/{output1}")
 
-    if os.path.exists(local_out):
+    try:
         os.remove(local_out)
+    except OSError:
+        pass
