@@ -16,11 +16,15 @@
         "initial_file": "digester_initial.csv"
       },
       "InvokeNext": [
-        "simulate"
+        {
+          "True": [
+            "simulate"
+          ]
+        }
       ]
     },
     "simulate": {
-      "FunctionName": "run_pyadm1",
+      "FunctionName": "run_simulation",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
@@ -34,15 +38,15 @@
       ]
     },
     "visualize": {
-      "FunctionName": "visualize_adm1",
+      "FunctionName": "visualize_outputs",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
         "folder": "pyadm1",
-        "results_file": "dynamic_out.csv",
-        "output_file": "adm1_dashboard.png"
-      },
-      "InvokeNext": []
+        "output_file": "dynamic_out.csv",
+        "influent_file": "digester_influent.csv",
+        "plot_file": "adm1_outputs.png"
+      }
     }
   },
   "ComputeServers": {
@@ -71,19 +75,21 @@
   },
   "FunctionGitRepo": {
     "validate_inputs": "nolcut/FaaSr-workflow-testing/main/functions/validate_inputs.py",
-    "run_pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/run_pyadm1.py",
-    "visualize_adm1": "nolcut/FaaSr-workflow-testing/main/functions/visualize_adm1.py"
+    "run_simulation": "nolcut/FaaSr-workflow-testing/main/functions/run_simulation.py",
+    "visualize_outputs": "nolcut/FaaSr-workflow-testing/main/functions/visualize_outputs.py"
   },
   "PyPIPackageDownloads": {
     "validate_inputs": [
-      "pandas"
+      "pandas",
+      "numpy"
     ],
-    "run_pyadm1": [
+    "run_simulation": [
       "numpy",
       "scipy",
-      "pandas"
+      "pandas==1.5.3",
+      "matplotlib"
     ],
-    "visualize_adm1": [
+    "visualize_outputs": [
       "pandas",
       "matplotlib"
     ]
