@@ -1,88 +1,75 @@
 {
-  "WorkflowName": "MapReduce-WordCount",
-  "FunctionInvoke": "split",
+  "WorkflowName": "WordCountMapReduce",
+  "FunctionInvoke": "extract-words",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationID": "",
   "ActionList": {
-    "split": {
+    "extract-words": {
+      "FunctionName": "extract_words",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "generate_and_split",
       "Arguments": {
-        "chunks_folder": "MapReduce/chunks",
-        "dataset_folder": "MapReduce/input",
-        "dataset_file": "dataset.txt",
-        "chunk_prefix": "chunk",
-        "num_maps": 3,
-        "total_words": 5000,
-        "words": [
-          "cat",
-          "dog",
-          "bird",
-          "horse",
-          "pig"
-        ],
-        "seed": 42
+        "folder": "MapReduce",
+        "input_pdf": "words.pdf",
+        "output_file": "words.txt"
       },
       "InvokeNext": [
-        "map(3)"
+        "split-dataset"
       ]
     },
-    "map": {
+    "split-dataset": {
+      "FunctionName": "split_dataset",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map_count",
       "Arguments": {
-        "chunks_folder": "MapReduce/chunks",
-        "chunk_prefix": "chunk",
-        "map_folder": "MapReduce/map",
-        "map_prefix": "map"
+        "folder": "MapReduce",
+        "input_file": "words.txt",
+        "part_prefix": "part",
+        "num_parts": 3
       },
       "InvokeNext": [
-        "shuffle"
+        "map-words(3)"
       ]
     },
-    "shuffle": {
+    "map-words": {
+      "FunctionName": "map_words",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "shuffle_flatten",
       "Arguments": {
-        "map_folder": "MapReduce/map",
-        "map_prefix": "map",
-        "group_folder": "MapReduce/shuffle",
-        "group_prefix": "group",
-        "manifest_file": "manifest.json"
+        "folder": "MapReduce",
+        "part_prefix": "part",
+        "map_prefix": "map_out"
       },
       "InvokeNext": [
-        "reduce(5)"
+        "reduce-counts"
       ]
     },
-    "reduce": {
+    "reduce-counts": {
+      "FunctionName": "reduce_counts",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "reduce_count",
       "Arguments": {
-        "group_folder": "MapReduce/shuffle",
-        "group_prefix": "group",
-        "reduce_folder": "MapReduce/reduce",
-        "reduce_prefix": "reduce"
+        "folder": "MapReduce",
+        "map_prefix": "map_out",
+        "output_file": "word_counts.csv"
       },
       "InvokeNext": [
-        "collect"
+        "visualize"
       ]
     },
-    "collect": {
+    "visualize": {
+      "FunctionName": "visualize",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "collect_results",
       "Arguments": {
-        "reduce_folder": "MapReduce/reduce",
-        "reduce_prefix": "reduce",
-        "output_folder": "MapReduce/output",
-        "result_file": "result.json"
-      }
+        "folder": "MapReduce",
+        "input_file": "word_counts.csv",
+        "output_file": "word_counts.png",
+        "top_n": 20
+      },
+      "InvokeNext": []
     }
   },
   "ComputeServers": {
@@ -105,24 +92,28 @@
     }
   },
   "ActionContainers": {
-    "split": "ghcr.io/faasr/github-actions-python:latest",
-    "map": "ghcr.io/faasr/github-actions-python:latest",
-    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce": "ghcr.io/faasr/github-actions-python:latest",
-    "collect": "ghcr.io/faasr/github-actions-python:latest"
+    "extract-words": "ghcr.io/faasr/github-actions-python:latest",
+    "split-dataset": "ghcr.io/faasr/github-actions-python:latest",
+    "map-words": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce-counts": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
-    "generate_and_split": "nolcut/FaaSr-workflow-testing/main/functions/generate_and_split.py",
-    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
-    "shuffle_flatten": "nolcut/FaaSr-workflow-testing/main/functions/shuffle_flatten.py",
-    "reduce_count": "nolcut/FaaSr-workflow-testing/main/functions/reduce_count.py",
-    "collect_results": "nolcut/FaaSr-workflow-testing/main/functions/collect_results.py"
+    "extract_words": "nolcut/FaaSr-workflow-testing/main/functions/extract_words.py",
+    "split_dataset": "nolcut/FaaSr-workflow-testing/main/functions/split_dataset.py",
+    "map_words": "nolcut/FaaSr-workflow-testing/main/functions/map_words.py",
+    "reduce_counts": "nolcut/FaaSr-workflow-testing/main/functions/reduce_counts.py",
+    "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
-    "generate_and_split": [],
-    "map_count": [],
-    "shuffle_flatten": [],
-    "reduce_count": [],
-    "collect_results": []
+    "extract_words": [
+      "pypdf"
+    ],
+    "split_dataset": [],
+    "map_words": [],
+    "reduce_counts": [],
+    "visualize": [
+      "matplotlib"
+    ]
   }
 }
