@@ -1,116 +1,122 @@
 {
-  "WorkflowName": "MapReduceWordCount",
-  "FunctionInvoke": "generate",
-  "DefaultDataStore": "My_S3_Bucket",
-  "LoggingDataStore": "My_S3_Bucket",
+  "WorkflowName": "MapReduce-WordCount",
+  "FunctionInvoke": "split",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationID": "",
 
   "ActionList": {
-    "generate": {
-      "FunctionName": "generate_input",
-      "FaaSServer": "My_GitHub_Account",
-      "Type": "Python",
-      "Arguments": {
-        "folder": "MapReduce",
-        "output_file": "input.txt",
-        "words": ["cat", "dog", "bird", "horse", "pig"],
-        "total_words": 5000,
-        "seed": 42
-      },
-      "InvokeNext": ["split"]
-    },
-
     "split": {
-      "FunctionName": "mr_split",
-      "FaaSServer": "My_GitHub_Account",
+      "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "generate_and_split",
       "Arguments": {
-        "folder": "MapReduce",
-        "input_file": "input.txt",
-        "n_splits": 3,
-        "batch_prefix": "batch_"
+        "chunks_folder": "MapReduce/chunks",
+        "dataset_folder": "MapReduce/input",
+        "dataset_file": "dataset.txt",
+        "chunk_prefix": "chunk",
+        "num_maps": 3,
+        "total_words": 5000,
+        "words": ["cat", "dog", "bird", "horse", "pig"],
+        "seed": 42
       },
       "InvokeNext": ["map(3)"]
     },
 
     "map": {
-      "FunctionName": "mr_map",
-      "FaaSServer": "My_GitHub_Account",
+      "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "map_count",
       "Arguments": {
-        "folder": "MapReduce",
-        "batch_prefix": "batch_",
-        "map_prefix": "map_"
+        "chunks_folder": "MapReduce/chunks",
+        "chunk_prefix": "chunk",
+        "map_folder": "MapReduce/map",
+        "map_prefix": "map"
       },
       "InvokeNext": ["shuffle"]
     },
 
     "shuffle": {
-      "FunctionName": "mr_shuffle",
-      "FaaSServer": "My_GitHub_Account",
+      "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "shuffle_flatten",
       "Arguments": {
-        "folder": "MapReduce",
-        "map_prefix": "map_",
-        "group_prefix": "group_"
+        "map_folder": "MapReduce/map",
+        "map_prefix": "map",
+        "group_folder": "MapReduce/shuffle",
+        "group_prefix": "group",
+        "manifest_file": "manifest.json"
       },
       "InvokeNext": ["reduce(5)"]
     },
 
     "reduce": {
-      "FunctionName": "mr_reduce",
-      "FaaSServer": "My_GitHub_Account",
+      "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "reduce_count",
       "Arguments": {
-        "folder": "MapReduce",
-        "group_prefix": "group_",
-        "result_prefix": "result_"
+        "group_folder": "MapReduce/shuffle",
+        "group_prefix": "group",
+        "reduce_folder": "MapReduce/reduce",
+        "reduce_prefix": "reduce"
       },
-      "InvokeNext": []
+      "InvokeNext": ["collect"]
+    },
+
+    "collect": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "collect_results",
+      "Arguments": {
+        "reduce_folder": "MapReduce/reduce",
+        "reduce_prefix": "reduce",
+        "output_folder": "MapReduce/output",
+        "result_file": "result.json"
+      }
     }
   },
 
   "ComputeServers": {
-    "My_GitHub_Account": {
+    "GH": {
       "FaaSType": "GitHubActions",
-      "UserName": "YOUR_GITHUB_USERNAME",
-      "ActionRepoName": "MapReduceWordCount",
+      "UserName": "<GITHUB_USERNAME>",
+      "ActionRepoName": "faasr-mapreduce",
       "Branch": "main",
       "UseSecretStore": true
     }
   },
 
   "DataStores": {
-    "My_S3_Bucket": {
+    "S3": {
       "Endpoint": "https://play.min.io",
-      "Bucket": "faasr-mapreduce",
+      "Bucket": "faasr",
       "Region": "us-east-1",
       "Writable": "TRUE"
     }
   },
 
   "ActionContainers": {
-    "generate": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
     "map": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce": "ghcr.io/faasr/github-actions-python:latest",
+    "collect": "ghcr.io/faasr/github-actions-python:latest"
   },
 
   "FunctionGitRepo": {
-    "generate_input": "YOUR_GITHUB_USERNAME/MapReduceWordCount/functions",
-    "mr_split": "YOUR_GITHUB_USERNAME/MapReduceWordCount/functions",
-    "mr_map": "YOUR_GITHUB_USERNAME/MapReduceWordCount/functions",
-    "mr_shuffle": "YOUR_GITHUB_USERNAME/MapReduceWordCount/functions",
-    "mr_reduce": "YOUR_GITHUB_USERNAME/MapReduceWordCount/functions"
+    "generate_and_split": "<GITHUB_USERNAME>/faasr-mapreduce/functions/generate_and_split.py",
+    "map_count": "<GITHUB_USERNAME>/faasr-mapreduce/functions/map_count.py",
+    "shuffle_flatten": "<GITHUB_USERNAME>/faasr-mapreduce/functions/shuffle_flatten.py",
+    "reduce_count": "<GITHUB_USERNAME>/faasr-mapreduce/functions/reduce_count.py",
+    "collect_results": "<GITHUB_USERNAME>/faasr-mapreduce/functions/collect_results.py"
   },
 
   "PyPIPackageDownloads": {
-    "generate_input": [],
-    "mr_split": [],
-    "mr_map": [],
-    "mr_shuffle": [],
-    "mr_reduce": []
+    "generate_and_split": [],
+    "map_count": [],
+    "shuffle_flatten": [],
+    "reduce_count": [],
+    "collect_results": []
   }
 }
