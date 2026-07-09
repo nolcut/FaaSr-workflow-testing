@@ -1,31 +1,44 @@
 {
-  "FunctionInvoke": "split",
+  "FunctionInvoke": "generate-input-text",
   "WorkflowName": "mapreduce-word-count",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
+    "generate-input-text": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_input_text",
+      "Arguments": {
+        "folder": "MapReduce",
+        "output1": "raw_input_text.json"
+      },
+      "InvokeNext": [
+        "split"
+      ]
+    },
     "split": {
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "split",
       "Arguments": {
-        "folder": "workflow_data",
-        "output1": "map_batch_{rank}.json"
+        "folder": "MapReduce",
+        "input1": "raw_input_text.json",
+        "output1": "text_chunk_{rank}.json"
       },
       "InvokeNext": [
-        "map(3)"
+        "map-word-count(3)"
       ]
     },
-    "map": {
+    "map-word-count": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map",
+      "FunctionName": "map_word_count",
       "Arguments": {
-        "folder": "workflow_data",
-        "input1": "map_batch_{rank}.json",
-        "output1": "map_counts_{rank}.json"
+        "folder": "MapReduce",
+        "input1": "text_chunk_{rank}.json",
+        "output1": "map_result_{rank}.json"
       },
       "InvokeNext": [
         "shuffle"
@@ -36,31 +49,32 @@
       "Type": "Python",
       "FunctionName": "shuffle",
       "Arguments": {
-        "folder": "workflow_data",
-        "input1": "map_counts_{rank}.json",
-        "output1": "shuffle_word_{rank}.json"
+        "folder": "MapReduce",
+        "input1": "map_result_{rank}.json",
+        "output1": "shuffled_word_{rank}.json"
       },
       "InvokeNext": [
-        "reduce(5)"
+        "reduce-word-totals(5)"
       ]
     },
-    "reduce": {
+    "reduce-word-totals": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "reduce",
+      "FunctionName": "reduce_word_totals",
       "Arguments": {
-        "folder": "workflow_data",
-        "input1": "shuffle_word_{rank}.json",
-        "output1": "reduce_total_{rank}.json"
+        "folder": "MapReduce",
+        "input1": "shuffled_word_{rank}.json",
+        "output1": "word_total_{rank}.json"
       },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
+    "generate-input-text": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
-    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "map-word-count": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce-word-totals": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -82,9 +96,10 @@
     }
   },
   "FunctionGitRepo": {
+    "generate_input_text": "nolcut/FaaSr-workflow-testing/main/functions/generate_input_text.py",
     "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
-    "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
+    "map_word_count": "nolcut/FaaSr-workflow-testing/main/functions/map_word_count.py",
     "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
-    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py"
+    "reduce_word_totals": "nolcut/FaaSr-workflow-testing/main/functions/reduce_word_totals.py"
   }
 }
