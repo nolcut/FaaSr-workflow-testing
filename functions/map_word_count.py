@@ -1,49 +1,46 @@
-import os
 import json
+import os
 from collections import Counter
 
 
 def map_word_count(folder: str, input1: str, output1: str) -> None:
-    # This function is RANKED: it runs as N parallel instances. Use this
-    # instance's own rank to process ONLY its assigned batch shard.
+    # This function is RANKED (3 parallel instances). Use this instance's own
+    # rank to select the single text chunk it must process.
     r = faasr_rank()
     rank = r["rank"]
+    faasr_log(f"map_word_count: instance rank={rank} of max_rank={r.get('max_rank')}")
 
-    remote_in = input1.format(rank=rank)
-    local_in = f"split_batch_{rank}.json"
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+    remote_input = input1.replace("{rank}", str(rank))
+    local_input = f"text_chunk_{rank}.json"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=remote_input)
 
-    with open(local_in, "r") as f:
-        content = f.read()
+    with open(local_input, "r") as f:
+        words = json.load(f)
 
-    if not content.strip():
-        faasr_log(f"map_word_count[{rank}]: input {folder}/{remote_in} is empty or missing.")
-        raise ValueError(f"Input batch {remote_in} is empty")
-
-    words = json.loads(content)
     if not isinstance(words, list):
-        faasr_log(
-            f"map_word_count[{rank}]: expected a JSON array of word tokens in "
-            f"{remote_in}, got {type(words).__name__}."
+        raise ValueError(
+            f"map_word_count: expected {remote_input} to contain a JSON array of "
+            f"words, got {type(words).__name__}"
         )
-        raise ValueError("Input batch is not a JSON array of word tokens")
 
-    # Count each distinct word in this chunk. Generalizable to any vocabulary:
-    # we count whatever words appear, with no hardcoded word list.
-    counts = dict(Counter(words))
+    # Count how often each distinct word occurs in this chunk. No hardcoded
+    # vocabulary — count whatever words appear (generalizable to any vocabulary).
+    counts = Counter(words)
+    partial = dict(counts)
+
     faasr_log(
-        f"map_word_count[{rank}]: counted {len(words)} tokens into "
-        f"{len(counts)} distinct words."
+        f"map_word_count: rank={rank} counted {len(words)} words into "
+        f"{len(partial)} distinct words"
     )
 
-    remote_out = output1.format(rank=rank)
-    local_out = f"map_counts_{rank}.json"
-    with open(local_out, "w") as f:
-        json.dump(counts, f)
+    remote_output = output1.replace("{rank}", str(rank))
+    local_output = f"map_result_{rank}.json"
+    with open(local_output, "w") as f:
+        json.dump(partial, f)
 
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
-    faasr_log(f"map_word_count[{rank}]: wrote partial counts to {folder}/{remote_out}.")
+    faasr_put_file(local_file=local_output, remote_folder=folder, remote_file=remote_output)
+    faasr_log(f"map_word_count: rank={rank} wrote {remote_output}")
 
-    for p in (local_in, local_out):
+    for p in (local_input, local_output):
         if os.path.exists(p):
             os.remove(p)
