@@ -1,41 +1,56 @@
-"""
-MapReduce - REDUCE stage (fully generalizable).
+"""FaaSr MapReduce benchmark - reduce stage (ranked, M parallel invocations).
 
-Runs concurrently as M ranks (one per distinct word / shuffle group). Each
-rank reads the group file for its index, sums all the partial counts collected
-by the shuffle stage, and emits Zi: the total occurrence count for that word.
+Generalizable: each ranked reducer owns exactly one word's shard produced by
+shuffle (selected by faasr_rank), sums the partial counts, and writes the
+total occurrences Zi for that word.
+
+Invoked as reduce(M).  Terminal stage (no InvokeNext).
 """
 
 import json
 
 
-def reduce_count(group_folder="MapReduce/shuffle",
-                 group_prefix="group",
-                 reduce_folder="MapReduce/reduce",
-                 reduce_prefix="reduce"):
+def reduce_count(folder, shuffle_prefix, reduce_out_prefix):
+    """Sum the partial counts for this rank's word.
 
+    Args:
+        folder:            remote S3 folder for all MapReduce artifacts.
+        shuffle_prefix:    prefix used by shuffle_flatten; this rank reads
+                           "<shuffle_prefix>_<rank>.json".
+        reduce_out_prefix: prefix for this rank's output;
+                           "<reduce_out_prefix>_<rank>.json".
+    """
     rank_info = faasr_rank()
-    my_rank = int(rank_info["rank"])
+    rank = int(rank_info["rank"])
     max_rank = int(rank_info["max_rank"])
 
-    group_name = f"{group_prefix}_{my_rank}.json"
-    faasr_get_file(remote_folder=group_folder, remote_file=group_name,
-                   local_folder=".", local_file=group_name)
+    remote_shard = f"{shuffle_prefix}_{rank}.json"
+    faasr_get_file(
+        local_file="shuffle.json",
+        remote_folder=folder,
+        remote_file=remote_shard,
+    )
 
-    with open(group_name) as fh:
-        group = json.load(fh)
+    with open("shuffle.json") as f:
+        payload = json.load(f)
 
-    word = group["word"]
-    total = sum(int(c) for c in group["counts"])   # Zi
+    word = payload["word"]
+    total = sum(payload["counts"])
 
-    result = {"word": word, "count": total}
-    out_name = f"{reduce_prefix}_{my_rank}.json"
-    with open(out_name, "w") as fh:
-        json.dump(result, fh)
-    faasr_put_file(local_folder=".", local_file=out_name,
-                   remote_folder=reduce_folder, remote_file=out_name)
+    # Zi: final total occurrences for this word.
+    result = {"word": word, "total": total}
+    local_out = "reduce_out.json"
+    with open(local_out, "w") as f:
+        json.dump(result, f)
+
+    remote_out = f"{reduce_out_prefix}_{rank}.json"
+    faasr_put_file(
+        local_file=local_out,
+        remote_folder=folder,
+        remote_file=remote_out,
+    )
 
     faasr_log(
-        f"[reduce rank {my_rank}/{max_rank}] word='{word}' total={total} "
-        f"(from partials {group['counts']}) -> {reduce_folder}/{out_name}."
+        f"reduce_count: rank {rank}/{max_rank} word '{word}' "
+        f"total={total} -> {folder}/{remote_out}"
     )
