@@ -1,20 +1,15 @@
-import re
-
 from pypdf import PdfReader
+import re
 
 
 def extract_words(folder="MapReduce", input_pdf="words.pdf", output_file="words.txt"):
-    """
-    Stage 1 of the MapReduce pipeline.
+    """Extract words from a PDF stored in S3 and persist them as a newline-separated
+    word list back to S3.
 
-    Downloads the source PDF from the `folder` prefix in S3, extracts every
-    text token, normalizes it (lowercase, alphabetic characters only) and
-    writes the resulting whitespace-separated word list back to S3 as a single
-    text file. This word list is the dataset that the rest of the pipeline
-    (split -> map -> reduce -> visualize) operates on.
+    Reads:  {folder}/{input_pdf}
+    Writes: {folder}/{output_file}
     """
-    # 1. Pull the input PDF from the MapReduce/ folder in the S3 bucket.
-    faasr_log(f"extract_words: downloading {folder}/{input_pdf}")
+    # Download the source PDF from S3 into the local working directory
     faasr_get_file(
         remote_folder=folder,
         remote_file=input_pdf,
@@ -22,24 +17,22 @@ def extract_words(folder="MapReduce", input_pdf="words.pdf", output_file="words.
         local_file="words.pdf",
     )
 
-    # 2. Read all pages and collect their text.
+    # Extract raw text from every page of the PDF
     reader = PdfReader("words.pdf")
-    full_text = []
+    text_parts = []
     for page in reader.pages:
         page_text = page.extract_text() or ""
-        full_text.append(page_text)
-    raw_text = "\n".join(full_text)
+        text_parts.append(page_text)
+    full_text = "\n".join(text_parts)
 
-    # 3. Tokenize into lowercase alphabetic words.
-    words = re.findall(r"[A-Za-z]+", raw_text)
-    words = [w.lower() for w in words]
+    # Tokenize into lowercase alphabetic words
+    words = re.findall(r"[A-Za-z']+", full_text.lower())
 
-    faasr_log(f"extract_words: extracted {len(words)} words from {input_pdf}")
+    # Write the word list, one word per line
+    with open("words.txt", "w", encoding="utf-8") as fh:
+        fh.write("\n".join(words))
 
-    # 4. Persist the cleaned word list (one big whitespace-separated file).
-    with open("words.txt", "w") as fh:
-        fh.write(" ".join(words))
-
+    # Persist the extracted word list back to S3
     faasr_put_file(
         local_folder=".",
         local_file="words.txt",
@@ -47,4 +40,7 @@ def extract_words(folder="MapReduce", input_pdf="words.pdf", output_file="words.
         remote_file=output_file,
     )
 
-    faasr_log(f"extract_words: wrote word list to {folder}/{output_file}")
+    faasr_log(
+        f"extract_words: extracted {len(words)} words from {folder}/{input_pdf} "
+        f"-> {folder}/{output_file}"
+    )
