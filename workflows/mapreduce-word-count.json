@@ -1,17 +1,18 @@
 {
-  "FunctionInvoke": "generate-input-text",
+  "FunctionInvoke": "extract-words",
   "WorkflowName": "mapreduce-word-count",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
   "ActionList": {
-    "generate-input-text": {
+    "extract-words": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "generate_input_text",
+      "FunctionName": "extract_words",
       "Arguments": {
         "folder": "MapReduce",
+        "input1": "words.pdf",
         "output1": "input_text.json"
       },
       "InvokeNext": [
@@ -68,15 +69,29 @@
         "input2": "rank_word_map.json",
         "output1": "final_count_{rank}.json"
       },
+      "InvokeNext": [
+        "visualize-output"
+      ]
+    },
+    "visualize-output": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_output",
+      "Arguments": {
+        "folder": "MapReduce",
+        "input1": "final_count_{rank}.json",
+        "output1": "word_count_chart.png"
+      },
       "InvokeNext": []
     }
   },
   "ActionContainers": {
-    "generate-input-text": "ghcr.io/faasr/github-actions-python:latest",
+    "extract-words": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
     "map": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-output": "ghcr.io/faasr/github-actions-python:latest"
   },
   "ComputeServers": {
     "GH": {
@@ -98,10 +113,19 @@
     }
   },
   "FunctionGitRepo": {
-    "generate_input_text": "nolcut/FaaSr-workflow-testing/main/functions/generate_input_text.py",
+    "extract_words": "nolcut/FaaSr-workflow-testing/main/functions/extract_words.py",
     "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
     "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
     "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
-    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py"
+    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py",
+    "visualize_output": "nolcut/FaaSr-workflow-testing/main/functions/visualize_output.py"
+  },
+  "PyPIPackageDownloads": {
+    "extract_words": [
+      "pypdf"
+    ],
+    "visualize_output": [
+      "matplotlib"
+    ]
   }
 }
