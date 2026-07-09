@@ -41,7 +41,7 @@
       "Arguments": {
         "folder": "PyADM1-orig",
         "input1": "dynamic_out.csv",
-        "output1": "simulation_plots.png"
+        "output1": "digester_output_plots.png"
       },
       "InvokeNext": []
     }
@@ -80,9 +80,9 @@
       "pandas"
     ],
     "pyadm1": [
-      "numpy<2",
-      "pandas<2",
-      "scipy",
+      "numpy<2.0",
+      "scipy<1.13",
+      "pandas<2.0",
       "matplotlib"
     ],
     "visualize_outputs": [
