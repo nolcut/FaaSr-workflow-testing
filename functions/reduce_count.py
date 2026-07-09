@@ -1,71 +1,56 @@
+"""FaaSr MapReduce benchmark - reduce stage (ranked, M parallel invocations).
+
+Generalizable: each ranked reducer owns exactly one word's shard produced by
+shuffle (selected by faasr_rank), sums the partial counts, and writes the
+total occurrences Zi for that word.
+
+Invoked as reduce(M).  Terminal stage (no InvokeNext).
+"""
+
 import json
-import os
 
 
-def reduce_count(folder: str, input1: str, output1: str) -> None:
-    # This function runs as one of M=5 parallel instances. Determine THIS
-    # instance's rank and process only its assigned shuffle group.
-    r = faasr_rank()
-    rank = r["rank"]
-    faasr_log(f"reduce_count: instance rank {rank} of max_rank {r.get('max_rank')}")
+def reduce_count(folder, shuffle_prefix, reduce_out_prefix):
+    """Sum the partial counts for this rank's word.
 
-    # Read this reducer's flattened shuffle group (partial counts for one word
-    # group across all mappers).
-    remote_in = input1.format(rank=rank)
-    local_in = f"shuffle_group_{rank}.json"
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=remote_in)
+    Args:
+        folder:            remote S3 folder for all MapReduce artifacts.
+        shuffle_prefix:    prefix used by shuffle_flatten; this rank reads
+                           "<shuffle_prefix>_<rank>.json".
+        reduce_out_prefix: prefix for this rank's output;
+                           "<reduce_out_prefix>_<rank>.json".
+    """
+    rank_info = faasr_rank()
+    rank = int(rank_info["rank"])
+    max_rank = int(rank_info["max_rank"])
 
-    with open(local_in) as f:
-        group = json.load(f)
-
-    if not isinstance(group, dict):
-        msg = f"reduce_count: expected a JSON object in '{remote_in}', got {type(group).__name__}"
-        faasr_log(msg)
-        raise ValueError(msg)
-
-    # Deterministically derive this reducer's assigned word: take the sorted list
-    # of distinct words present in the data and select the entry at position rank
-    # (1-indexed -> index rank-1). Generalizable to any vocabulary size.
-    words = group.get("words")
-    if not isinstance(words, list) or not words:
-        msg = f"reduce_count: shuffle group '{remote_in}' missing the sorted distinct-words list"
-        faasr_log(msg)
-        raise ValueError(msg)
-    words = sorted(words)
-
-    if rank - 1 >= len(words):
-        msg = (
-            f"reduce_count: rank {rank} exceeds the {len(words)} distinct words "
-            f"present; no word assigned to this reducer"
-        )
-        faasr_log(msg)
-        raise ValueError(msg)
-    word = words[rank - 1]
-
-    # Sum all partial counts for the assigned word across every mapper
-    # contribution in the shuffle group.
-    partial_counts = group.get("partial_counts", [])
-    if not isinstance(partial_counts, list):
-        msg = f"reduce_count: 'partial_counts' in '{remote_in}' is not a list"
-        faasr_log(msg)
-        raise ValueError(msg)
-    total = sum(partial_counts)
-
-    faasr_log(
-        f"reduce_count: rank {rank} word '{word}' total {total} "
-        f"from {len(partial_counts)} partial counts {partial_counts}"
+    remote_shard = f"{shuffle_prefix}_{rank}.json"
+    faasr_get_file(
+        local_file="shuffle.json",
+        remote_folder=folder,
+        remote_file=remote_shard,
     )
 
-    # Write the final total occurrence count for this reducer's assigned word.
-    result = {"word": word, "count": total}
-    remote_out = output1.format(rank=rank)
-    local_out = f"reduce_result_{rank}.json"
+    with open("shuffle.json") as f:
+        payload = json.load(f)
+
+    word = payload["word"]
+    total = sum(payload["counts"])
+
+    # Zi: final total occurrences for this word.
+    result = {"word": word, "total": total}
+    local_out = "reduce_out.json"
     with open(local_out, "w") as f:
         json.dump(result, f)
 
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
-    faasr_log(f"reduce_count: rank {rank} wrote final result to '{remote_out}'")
+    remote_out = f"{reduce_out_prefix}_{rank}.json"
+    faasr_put_file(
+        local_file=local_out,
+        remote_folder=folder,
+        remote_file=remote_out,
+    )
 
-    for p in (local_in, local_out):
-        if os.path.exists(p):
-            os.remove(p)
+    faasr_log(
+        f"reduce_count: rank {rank}/{max_rank} word '{word}' "
+        f"total={total} -> {folder}/{remote_out}"
+    )

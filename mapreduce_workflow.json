@@ -1,99 +1,109 @@
 {
+  "WorkflowName": "MapReduceWordCount",
+  "FunctionInvoke": "generate",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationID": "",
+
   "ActionList": {
-    "split": {
+    "generate": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_dataset",
       "Arguments": {
-        "folder": "mapreduce",
-        "num_maps": 3,
-        "total_words": 5000,
-        "vocabulary": [
-          "cat",
-          "dog",
-          "bird",
-          "horse",
-          "pig"
-        ],
+        "folder": "MapReduce",
+        "output_file": "input.txt",
+        "num_words": 5000,
+        "words": ["cat", "dog", "bird", "horse", "pig"],
         "seed": 42
       },
-      "InvokeNext": [
-        "map(3)"
-      ],
+      "InvokeNext": ["split"]
+    },
+
+    "split": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "split"
+      "FunctionName": "split_text",
+      "Arguments": {
+        "folder": "MapReduce",
+        "input_file": "input.txt",
+        "num_mappers": 3,
+        "chunk_prefix": "chunk"
+      },
+      "InvokeNext": ["map(3)"]
     },
+
     "map": {
-      "Arguments": {
-        "folder": "mapreduce"
-      },
-      "InvokeNext": [
-        "shuffle"
-      ],
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "map_count"
+      "FunctionName": "map_count",
+      "Arguments": {
+        "folder": "MapReduce",
+        "chunk_prefix": "chunk",
+        "map_out_prefix": "map_out"
+      },
+      "InvokeNext": ["shuffle"]
     },
+
     "shuffle": {
-      "Arguments": {
-        "folder": "mapreduce"
-      },
-      "InvokeNext": [
-        "reduce(5)"
-      ],
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "shuffle"
+      "FunctionName": "shuffle_flatten",
+      "Arguments": {
+        "folder": "MapReduce",
+        "map_out_prefix": "map_out",
+        "num_mappers": 3,
+        "shuffle_prefix": "shuffle"
+      },
+      "InvokeNext": ["reduce(5)"]
     },
+
     "reduce": {
-      "Arguments": {
-        "folder": "mapreduce"
-      },
-      "InvokeNext": [],
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "reduce_word"
+      "FunctionName": "reduce_count",
+      "Arguments": {
+        "folder": "MapReduce",
+        "shuffle_prefix": "shuffle",
+        "reduce_out_prefix": "reduce_out"
+      },
+      "InvokeNext": []
     }
   },
+
   "ComputeServers": {
     "GH": {
       "FaaSType": "GitHubActions",
-      "UserName": "nolcut",
-      "ActionRepoName": "FaaSr-workflow-testing",
+      "UserName": "YOUR_GITHUB_USERNAME",
+      "ActionRepoName": "MapReduce-FaaSr",
       "Branch": "main",
       "UseSecretStore": true
     }
   },
+
   "DataStores": {
     "S3": {
-      "Endpoint": "https://s3.us-east-1.amazonaws.com",
-      "Bucket": "faasr-agent-new",
+      "Endpoint": "https://YOUR_S3_ENDPOINT",
+      "Bucket": "YOUR_BUCKET",
       "Region": "us-east-1",
-      "AccessKey": "S3_AccessKey",
-      "SecretKey": "S3_SecretKey",
       "Writable": "TRUE"
     }
   },
+
   "ActionContainers": {
+    "generate": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
     "map": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
     "reduce": "ghcr.io/faasr/github-actions-python:latest"
   },
-  "FunctionInvoke": "split",
-  "DefaultDataStore": "S3",
-  "LoggingDataStore": "S3",
+
   "FunctionGitRepo": {
-    "split": "nolcut/FaaSr-workflow-testing/main/functions/split.py",
-    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
-    "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
-    "reduce_word": "nolcut/FaaSr-workflow-testing/main/functions/reduce_word.py"
-  },
-  "PyPIPackageDownloads": {
-    "split": [],
-    "map_count": [],
-    "shuffle": [],
-    "reduce_word": []
-  },
-  "FaaSrLog": "FaaSrLog",
-  "WorkflowName": "MapReduceWordCount",
-  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S"
+    "generate_dataset": "YOUR_GITHUB_USERNAME/MapReduce-FaaSr/mapreduce",
+    "split_text": "YOUR_GITHUB_USERNAME/MapReduce-FaaSr/mapreduce",
+    "map_count": "YOUR_GITHUB_USERNAME/MapReduce-FaaSr/mapreduce",
+    "shuffle_flatten": "YOUR_GITHUB_USERNAME/MapReduce-FaaSr/mapreduce",
+    "reduce_count": "YOUR_GITHUB_USERNAME/MapReduce-FaaSr/mapreduce"
+  }
 }
