@@ -6,59 +6,54 @@ from pypdf import PdfReader
 
 
 def extract_words(folder: str, input1: str, output1: str) -> None:
-    # Download the source PDF from the MapReduce/ folder.
-    local_pdf = "turing.pdf"
+    # Fetch the source PDF from the MapReduce/ folder into a local temp file.
+    local_pdf = "words.pdf"
     faasr_get_file(local_file=local_pdf, remote_folder=folder, remote_file=input1)
 
     if not os.path.exists(local_pdf) or os.path.getsize(local_pdf) == 0:
-        msg = f"extract_words: input PDF {input1} is missing or empty in folder {folder}"
+        msg = f"Input PDF {folder}/{input1} is missing or empty; cannot extract words"
         faasr_log(msg)
-        raise RuntimeError(msg)
+        raise FileNotFoundError(msg)
 
-    # Extract the full text from every page of the PDF.
+    # Read the PDF and extract text from every page.
     try:
         reader = PdfReader(local_pdf)
     except Exception as e:
-        msg = f"extract_words: failed to open {input1} as a PDF: {e}"
+        msg = f"Failed to parse PDF {folder}/{input1}: {e}"
         faasr_log(msg)
         raise
 
-    page_texts = []
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        page_texts.append(text)
-    full_text = "\n".join(page_texts)
+    text_parts = []
+    for page_num, page in enumerate(reader.pages):
+        page_text = page.extract_text() or ""
+        text_parts.append(page_text)
+    faasr_log(f"Extracted text from {len(reader.pages)} page(s) of {folder}/{input1}")
 
-    faasr_log(
-        f"extract_words: extracted text from {len(reader.pages)} page(s) of {input1} "
-        f"({len(full_text)} characters)"
-    )
+    full_text = "\n".join(text_parts)
 
-    # Tokenize into individual words: split on any run of non-alphanumeric
-    # characters (whitespace/punctuation), and normalize case to lowercase so
-    # the downstream word count aggregates case-insensitively. This generalizes
-    # to any document content and vocabulary — no word list is hardcoded.
-    words = re.findall(r"[A-Za-z0-9]+", full_text)
-    words = [w.lower() for w in words]
+    # Tokenize into words. Derive the vocabulary purely from the PDF content:
+    # a word is a maximal run of letters/digits (with internal apostrophes/hyphens),
+    # lowercased for consistent downstream counting.
+    tokens = re.findall(r"[A-Za-z0-9]+(?:['\-][A-Za-z0-9]+)*", full_text)
+    words = [t.lower() for t in tokens]
 
     if not words:
-        msg = (
-            f"extract_words: no words could be extracted from {input1} — "
-            f"the PDF may contain no extractable text (e.g. scanned images)"
-        )
+        msg = f"No words could be extracted from {folder}/{input1}"
         faasr_log(msg)
-        raise RuntimeError(msg)
+        raise ValueError(msg)
 
-    faasr_log(f"extract_words: tokenized {len(words)} words from {input1}")
+    faasr_log(f"Tokenized {len(words)} words from {folder}/{input1}")
 
-    # Write the flat list of words as a JSON array to the MapReduce/ folder.
-    local_out = "raw_input_text.json"
+    # Write the word list as a JSON array to the local temp file, then upload.
+    local_out = "input_text.json"
     with open(local_out, "w") as f:
         json.dump(words, f)
 
     faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"extract_words: wrote {len(words)} words to {output1} in {folder}")
+    faasr_log(f"Wrote {len(words)} words to {folder}/{output1}")
 
-    for p in (local_pdf, local_out):
-        if os.path.exists(p):
-            os.remove(p)
+    for tmp in (local_pdf, local_out):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
