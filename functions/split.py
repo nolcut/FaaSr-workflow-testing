@@ -3,58 +3,43 @@ import os
 
 
 def split(folder: str, input1: str, output1: str) -> None:
-    # Number of parallel map instances (ranked successor map_word_count runs x3).
-    # Hardcoded here; THIS function is not ranked. Trivially generalizable by
-    # changing N — the partitioning logic below works for any chunk count.
-    N = 3
+    # Read the generated input text: a JSON sequence of word tokens.
+    local_in = "input_text.json"
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
-    local_input = "raw_input_text.json"
-    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
+    with open(local_in) as f:
+        tokens = json.load(f)
 
-    with open(local_input, "r") as f:
-        words = json.load(f)
+    if not isinstance(tokens, list):
+        msg = f"split: expected a JSON list of tokens in '{input1}', got {type(tokens).__name__}"
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    if not isinstance(words, list):
-        raise ValueError(
-            f"split: expected {input1} to contain a JSON array of words, "
-            f"got {type(words).__name__}"
-        )
+    # Fan-out to ranked successor map_count runs as exactly 3 parallel instances.
+    # THIS function is NOT ranked — do not call faasr_rank(); use the literal count.
+    n = 3
+    total = len(tokens)
+    faasr_log(f"split: partitioning {total} tokens into {n} contiguous batches")
 
-    total = len(words)
-    faasr_log(f"split: read {total} words from {input1}; partitioning into N={N} chunks")
-
-    # Contiguous partitioning into N roughly equal batches. Sizes differ by at
-    # most 1 (the first `remainder` chunks get one extra word). Every input word
-    # is placed in exactly one chunk — no loss, no duplication.
-    base = total // N
-    remainder = total % N
-
+    # Contiguous, nearly-equal slices: first (total % n) batches get one extra
+    # token so every token is assigned exactly once (generalizable to any length).
+    base, extra = divmod(total, n)
     start = 0
-    emitted = 0
-    for i in range(1, N + 1):
-        size = base + (1 if i <= remainder else 0)
-        chunk = words[start:start + size]
+    for i in range(1, n + 1):
+        size = base + (1 if i <= extra else 0)
+        chunk = tokens[start:start + size]
         start += size
-        emitted += len(chunk)
 
-        local_chunk = f"text_chunk_{i}.json"
-        with open(local_chunk, "w") as f:
+        local_out = f"text_batch_{i}.json"
+        with open(local_out, "w") as f:
             json.dump(chunk, f)
 
-        remote_chunk = output1.replace("{rank}", str(i))
-        faasr_put_file(local_file=local_chunk, remote_folder=folder, remote_file=remote_chunk)
-        faasr_log(f"split: wrote {remote_chunk} with {len(chunk)} words")
+        remote_out = output1.replace("{rank}", str(i))
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
+        faasr_log(f"split: wrote batch {i} with {len(chunk)} tokens to '{remote_out}'")
 
-        if os.path.exists(local_chunk):
-            os.remove(local_chunk)
+        if os.path.exists(local_out):
+            os.remove(local_out)
 
-    if emitted != total:
-        raise ValueError(
-            f"split: partition covered {emitted} words but input had {total} — "
-            f"word loss/duplication detected"
-        )
-
-    faasr_log(f"split: partitioned all {total} words across {N} chunks with no loss")
-
-    if os.path.exists(local_input):
-        os.remove(local_input)
+    if os.path.exists(local_in):
+        os.remove(local_in)
