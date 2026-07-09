@@ -1,63 +1,60 @@
-import os
 import json
+import os
 
 
 def split(folder: str, input1: str, output1: str) -> None:
-    # Number of map tasks (N). This function feeds the ranked successor
-    # map_word_count, which runs as exactly N=3 parallel instances, so we
-    # must emit exactly 3 shards. This function is NOT itself ranked, so we
-    # do NOT call faasr_rank(); the count is the literal fan-out value.
-    num_batches = 3
+    # Number of parallel map instances (ranked successor map_word_count runs x3).
+    # Hardcoded here; THIS function is not ranked. Trivially generalizable by
+    # changing N — the partitioning logic below works for any chunk count.
+    N = 3
 
-    local_in = "input_text.json"
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
+    local_input = "raw_input_text.json"
+    faasr_get_file(local_file=local_input, remote_folder=folder, remote_file=input1)
 
-    with open(local_in, "r") as f:
-        content = f.read()
+    with open(local_input, "r") as f:
+        words = json.load(f)
 
-    if not content.strip():
-        faasr_log(f"split: input file {folder}/{input1} is empty or missing.")
-        raise ValueError(f"Input file {input1} is empty")
-
-    words = json.loads(content)
     if not isinstance(words, list):
-        faasr_log(
-            f"split: expected a JSON array of word tokens in {input1}, "
-            f"got {type(words).__name__}."
+        raise ValueError(
+            f"split: expected {input1} to contain a JSON array of words, "
+            f"got {type(words).__name__}"
         )
-        raise ValueError("Input is not a JSON array of word tokens")
 
     total = len(words)
-    faasr_log(
-        f"split: read {total} word tokens; partitioning into {num_batches} "
-        f"batches (order preserved, remainder distributed evenly)."
-    )
+    faasr_log(f"split: read {total} words from {input1}; partitioning into N={N} chunks")
 
-    # Distribute remainder as evenly as possible across the leading batches:
-    # the first (total % num_batches) batches get one extra word.
-    base = total // num_batches
-    remainder = total % num_batches
+    # Contiguous partitioning into N roughly equal batches. Sizes differ by at
+    # most 1 (the first `remainder` chunks get one extra word). Every input word
+    # is placed in exactly one chunk — no loss, no duplication.
+    base = total // N
+    remainder = total % N
 
     start = 0
-    for i in range(1, num_batches + 1):
+    emitted = 0
+    for i in range(1, N + 1):
         size = base + (1 if i <= remainder else 0)
-        batch = words[start:start + size]
+        chunk = words[start:start + size]
         start += size
+        emitted += len(chunk)
 
-        local_out = f"split_batch_{i}.json"
-        with open(local_out, "w") as f:
-            json.dump(batch, f)
+        local_chunk = f"text_chunk_{i}.json"
+        with open(local_chunk, "w") as f:
+            json.dump(chunk, f)
 
-        remote_out = output1.replace("{rank}", str(i))
-        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=remote_out)
-        faasr_log(f"split: wrote batch {i} with {len(batch)} words to {folder}/{remote_out}.")
+        remote_chunk = output1.replace("{rank}", str(i))
+        faasr_put_file(local_file=local_chunk, remote_folder=folder, remote_file=remote_chunk)
+        faasr_log(f"split: wrote {remote_chunk} with {len(chunk)} words")
 
-        if os.path.exists(local_out):
-            os.remove(local_out)
+        if os.path.exists(local_chunk):
+            os.remove(local_chunk)
 
-    if start != total:
-        faasr_log(f"split: distributed {start} words but expected {total}.")
-        raise ValueError("Word count mismatch after partitioning")
+    if emitted != total:
+        raise ValueError(
+            f"split: partition covered {emitted} words but input had {total} — "
+            f"word loss/duplication detected"
+        )
 
-    if os.path.exists(local_in):
-        os.remove(local_in)
+    faasr_log(f"split: partitioned all {total} words across {N} chunks with no loss")
+
+    if os.path.exists(local_input):
+        os.remove(local_input)
