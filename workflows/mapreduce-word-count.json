@@ -29,7 +29,7 @@
         "output1": "chunk_{rank}.json"
       },
       "InvokeNext": [
-        "map(3)"
+        "map(4)"
       ]
     },
     "map": {
@@ -56,7 +56,7 @@
         "output2": "rank_word_map.json"
       },
       "InvokeNext": [
-        "reduce(5)"
+        "reduce(4)"
       ]
     },
     "reduce": {
