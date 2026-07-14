@@ -4,16 +4,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
 
-def gen(N=500, M=1024, folder="ml"):
-    """Generate a classification dataset, preprocess it, and persist the
-    train/test splits to S3 for the downstream classifier training steps."""
-
+def gen(N=500, M=1024):
+    """Generate a synthetic classification dataset, preprocess it (StandardScaler +
+    train_test_split), and persist the train/test splits to S3 for the downstream
+    classifier functions.
+    """
     N = int(N)
     M = int(M)
 
-    faasr_log(f"gen: generating dataset with n_samples={N}, n_features={M}")
+    faasr_log(f"gen: generating dataset with N={N} samples and M={M} features")
 
-    # Generate the dataset
+    # 1) Dataset generation
     X, y = make_classification(
         n_samples=N,
         n_features=M,
@@ -24,17 +25,17 @@ def gen(N=500, M=1024, folder="ml"):
         random_state=123,
     )
 
-    # Split into train/test
+    # 2) Preprocessing: StandardScaler + train_test_split
+    X_scaled = StandardScaler().fit_transform(X)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.4, random_state=123
+        X_scaled, y, test_size=0.4, random_state=123
     )
 
-    # Standardize features (fit on train, apply to both)
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    faasr_log(
+        f"gen: train shape={X_train.shape}, test shape={X_test.shape}"
+    )
 
-    # Save splits locally as a single compressed archive
+    # 3) Persist splits to S3 as a single compressed npz artifact
     local_file = "dataset.npz"
     np.savez(
         local_file,
@@ -44,14 +45,10 @@ def gen(N=500, M=1024, folder="ml"):
         y_test=y_test,
     )
 
-    # Persist to S3 so the parallel classifier steps can read it
     faasr_put_file(
         local_file=local_file,
-        remote_folder=folder,
+        remote_folder="ml-pipeline",
         remote_file="dataset.npz",
     )
 
-    faasr_log(
-        f"gen: wrote dataset.npz to {folder} "
-        f"(train={X_train.shape}, test={X_test.shape})"
-    )
+    faasr_log("gen: dataset.npz uploaded to ml-pipeline/dataset.npz")
