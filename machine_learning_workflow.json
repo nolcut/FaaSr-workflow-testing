@@ -5,70 +5,81 @@
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationID": "",
-
   "ActionList": {
     "gen": {
-      "FunctionName": "gen",
       "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "gen",
       "Arguments": {
         "N": 500,
-        "M": 1024
+        "M": 1024,
+        "folder": "ml"
       },
       "InvokeNext": [
         "svm",
-        "random-forest"
+        "rf"
       ]
     },
     "svm": {
-      "FunctionName": "svm",
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {},
+      "FunctionName": "train_svm",
+      "Arguments": {
+        "folder": "ml"
+      },
       "InvokeNext": []
     },
-    "random-forest": {
-      "FunctionName": "random_forest",
+    "rf": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "Arguments": {},
+      "FunctionName": "train_rf",
+      "Arguments": {
+        "folder": "ml"
+      },
       "InvokeNext": []
     }
   },
-
   "ComputeServers": {
     "GH": {
       "FaaSType": "GitHubActions",
-      "UserName": "<GITHUB_USERNAME>",
-      "ActionRepoName": "<ACTION_REPO_NAME>",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
       "Branch": "main",
       "UseSecretStore": true
     }
   },
-
   "DataStores": {
     "S3": {
-      "Endpoint": "<S3_ENDPOINT>",
-      "Bucket": "<S3_BUCKET>",
-      "Region": "<S3_REGION>"
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
     }
   },
-
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "svm": "ghcr.io/faasr/github-actions-python:latest",
-    "random-forest": "ghcr.io/faasr/github-actions-python:latest"
+    "rf": "ghcr.io/faasr/github-actions-python:latest"
   },
-
   "FunctionGitRepo": {
-    "gen": "<ORG>/<REPO>/<PATH>",
-    "svm": "<ORG>/<REPO>/<PATH>",
-    "random_forest": "<ORG>/<REPO>/<PATH>"
+    "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
+    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
+    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py"
   },
-
   "PyPIPackageDownloads": {
-    "gen": ["numpy", "scikit-learn"],
-    "svm": ["numpy", "scikit-learn"],
-    "random_forest": ["numpy", "scikit-learn"]
+    "gen": [
+      "scikit-learn",
+      "numpy"
+    ],
+    "svm": [
+      "scikit-learn",
+      "numpy"
+    ],
+    "rf": [
+      "scikit-learn",
+      "numpy"
+    ]
   }
 }
