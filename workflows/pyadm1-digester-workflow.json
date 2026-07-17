@@ -1,0 +1,183 @@
+{
+  "FunctionInvoke": "convert-flow",
+  "WorkflowName": "pyadm1-digester-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "convert-flow": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "convert_flow",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "digester_influent_raw.csv",
+        "output1": "influent_flow_converted.csv"
+      },
+      "InvokeNext": [
+        "convert-temp"
+      ]
+    },
+    "convert-temp": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "convert_temp",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "influent_flow_converted.csv",
+        "output1": "influent_temp_converted.csv"
+      },
+      "InvokeNext": [
+        "convert-solubles"
+      ]
+    },
+    "convert-solubles": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "convert_solubles",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "influent_temp_converted.csv",
+        "output1": "influent_solubles_converted.csv"
+      },
+      "InvokeNext": [
+        "fill-gaps"
+      ]
+    },
+    "fill-gaps": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fill_gaps",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "influent_solubles_converted.csv",
+        "output1": "influent_gaps_filled.csv"
+      },
+      "InvokeNext": [
+        "remove-outliers"
+      ]
+    },
+    "remove-outliers": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "remove_outliers",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "influent_gaps_filled.csv",
+        "output1": "influent_outliers_removed.csv"
+      },
+      "InvokeNext": [
+        "write-cleaned-influent"
+      ]
+    },
+    "write-cleaned-influent": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "write_cleaned_influent",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "influent_outliers_removed.csv",
+        "output1": "digester_influent.csv"
+      },
+      "InvokeNext": [
+        "pyadm1"
+      ]
+    },
+    "pyadm1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "pyadm1",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial.csv",
+        "output1": "dynamic_out.csv"
+      },
+      "InvokeNext": [
+        "visualize-outputs"
+      ]
+    },
+    "visualize-outputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_outputs",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "dynamic_out.csv",
+        "output1": "simulation_plots.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "convert-flow": "ghcr.io/faasr/github-actions-python:latest",
+    "convert-temp": "ghcr.io/faasr/github-actions-python:latest",
+    "convert-solubles": "ghcr.io/faasr/github-actions-python:latest",
+    "fill-gaps": "ghcr.io/faasr/github-actions-python:latest",
+    "remove-outliers": "ghcr.io/faasr/github-actions-python:latest",
+    "write-cleaned-influent": "ghcr.io/faasr/github-actions-python:latest",
+    "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-outputs": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "convert_flow": "nolcut/FaaSr-workflow-testing/main/functions/convert_flow.py",
+    "convert_temp": "nolcut/FaaSr-workflow-testing/main/functions/convert_temp.py",
+    "convert_solubles": "nolcut/FaaSr-workflow-testing/main/functions/convert_solubles.py",
+    "fill_gaps": "nolcut/FaaSr-workflow-testing/main/functions/fill_gaps.py",
+    "remove_outliers": "nolcut/FaaSr-workflow-testing/main/functions/remove_outliers.py",
+    "write_cleaned_influent": "nolcut/FaaSr-workflow-testing/main/functions/write_cleaned_influent.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
+    "visualize_outputs": "nolcut/FaaSr-workflow-testing/main/functions/visualize_outputs.py"
+  },
+  "PyPIPackageDownloads": {
+    "convert_flow": [
+      "pandas"
+    ],
+    "convert_temp": [
+      "pandas"
+    ],
+    "convert_solubles": [
+      "pandas"
+    ],
+    "fill_gaps": [
+      "pandas"
+    ],
+    "remove_outliers": [
+      "pandas",
+      "numpy"
+    ],
+    "write_cleaned_influent": [
+      "pandas"
+    ],
+    "pyadm1": [
+      "numpy",
+      "scipy",
+      "pandas",
+      "matplotlib"
+    ],
+    "visualize_outputs": [
+      "pandas",
+      "matplotlib"
+    ]
+  }
+}
