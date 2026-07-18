@@ -1,5 +1,5 @@
 {
-  "WorkflowName": "MapReduceWordCount",
+  "WorkflowName": "WordCountMapReduce",
   "FunctionInvoke": "extract-words",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
@@ -26,32 +26,33 @@
       "Arguments": {
         "folder": "MapReduce",
         "input_file": "words.txt",
-        "n_splits": 4,
-        "splits_folder": "MapReduce/splits"
+        "part_prefix": "part",
+        "num_parts": 3
       },
       "InvokeNext": [
-        "mapper(4)"
+        "map-words(3)"
       ]
     },
-    "mapper": {
-      "FunctionName": "mapper",
+    "map-words": {
+      "FunctionName": "map_words",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "splits_folder": "MapReduce/splits",
-        "map_folder": "MapReduce/map_out"
+        "folder": "MapReduce",
+        "part_prefix": "part",
+        "map_prefix": "map_out"
       },
       "InvokeNext": [
-        "reducer"
+        "reduce-counts"
       ]
     },
-    "reducer": {
-      "FunctionName": "reducer",
+    "reduce-counts": {
+      "FunctionName": "reduce_counts",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "map_folder": "MapReduce/map_out",
-        "output_folder": "MapReduce/reduce_out",
+        "folder": "MapReduce",
+        "map_prefix": "map_out",
         "output_file": "word_counts.csv"
       },
       "InvokeNext": [
@@ -63,10 +64,9 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "reduce_folder": "MapReduce/reduce_out",
+        "folder": "MapReduce",
         "input_file": "word_counts.csv",
-        "output_folder": "MapReduce",
-        "output_file": "word_count_plot.png",
+        "output_file": "word_counts.png",
         "top_n": 20
       },
       "InvokeNext": []
@@ -94,24 +94,24 @@
   "ActionContainers": {
     "extract-words": "ghcr.io/faasr/github-actions-python:latest",
     "split-dataset": "ghcr.io/faasr/github-actions-python:latest",
-    "mapper": "ghcr.io/faasr/github-actions-python:latest",
-    "reducer": "ghcr.io/faasr/github-actions-python:latest",
+    "map-words": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce-counts": "ghcr.io/faasr/github-actions-python:latest",
     "visualize": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
     "extract_words": "nolcut/FaaSr-workflow-testing/main/functions/extract_words.py",
     "split_dataset": "nolcut/FaaSr-workflow-testing/main/functions/split_dataset.py",
-    "mapper": "nolcut/FaaSr-workflow-testing/main/functions/mapper.py",
-    "reducer": "nolcut/FaaSr-workflow-testing/main/functions/reducer.py",
+    "map_words": "nolcut/FaaSr-workflow-testing/main/functions/map_words.py",
+    "reduce_counts": "nolcut/FaaSr-workflow-testing/main/functions/reduce_counts.py",
     "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
-    "extract-words": [
+    "extract_words": [
       "pypdf"
     ],
-    "split-dataset": [],
-    "mapper": [],
-    "reducer": [],
+    "split_dataset": [],
+    "map_words": [],
+    "reduce_counts": [],
     "visualize": [
       "matplotlib"
     ]
