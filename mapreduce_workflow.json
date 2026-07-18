@@ -1,5 +1,5 @@
 {
-  "WorkflowName": "WordCountMapReduce",
+  "WorkflowName": "MapReducePDFWords",
   "FunctionInvoke": "extract-words",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
@@ -26,7 +26,6 @@
       "Arguments": {
         "folder": "MapReduce",
         "input_file": "words.txt",
-        "part_prefix": "part",
         "num_parts": 3
       },
       "InvokeNext": [
@@ -38,22 +37,18 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "folder": "MapReduce",
-        "part_prefix": "part",
-        "map_prefix": "map_out"
+        "folder": "MapReduce"
       },
       "InvokeNext": [
-        "reduce-counts"
+        "reduce-words"
       ]
     },
-    "reduce-counts": {
-      "FunctionName": "reduce_counts",
+    "reduce-words": {
+      "FunctionName": "reduce_words",
       "FaaSServer": "GH",
       "Type": "Python",
       "Arguments": {
-        "folder": "MapReduce",
-        "map_prefix": "map_out",
-        "output_file": "word_counts.csv"
+        "folder": "MapReduce"
       },
       "InvokeNext": [
         "visualize"
@@ -66,7 +61,6 @@
       "Arguments": {
         "folder": "MapReduce",
         "input_file": "word_counts.csv",
-        "output_file": "word_counts.png",
         "top_n": 20
       },
       "InvokeNext": []
@@ -95,25 +89,26 @@
     "extract-words": "ghcr.io/faasr/github-actions-python:latest",
     "split-dataset": "ghcr.io/faasr/github-actions-python:latest",
     "map-words": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce-counts": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce-words": "ghcr.io/faasr/github-actions-python:latest",
     "visualize": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
     "extract_words": "nolcut/FaaSr-workflow-testing/main/functions/extract_words.py",
     "split_dataset": "nolcut/FaaSr-workflow-testing/main/functions/split_dataset.py",
     "map_words": "nolcut/FaaSr-workflow-testing/main/functions/map_words.py",
-    "reduce_counts": "nolcut/FaaSr-workflow-testing/main/functions/reduce_counts.py",
+    "reduce_words": "nolcut/FaaSr-workflow-testing/main/functions/reduce_words.py",
     "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
-    "extract_words": [
+    "extract-words": [
       "pypdf"
     ],
-    "split_dataset": [],
-    "map_words": [],
-    "reduce_counts": [],
+    "split-dataset": [],
+    "map-words": [],
+    "reduce-words": [],
     "visualize": [
-      "matplotlib"
+      "matplotlib",
+      "pandas"
     ]
   }
 }
