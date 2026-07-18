@@ -6,23 +6,6 @@ import matplotlib.pyplot as plt
 from scipy import integrate
 
 
-# --- FaaSr wrapper scaffolding (NOT part of the user model) -------------------
-# The user model was written against a pandas API in which DataFrame.append
-# existed (removed in pandas >= 2.0). Restore that exact legacy behaviour
-# (append == concat) when the running pandas lacks it, so the preserved model
-# code runs unchanged. This changes no algorithm, constant, or output format.
-if not hasattr(pd.DataFrame, "append"):
-    def _faasr_df_append(self, other, ignore_index=False, verify_integrity=False, sort=False):
-        if isinstance(other, dict):
-            other = pd.DataFrame([other])
-        elif isinstance(other, (list, tuple)):
-            other = pd.DataFrame(other)
-        return pd.concat([self, other], ignore_index=ignore_index,
-                         verify_integrity=verify_integrity, sort=sort)
-    pd.DataFrame.append = _faasr_df_append
-# ------------------------------------------------------------------------------
-
-
 ## unit for each parameter is commented after it is declared (inline)
 ## if the suggested value for the parameter is different -
 ## The original default value from the original ADM1 report by Batstone et al (2002), is commented after each unit (inline)
@@ -152,6 +135,14 @@ K_H_h2 =  7.8 * 10 ** -4 * np.exp(-4180 / (100 * R) * (1 / T_base - 1 / T_ad)) #
 V_liq =  3400 #m^3
 V_gas =  300 #m^3
 V_ad = V_liq + V_gas #m^-3
+
+# related to pH inhibition taken from BSM2 report, they are global variables to avoid repeating them in DAE part
+K_pH_aa =  (10 ** (-1 * (pH_LL_aa + pH_UL_aa) / 2.0))
+nn_aa =  (3.0 / (pH_UL_aa - pH_LL_aa)) #we need a differece between N_aa and n_aa to avoid typos and nn_aa refers to the n_aa in BSM2 report
+K_pH_ac = (10 ** (-1 * (pH_LL_ac + pH_UL_ac) / 2.0))
+n_ac =  (3.0 / (pH_UL_ac - pH_LL_ac))
+K_pH_h2 =  (10 ** (-1 * (pH_LL_h2 + pH_UL_h2) / 2.0))
+n_h2 =  (3.0 / (pH_UL_h2 - pH_LL_h2))
 
 # Function to set influent values for influent state variables at each simulation step
 def setInfluent(i):
@@ -511,243 +502,274 @@ def DAESolve():
         S_h2 = tol
     j+=1
 
-# Enclosing wrapper for the model's top-level script logic so it is callable
-# under FaaSr. Every statement below is preserved verbatim from the original
-# script; the leading `global` declarations only re-establish the flat module
-# namespace the original relied on (so the helper functions above continue to
-# share the same variables). No algorithm, constant, or output-format change.
-def run_pyadm1_model():
-    global influent_state, initial_state
-    global S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I
-    global X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I
-    global S_cation, S_anion, pH, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion
-    global S_hco3_ion, S_nh3, S_nh4_ion, S_co2, S_gas_h2, S_gas_ch4, S_gas_co2
-    global K_pH_aa, nn_aa, K_pH_ac, n_ac, K_pH_h2, n_h2
-    global q_ad, state_zero, state_input
 
-    # reading influent and initial condition data from csv files
-    influent_state = pd.read_csv("digester_influent.csv")
-    initial_state = pd.read_csv("digester_initial.csv")
+# Enclosure of the original script's top-level runtime logic so it can be CALLED
+# by the FaaSr entry function (rather than executing at import time). Every
+# statement below is preserved verbatim from the original script; the leading
+# `global` declaration makes this function execute with exactly the same
+# module-level name-binding semantics as the original top-level script (all of
+# these names are shared with the module-level ADM1_ODE / setInfluent / simulate
+# / DAESolve helpers), so the numerical logic is unchanged.
+def run_adm1_simulation():
+  global influent_state, initial_state
+  global S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I
+  global X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I
+  global S_cation, S_anion, pH, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion
+  global S_hco3_ion, S_nh3, S_nh4_ion, S_co2, S_gas_h2, S_gas_ch4, S_gas_co2
+  global q_ad, state_zero, state_input, t, simulate_results, columns, solvermethod
+  global t0, n, initflow, gasflow, total_ch4, initq, feedflow
+  global p_gas_h2, p_gas_ch4, p_gas_co2, p_gas, q_gas, q_ch4
 
-    # initiate variables (initial values for the reactor state at the initial time (t0)
-    S_su = initial_state['S_su'][0] #kg COD.m^-3 monosaccharides
-    S_aa = initial_state['S_aa'][0] #kg COD.m^-3 amino acids
-    S_fa = initial_state['S_fa'][0] #kg COD.m^-3 total long chain fatty acids
-    S_va = initial_state['S_va'][0] #kg COD.m^-3 total valerate
-    S_bu = initial_state['S_bu'][0] #kg COD.m^-3 total butyrate
-    S_pro = initial_state['S_pro'][0] #kg COD.m^-3 total propionate
-    S_ac = initial_state['S_ac'][0] #kg COD.m^-3 total acetate
-    S_h2 = initial_state['S_h2'][0] #kg COD.m^-3 hydrogen gas
-    S_ch4 = initial_state['S_ch4'][0] #kg COD.m^-3 methane gas
-    S_IC = initial_state['S_IC'][0] #kmole C.m^-3 inorganic carbon
-    S_IN = initial_state['S_IN'][0] #kmole N.m^-3 inorganic nitrogen
-    S_I = initial_state['S_I'][0] #kg COD.m^-3 soluble inerts
+  # reading influent and initial condition data from csv files
+  influent_state = pd.read_csv("digester_influent.csv")
+  initial_state = pd.read_csv("digester_initial.csv")
 
-    X_xc = initial_state['X_xc'][0] #kg COD.m^-3 composites
-    X_ch = initial_state['X_ch'][0] #kg COD.m^-3 carbohydrates
-    X_pr = initial_state['X_pr'][0] #kg COD.m^-3 proteins
-    X_li = initial_state['X_li'][0] #kg COD.m^-3 lipids
-    X_su = initial_state['X_su'][0] #kg COD.m^-3 sugar degraders
-    X_aa = initial_state['X_aa'][0] #kg COD.m^-3 amino acid degraders
-    X_fa = initial_state['X_fa'][0] #kg COD.m^-3 LCFA degraders
-    X_c4 = initial_state['X_c4'][0] #kg COD.m^-3 valerate and butyrate degraders
-    X_pro = initial_state['X_pro'][0] #kg COD.m^-3 propionate degraders
-    X_ac = initial_state['X_ac'][0] #kg COD.m^-3 acetate degraders
-    X_h2 = initial_state['X_h2'][0] #kg COD.m^-3 hydrogen degraders
-    X_I = initial_state['X_I'][0] #kg COD.m^-3 particulate inerts
+  # initiate variables (initial values for the reactor state at the initial time (t0)
+  S_su = initial_state['S_su'][0] #kg COD.m^-3 monosaccharides
+  S_aa = initial_state['S_aa'][0] #kg COD.m^-3 amino acids
+  S_fa = initial_state['S_fa'][0] #kg COD.m^-3 total long chain fatty acids
+  S_va = initial_state['S_va'][0] #kg COD.m^-3 total valerate
+  S_bu = initial_state['S_bu'][0] #kg COD.m^-3 total butyrate
+  S_pro = initial_state['S_pro'][0] #kg COD.m^-3 total propionate
+  S_ac = initial_state['S_ac'][0] #kg COD.m^-3 total acetate
+  S_h2 = initial_state['S_h2'][0] #kg COD.m^-3 hydrogen gas
+  S_ch4 = initial_state['S_ch4'][0] #kg COD.m^-3 methane gas
+  S_IC = initial_state['S_IC'][0] #kmole C.m^-3 inorganic carbon
+  S_IN = initial_state['S_IN'][0] #kmole N.m^-3 inorganic nitrogen
+  S_I = initial_state['S_I'][0] #kg COD.m^-3 soluble inerts
 
-    S_cation = initial_state['S_cation'][0] #kmole.m^-3 cations (metallic ions, strong base)
-    S_anion = initial_state['S_anion'][0] #kmole.m^-3 anions (metallic ions, strong acid)
+  X_xc = initial_state['X_xc'][0] #kg COD.m^-3 composites
+  X_ch = initial_state['X_ch'][0] #kg COD.m^-3 carbohydrates
+  X_pr = initial_state['X_pr'][0] #kg COD.m^-3 proteins
+  X_li = initial_state['X_li'][0] #kg COD.m^-3 lipids
+  X_su = initial_state['X_su'][0] #kg COD.m^-3 sugar degraders
+  X_aa = initial_state['X_aa'][0] #kg COD.m^-3 amino acid degraders
+  X_fa = initial_state['X_fa'][0] #kg COD.m^-3 LCFA degraders
+  X_c4 = initial_state['X_c4'][0] #kg COD.m^-3 valerate and butyrate degraders
+  X_pro = initial_state['X_pro'][0] #kg COD.m^-3 propionate degraders
+  X_ac = initial_state['X_ac'][0] #kg COD.m^-3 acetate degraders
+  X_h2 = initial_state['X_h2'][0] #kg COD.m^-3 hydrogen degraders
+  X_I = initial_state['X_I'][0] #kg COD.m^-3 particulate inerts
 
-    pH = 7.4655377 # initial pH
-    S_H_ion = initial_state['S_H_ion'][0] #kmole H.m^-3
-    S_va_ion = initial_state['S_va_ion'][0] #kg COD.m^-3 valerate
-    S_bu_ion = initial_state['S_bu_ion'][0] #kg COD.m^-3 butyrate
-    S_pro_ion = initial_state['S_pro_ion'][0] #kg COD.m^-3 propionate
-    S_ac_ion = initial_state['S_ac_ion'][0] #kg COD.m^-3 acetate
-    S_hco3_ion = initial_state['S_hco3_ion'][0] #kmole C.m^-3 bicarbonate
-    S_nh3 = initial_state['S_nh3'][0] #kmole N.m^-3 ammonia
-    S_nh4_ion = 0.0041 #kmole N.m^-3 the initial value is from Rosen et al (2006) BSM2 report and it is calculated further down and does not need to be initiated
-    S_co2 = 0.14 #kmole C.m^-3 the initial value is from Rosen et al (2006) BSM2 report and it is calculated further down and does not need to be initiated
-    S_gas_h2 = initial_state['S_gas_h2'][0] #kg COD.m^-3 hydrogen concentration in gas phase
-    S_gas_ch4 = initial_state['S_gas_ch4'][0] #kg COD.m^-3 methane concentration in gas phase
-    S_gas_co2 = initial_state['S_gas_co2'][0]#kmole C.m^-3 carbon dioxide concentration in gas phas
+  S_cation = initial_state['S_cation'][0] #kmole.m^-3 cations (metallic ions, strong base)
+  S_anion = initial_state['S_anion'][0] #kmole.m^-3 anions (metallic ions, strong acid)
 
-    # related to pH inhibition taken from BSM2 report, they are global variables to avoid repeating them in DAE part
-    K_pH_aa =  (10 ** (-1 * (pH_LL_aa + pH_UL_aa) / 2.0))
-    nn_aa =  (3.0 / (pH_UL_aa - pH_LL_aa)) #we need a differece between N_aa and n_aa to avoid typos and nn_aa refers to the n_aa in BSM2 report
-    K_pH_ac = (10 ** (-1 * (pH_LL_ac + pH_UL_ac) / 2.0))
-    n_ac =  (3.0 / (pH_UL_ac - pH_LL_ac))
-    K_pH_h2 =  (10 ** (-1 * (pH_LL_h2 + pH_UL_h2) / 2.0))
-    n_h2 =  (3.0 / (pH_UL_h2 - pH_LL_h2))
+  pH = 7.4655377 # initial pH
+  S_H_ion = initial_state['S_H_ion'][0] #kmole H.m^-3
+  S_va_ion = initial_state['S_va_ion'][0] #kg COD.m^-3 valerate
+  S_bu_ion = initial_state['S_bu_ion'][0] #kg COD.m^-3 butyrate
+  S_pro_ion = initial_state['S_pro_ion'][0] #kg COD.m^-3 propionate
+  S_ac_ion = initial_state['S_ac_ion'][0] #kg COD.m^-3 acetate
+  S_hco3_ion = initial_state['S_hco3_ion'][0] #kmole C.m^-3 bicarbonate
+  S_nh3 = initial_state['S_nh3'][0] #kmole N.m^-3 ammonia
+  S_nh4_ion = 0.0041 #kmole N.m^-3 the initial value is from Rosen et al (2006) BSM2 report and it is calculated further down and does not need to be initiated
+  S_co2 = 0.14 #kmole C.m^-3 the initial value is from Rosen et al (2006) BSM2 report and it is calculated further down and does not need to be initiated
+  S_gas_h2 = initial_state['S_gas_h2'][0] #kg COD.m^-3 hydrogen concentration in gas phase
+  S_gas_ch4 = initial_state['S_gas_ch4'][0] #kg COD.m^-3 methane concentration in gas phase
+  S_gas_co2 = initial_state['S_gas_co2'][0]#kmole C.m^-3 carbon dioxide concentration in gas phas
 
-    #pH equation
-    pH = - np.log10(S_H_ion)
+  #pH equation
+  pH = - np.log10(S_H_ion)
 
-    setInfluent(0) #setting the influent for the initial time (t0) to be ready for the start of the simulation
-    q_ad =  178.4674 #m^3.d^-1 initial flow rate (can be modified during the simulation by the control algorithm)
+  setInfluent(0) #setting the influent for the initial time (t0) to be ready for the start of the simulation
+  q_ad =  178.4674 #m^3.d^-1 initial flow rate (can be modified during the simulation by the control algorithm)
 
 
-    state_zero = [S_su,
-                  S_aa,
-                  S_fa,
-                  S_va,
-                  S_bu,
-                  S_pro,
-                  S_ac,
-                  S_h2,
-                  S_ch4,
-                  S_IC,
-                  S_IN,
-                  S_I,
-                  X_xc,
-                  X_ch,
-                  X_pr,
-                  X_li,
-                  X_su,
-                  X_aa,
-                  X_fa,
-                  X_c4,
-                  X_pro,
-                  X_ac,
-                  X_h2,
-                  X_I,
-                  S_cation,
-                  S_anion,
-                  S_H_ion,
-                  S_va_ion,
-                  S_bu_ion,
-                  S_pro_ion,
-                  S_ac_ion,
-                  S_hco3_ion,
-                  S_co2,
-                  S_nh3,
-                  S_nh4_ion,
-                  S_gas_h2,
-                  S_gas_ch4,
-                  S_gas_co2]
+  state_zero = [S_su,
+                S_aa,
+                S_fa,
+                S_va,
+                S_bu,
+                S_pro,
+                S_ac,
+                S_h2,
+                S_ch4,
+                S_IC,
+                S_IN,
+                S_I,
+                X_xc,
+                X_ch,
+                X_pr,
+                X_li,
+                X_su,
+                X_aa,
+                X_fa,
+                X_c4,
+                X_pro,
+                X_ac,
+                X_h2,
+                X_I,
+                S_cation,
+                S_anion,
+                S_H_ion,
+                S_va_ion,
+                S_bu_ion,
+                S_pro_ion,
+                S_ac_ion,
+                S_hco3_ion,
+                S_co2,
+                S_nh3,
+                S_nh4_ion,
+                S_gas_h2,
+                S_gas_ch4,
+                S_gas_co2]
 
-    state_input = [S_su_in,
-                  S_aa_in,
-                  S_fa_in,
-                  S_va_in,
-                  S_bu_in,
-                  S_pro_in,
-                  S_ac_in,
-                  S_h2_in,
-                  S_ch4_in,
-                  S_IC_in,
-                  S_IN_in,
-                  S_I_in,
-                  X_xc_in,
-                  X_ch_in,
-                  X_pr_in,
-                  X_li_in,
-                  X_su_in,
-                  X_aa_in,
-                  X_fa_in,
-                  X_c4_in,
-                  X_pro_in,
-                  X_ac_in,
-                  X_h2_in,
-                  X_I_in,
-                  S_cation_in,
-                  S_anion_in]
+  state_input = [S_su_in,
+                S_aa_in,
+                S_fa_in,
+                S_va_in,
+                S_bu_in,
+                S_pro_in,
+                S_ac_in,
+                S_h2_in,
+                S_ch4_in,
+                S_IC_in,
+                S_IN_in,
+                S_I_in,
+                X_xc_in,
+                X_ch_in,
+                X_pr_in,
+                X_li_in,
+                X_su_in,
+                X_aa_in,
+                X_fa_in,
+                X_c4_in,
+                X_pro_in,
+                X_ac_in,
+                X_h2_in,
+                X_I_in,
+                S_cation_in,
+                S_anion_in]
 
-    ## time array definition
-    t = influent_state['time']
-
-
-    # Initiate the cache data frame for storing simulation results
-    simulate_results = pd.DataFrame([state_zero])
-    columns = ["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4", "S_IC", "S_IN", "S_I", "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I", "S_cation", "S_anion", "pH", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion", "S_co2", "S_nh3", "S_nh4_ion", "S_gas_h2", "S_gas_ch4", "S_gas_co2"]
-    simulate_results.columns = columns
-
-    # Setting the solver method for the simulate function
-    solvermethod = 'DOP853'
-    t0=0
-    n=0
-
-    # Initiate cache data frame for storing gasflow values
-    initflow = {'q_gas': [0], 'q_ch4': [0]}
-    gasflow = pd.DataFrame(initflow)
-    total_ch4 = 0
-
-    # Initiate cache data frame for storing feedflow values
-    initq = {'q_ad' : [170]}
-    feedflow = pd.DataFrame(initq)
+  ## time array definition
+  t = influent_state['time']
 
 
-    ## Dynamic simulation
-    # Loop for simlating at each time step and feeding the results to the next time step
-    for u in t[1:]:
-      n+=1
-      setInfluent(n)
+  # Initiate the cache data frame for storing simulation results
+  simulate_results = pd.DataFrame([state_zero])
+  columns = ["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4", "S_IC", "S_IN", "S_I", "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I", "S_cation", "S_anion", "pH", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion", "S_co2", "S_nh3", "S_nh4_ion", "S_gas_h2", "S_gas_ch4", "S_gas_co2"]
+  simulate_results.columns = columns
 
-      state_input = [S_su_in,S_aa_in,S_fa_in,S_va_in,S_bu_in,S_pro_in,S_ac_in,S_h2_in,S_ch4_in,S_IC_in,S_IN_in,S_I_in,X_xc_in,X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in]
+  # Setting the solver method for the simulate function
+  solvermethod = 'DOP853'
+  t0=0
+  n=0
 
-      # Span for next time step
-      tstep = [t0,u]
+  # Initiate cache data frame for storing gasflow values
+  initflow = {'q_gas': [0], 'q_ch4': [0]}
+  gasflow = pd.DataFrame(initflow)
+  total_ch4 = 0
 
-      # Solve and store ODE results for next step
-      sim_S_su, sim_S_aa, sim_S_fa, sim_S_va, sim_S_bu, sim_S_pro, sim_S_ac, sim_S_h2, sim_S_ch4, sim_S_IC, sim_S_IN, sim_S_I, sim_X_xc, sim_X_ch, sim_X_pr, sim_X_li, sim_X_su, sim_X_aa, sim_X_fa, sim_X_c4, sim_X_pro, sim_X_ac, sim_X_h2, sim_X_I, sim_S_cation, sim_S_anion, sim_S_H_ion, sim_S_va_ion, sim_S_bu_ion, sim_S_pro_ion, sim_S_ac_ion, sim_S_hco3_ion, sim_S_co2, sim_S_nh3, sim_S_nh4_ion, sim_S_gas_h2, sim_S_gas_ch4, sim_S_gas_co2 = simulate(tstep, solvermethod)
-
-      # Store ODE simulation result states
-      S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2 =   sim_S_su[-1], sim_S_aa[-1], sim_S_fa[-1], sim_S_va[-1], sim_S_bu[-1], sim_S_pro[-1], sim_S_ac[-1], sim_S_h2[-1], sim_S_ch4[-1], sim_S_IC[-1], sim_S_IN[-1], sim_S_I[-1], sim_X_xc[-1], sim_X_ch[-1], sim_X_pr[-1], sim_X_li[-1], sim_X_su[-1], sim_X_aa[-1], sim_X_fa[-1], sim_X_c4[-1], sim_X_pro[-1], sim_X_ac[-1], sim_X_h2[-1], sim_X_I[-1], sim_S_cation[-1], sim_S_anion[-1], sim_S_H_ion[-1], sim_S_va_ion[-1], sim_S_bu_ion[-1], sim_S_pro_ion[-1], sim_S_ac_ion[-1], sim_S_hco3_ion[-1], sim_S_co2[-1], sim_S_nh3[-1], sim_S_nh4_ion[-1], sim_S_gas_h2[-1], sim_S_gas_ch4[-1], sim_S_gas_co2[-1]
-
-      # Solve DAE states
-      DAESolve()
-
-      # Algebraic equations
-      p_gas_h2 =  (S_gas_h2 * R * T_op / 16)
-      p_gas_ch4 =  (S_gas_ch4 * R * T_op / 64)
-      p_gas_co2 =  (S_gas_co2 * R * T_op)
-      p_gas=  (p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_gas_h2o)
-      q_gas =  (k_p * (p_gas- p_atm))
-      if q_gas < 0:
-        q_gas = 0
-
-      q_ch4 = q_gas * (p_gas_ch4/p_gas) # methane flow
-      if q_ch4 < 0:
-        q_ch4 = 0
-
-      flowtemp = {'q_gas' : q_gas, 'q_ch4' : q_ch4}
-      gasflow = gasflow.append(flowtemp, ignore_index=True)
-
-      S_nh4_ion =  (S_IN - S_nh3)
-      S_co2 =  (S_IC - S_hco3_ion)
-      total_ch4 = total_ch4 + q_ch4
+  # Initiate cache data frame for storing feedflow values
+  initq = {'q_ad' : [170]}
+  feedflow = pd.DataFrame(initq)
 
 
-      #state transfer
-      state_zero = [S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2]
+  ## Dynamic simulation
+  # Loop for simlating at each time step and feeding the results to the next time step
+  for u in t[1:]:
+    n+=1
+    setInfluent(n)
 
-      dfstate_zero = pd.DataFrame([state_zero], columns = columns)
-      simulate_results = simulate_results.append(dfstate_zero)
-      t0 = u
+    state_input = [S_su_in,S_aa_in,S_fa_in,S_va_in,S_bu_in,S_pro_in,S_ac_in,S_h2_in,S_ch4_in,S_IC_in,S_IN_in,S_I_in,X_xc_in,X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in]
+
+    # Span for next time step
+    tstep = [t0,u]
+
+    # Solve and store ODE results for next step
+    sim_S_su, sim_S_aa, sim_S_fa, sim_S_va, sim_S_bu, sim_S_pro, sim_S_ac, sim_S_h2, sim_S_ch4, sim_S_IC, sim_S_IN, sim_S_I, sim_X_xc, sim_X_ch, sim_X_pr, sim_X_li, sim_X_su, sim_X_aa, sim_X_fa, sim_X_c4, sim_X_pro, sim_X_ac, sim_X_h2, sim_X_I, sim_S_cation, sim_S_anion, sim_S_H_ion, sim_S_va_ion, sim_S_bu_ion, sim_S_pro_ion, sim_S_ac_ion, sim_S_hco3_ion, sim_S_co2, sim_S_nh3, sim_S_nh4_ion, sim_S_gas_h2, sim_S_gas_ch4, sim_S_gas_co2 = simulate(tstep, solvermethod)
+
+    # Store ODE simulation result states
+    S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2 =   sim_S_su[-1], sim_S_aa[-1], sim_S_fa[-1], sim_S_va[-1], sim_S_bu[-1], sim_S_pro[-1], sim_S_ac[-1], sim_S_h2[-1], sim_S_ch4[-1], sim_S_IC[-1], sim_S_IN[-1], sim_S_I[-1], sim_X_xc[-1], sim_X_ch[-1], sim_X_pr[-1], sim_X_li[-1], sim_X_su[-1], sim_X_aa[-1], sim_X_fa[-1], sim_X_c4[-1], sim_X_pro[-1], sim_X_ac[-1], sim_X_h2[-1], sim_X_I[-1], sim_S_cation[-1], sim_S_anion[-1], sim_S_H_ion[-1], sim_S_va_ion[-1], sim_S_bu_ion[-1], sim_S_pro_ion[-1], sim_S_ac_ion[-1], sim_S_hco3_ion[-1], sim_S_co2[-1], sim_S_nh3[-1], sim_S_nh4_ion[-1], sim_S_gas_h2[-1], sim_S_gas_ch4[-1], sim_S_gas_co2[-1]
+
+    # Solve DAE states
+    DAESolve()
+
+    # Algebraic equations
+    p_gas_h2 =  (S_gas_h2 * R * T_op / 16)
+    p_gas_ch4 =  (S_gas_ch4 * R * T_op / 64)
+    p_gas_co2 =  (S_gas_co2 * R * T_op)
+    p_gas=  (p_gas_h2 + p_gas_ch4 + p_gas_co2 + p_gas_h2o)
+    q_gas =  (k_p * (p_gas- p_atm))
+    if q_gas < 0:
+      q_gas = 0
+
+    q_ch4 = q_gas * (p_gas_ch4/p_gas) # methane flow
+    if q_ch4 < 0:
+      q_ch4 = 0
+
+    flowtemp = {'q_gas' : q_gas, 'q_ch4' : q_ch4}
+    gasflow = gasflow.append(flowtemp, ignore_index=True)
+
+    S_nh4_ion =  (S_IN - S_nh3)
+    S_co2 =  (S_IC - S_hco3_ion)
+    total_ch4 = total_ch4 + q_ch4
 
 
-    # Write the dynamic simulation resutls to csv
-    phlogarray = -1 * np.log10(simulate_results['pH'])
-    simulate_results['pH'] = phlogarray
-    simulate_results.to_csv("dynamic_out.csv", index = False)
+    #state transfer
+    state_zero = [S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2]
+
+    dfstate_zero = pd.DataFrame([state_zero], columns = columns)
+    simulate_results = simulate_results.append(dfstate_zero)
+    t0 = u
+
+
+  # Write the dynamic simulation resutls to csv
+  phlogarray = -1 * np.log10(simulate_results['pH'])
+  simulate_results['pH'] = phlogarray
+  simulate_results.to_csv("dynamic_out.csv", index = False)
 
 
 def pyadm1(folder: str, input1: str, input2: str, output1: str) -> None:
-    # FaaSr entry point. Downloads the cleaned influent and initial-state inputs
-    # to the local names the preserved model reads, runs the model, and uploads
-    # the model's output file. All computation is performed by the model above.
-    influent_local = "digester_influent.csv"
-    initial_local = "digester_initial.csv"
-    output_local = "dynamic_out.csv"
+    """FaaSr entry function for the PyADM1 dynamic simulation step.
 
-    faasr_log(f"pyadm1: fetching {input1} and {input2} from folder {folder}")
-    faasr_get_file(local_file=influent_local, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=initial_local, remote_folder=folder, remote_file=input2)
+    Downloads the cleaned influent (input1) and initial-conditions (input2)
+    CSVs from the S3 folder, hands them to the preserved PyADM1 model under the
+    exact hardcoded filenames it reads ('digester_influent.csv',
+    'digester_initial.csv'), runs the model, and uploads the model's
+    'dynamic_out.csv' result as output1. All numerical work is performed by the
+    preserved model (run_adm1_simulation); this wrapper only moves files.
+    """
+    import os
+    import tempfile
 
-    faasr_log("pyadm1: running PyADM1 dynamic simulation (this may take a while)")
-    run_pyadm1_model()
-    faasr_log("pyadm1: simulation complete; uploading results")
+    prev_cwd = os.getcwd()
+    workdir = tempfile.mkdtemp(prefix="pyadm1_")
 
-    faasr_put_file(local_file=output_local, remote_folder=folder, remote_file=output1)
-    faasr_log(f"pyadm1: wrote {output1} to folder {folder}")
+    # Fetch inputs (while cwd is still the workflow context dir so the FaaSr
+    # backend can resolve them) into the model's hardcoded filenames.
+    faasr_log(f"pyadm1: fetching cleaned influent '{input1}' from folder '{folder}'")
+    faasr_get_file(
+        local_file=os.path.join(workdir, "digester_influent.csv"),
+        remote_folder=folder,
+        remote_file=input1,
+    )
+    faasr_log(f"pyadm1: fetching initial conditions '{input2}' from folder '{folder}'")
+    faasr_get_file(
+        local_file=os.path.join(workdir, "digester_initial.csv"),
+        remote_folder=folder,
+        remote_file=input2,
+    )
+
+    out_path = os.path.join(workdir, "dynamic_out.csv")
+    try:
+        # The model reads/writes the hardcoded relative filenames, so run it
+        # with the working directory set to where the inputs were placed.
+        os.chdir(workdir)
+        faasr_log("pyadm1: running PyADM1 dynamic simulation (run_adm1_simulation)")
+        run_adm1_simulation()
+    finally:
+        os.chdir(prev_cwd)
+
+    if not os.path.exists(out_path):
+        msg = "pyadm1: model did not produce dynamic_out.csv"
+        faasr_log(msg)
+        raise RuntimeError(msg)
+
+    faasr_log(f"pyadm1: uploading simulation results as '{output1}'")
+    faasr_put_file(
+        local_file=out_path,
+        remote_folder=folder,
+        remote_file=output1,
+    )
+    faasr_log("pyadm1: dynamic simulation complete")
