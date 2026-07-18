@@ -1,17 +1,14 @@
-def split_dataset(folder="MapReduce", input_file="words.txt", num_parts=3):
-    """
-    Stage 2 of the MapReduce pipeline.
+def split_dataset(folder="MapReduce", input_file="words.txt", n_splits=4,
+                  splits_folder="MapReduce/splits"):
+    """Split the extracted word list into ``n_splits`` roughly equal shards so that
+    each concurrent mapper (identified by its rank) can process one shard.
 
-    Downloads the extracted word list, splits it into `num_parts` roughly-equal
-    shards and uploads each shard to `folder`/splits/part_<rank>.txt. The number
-    of shards MUST match the rank count used to fan out `map_words` in the
-    workflow JSON (map_words(N)), so each map invocation with rank R reads
-    part_R.txt.
+    Reads:  {folder}/{input_file}
+    Writes: {splits_folder}/part_1.txt ... part_{n_splits}.txt
     """
-    num_parts = int(num_parts)
+    n_splits = int(n_splits)
 
-    # 1. Download the full word list produced by extract_words.
-    faasr_log(f"split_dataset: downloading {folder}/{input_file}")
+    # Download the full word list
     faasr_get_file(
         remote_folder=folder,
         remote_file=input_file,
@@ -19,35 +16,27 @@ def split_dataset(folder="MapReduce", input_file="words.txt", num_parts=3):
         local_file="words.txt",
     )
 
-    with open("words.txt") as fh:
-        words = fh.read().split()
+    with open("words.txt", "r", encoding="utf-8") as fh:
+        words = [w for w in fh.read().splitlines() if w.strip()]
 
-    total = len(words)
-    faasr_log(f"split_dataset: splitting {total} words into {num_parts} parts")
+    # Round-robin assignment gives balanced shards regardless of ordering
+    shards = [[] for _ in range(n_splits)]
+    for idx, word in enumerate(words):
+        shards[idx % n_splits].append(word)
 
-    # 2. Compute contiguous, balanced chunk boundaries.
-    #    Ranks are 1-indexed in FaaSr, so part files are named part_1..part_N.
-    base = total // num_parts
-    remainder = total % num_parts
-
-    start = 0
-    for i in range(num_parts):
-        rank = i + 1
-        size = base + (1 if i < remainder else 0)
-        chunk = words[start:start + size]
-        start += size
-
-        local_name = f"part_{rank}.txt"
-        with open(local_name, "w") as fh:
-            fh.write(" ".join(chunk))
-
+    # Write and upload one shard per mapper rank (ranks are 1-indexed)
+    for i in range(n_splits):
+        local_name = f"part_{i + 1}.txt"
+        with open(local_name, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(shards[i]))
         faasr_put_file(
             local_folder=".",
             local_file=local_name,
-            remote_folder=f"{folder}/splits",
-            remote_file=f"part_{rank}.txt",
+            remote_folder=splits_folder,
+            remote_file=local_name,
         )
-        faasr_log(
-            f"split_dataset: wrote {len(chunk)} words to "
-            f"{folder}/splits/part_{rank}.txt"
-        )
+
+    faasr_log(
+        f"split_dataset: split {len(words)} words into {n_splits} shards "
+        f"under {splits_folder}/"
+    )
