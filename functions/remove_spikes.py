@@ -3,8 +3,10 @@ def remove_spikes(folder: str, input1: str, output1: str) -> None:
     import numpy as np
     import tempfile, os
 
-    WINDOW = 11       # rolling window size (must be odd for symmetric centering)
-    MAD_THRESH = 3.0  # spike if |value - median| > MAD_THRESH * MAD
+    WINDOW = 11        # rolling window size for Q (must be odd for symmetric centering)
+    MAD_THRESH = 3.0   # spike threshold for Q
+    T_WINDOW = 21      # wider window for T to catch subtler spikes
+    T_MAD_THRESH = 2.5 # tighter threshold for T
 
     local_in = tempfile.mktemp(suffix=".csv")
     local_out = tempfile.mktemp(suffix=".csv")
@@ -14,9 +16,9 @@ def remove_spikes(folder: str, input1: str, output1: str) -> None:
 
     df = pd.read_csv(local_in)
 
-    def despike(series):
+    def despike(series, window, thresh):
         s = series.copy()
-        half = WINDOW // 2
+        half = window // 2
         vals = s.values.astype(float)
         n = len(vals)
         for i in range(n):
@@ -29,23 +31,23 @@ def remove_spikes(folder: str, input1: str, output1: str) -> None:
             # (neighbours must NOT also be spikes — check them at a looser threshold)
             if mad == 0:
                 continue
-            if abs(vals[i] - med) > MAD_THRESH * mad:
+            if abs(vals[i] - med) > thresh * mad:
                 # verify it is isolated: at least one immediate neighbour is not a spike
-                prev_ok = (i == 0) or (abs(vals[i - 1] - med) <= MAD_THRESH * mad)
-                next_ok = (i == n - 1) or (abs(vals[i + 1] - med) <= MAD_THRESH * mad)
+                prev_ok = (i == 0) or (abs(vals[i - 1] - med) <= thresh * mad)
+                next_ok = (i == n - 1) or (abs(vals[i + 1] - med) <= thresh * mad)
                 if prev_ok or next_ok:
                     s.iat[i] = med
         return s
 
     q_orig = df["Q"].copy()
-    t_orig = df["T (F)"].copy()
+    t_orig = df["T (C)"].copy()
 
-    df["Q"] = despike(df["Q"])
-    df["T (F)"] = despike(df["T (F)"])
+    df["Q"] = despike(df["Q"], WINDOW, MAD_THRESH)
+    df["T (C)"] = despike(df["T (C)"], T_WINDOW, T_MAD_THRESH)
 
     n_q = int((df["Q"] != q_orig).sum())
-    n_t = int((df["T (F)"] != t_orig).sum())
-    faasr_log(f"remove_spikes: Q spikes replaced={n_q}, T spikes replaced={n_t}")
+    n_t = int((df["T (C)"] != t_orig).sum())
+    faasr_log(f"remove_spikes: Q spikes replaced={n_q}, T (C) spikes replaced={n_t}")
 
     df.to_csv(local_out, index=False)
     faasr_log(f"remove_spikes: writing {output1} to {folder}")
