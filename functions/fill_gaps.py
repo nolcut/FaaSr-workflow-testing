@@ -1,22 +1,27 @@
+import pandas as pd
+import tempfile
+import os
+
 def fill_gaps(folder: str, input1: str, output1: str) -> None:
-    import pandas as pd
-    import tempfile, os
+    faasr_log("fill_gaps: starting gap fill")
 
-    local_in = tempfile.mktemp(suffix=".csv")
-    local_out = tempfile.mktemp(suffix=".csv")
+    with tempfile.TemporaryDirectory() as tmp:
+        local_in = os.path.join(tmp, "in.csv")
+        local_out = os.path.join(tmp, "out.csv")
 
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
-    faasr_log(f"fill_gaps: read {input1} from {folder}")
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
-    df = pd.read_csv(local_in)
+        df = pd.read_csv(local_in)
+        faasr_log(f"fill_gaps: loaded {len(df)} rows")
 
-    df["S_cation"] = df["S_cation"].ffill()
-    df["S_anion"] = df["S_anion"].ffill()
+        for col in ("S_cation", "S_anion"):
+            if col not in df.columns:
+                raise ValueError(f"Expected column '{col}' not found in input")
+            before = df[col].isna().sum()
+            df[col] = df[col].ffill()
+            after = df[col].isna().sum()
+            faasr_log(f"fill_gaps: {col} NaN before={before} after={after}")
 
-    df.to_csv(local_out, index=False)
-    faasr_log(f"fill_gaps: writing {output1} to {folder}")
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-
-    os.remove(local_in)
-    os.remove(local_out)
-    faasr_log("fill_gaps: done")
+        df.to_csv(local_out, index=False)
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+        faasr_log("fill_gaps: done")
