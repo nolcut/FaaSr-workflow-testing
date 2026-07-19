@@ -1,167 +1,195 @@
+import pandas as pd
+import numpy as np
+import tempfile
+import os
+
+# Expected ADM1 influent columns (beyond time)
+_INFLUENT_REQUIRED = [
+    "Q", "T_ad",
+    "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
+    "S_IC", "S_IN", "S_I", "S_cation", "S_anion",
+    "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa",
+    "X_c4", "X_pro", "X_ac", "X_h2", "X_I",
+]
+
+# Expected ADM1 initial-state columns (one data row, no time column)
+_INITIAL_REQUIRED = [
+    "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
+    "S_IC", "S_IN", "S_I",
+    "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa",
+    "X_c4", "X_pro", "X_ac", "X_h2", "X_I",
+    "S_cation", "S_anion",
+    "S_H_ion", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion",
+    "S_hco3_ion", "S_co2", "S_nh3", "S_nh4_ion",
+    "S_gas_h2", "S_gas_ch4", "S_gas_co2",
+]
+
+
+def _check(name, condition, pass_msg, fail_msg):
+    status = "PASS" if condition else "FAIL"
+    details = pass_msg if condition else fail_msg
+    return {"check": name, "status": status, "details": details}
+
+
 def validate(folder: str, input1: str, input2: str, output1: str) -> None:
-    import pandas as pd
-    import numpy as np
-    import tempfile, os
+    faasr_log("validate: starting")
 
-    # Required ADM1 influent columns (Q + T + 26 lab state variables)
-    REQUIRED_INFLUENT_COLS = [
-        "Q", "T (F)",
-        "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
-        "S_IC", "S_IN", "S_I",
-        "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa",
-        "X_c4", "X_pro", "X_ac", "X_h2", "X_I",
-        "S_cation", "S_anion",
-    ]
-    # Concentration columns that must be >= 0
-    CONC_COLS = [c for c in REQUIRED_INFLUENT_COLS if c not in ("Q", "T (F)")]
+    with tempfile.TemporaryDirectory() as tmp:
+        local_inf = os.path.join(tmp, "influent.csv")
+        local_ini = os.path.join(tmp, "initial.csv")
+        local_out = os.path.join(tmp, "report.csv")
 
-    local_inf = tempfile.mktemp(suffix=".csv")
-    local_ini = tempfile.mktemp(suffix=".csv")
-    local_out = tempfile.mktemp(suffix=".csv")
+        faasr_get_file(local_file=local_inf, remote_folder=folder, remote_file=input1)
+        faasr_get_file(local_file=local_ini, remote_folder=folder, remote_file=input2)
 
-    faasr_get_file(local_file=local_inf, remote_folder=folder, remote_file=input1)
-    faasr_get_file(local_file=local_ini, remote_folder=folder, remote_file=input2)
-    faasr_log(f"validate: read {input1} and {input2} from {folder}")
+        inf = pd.read_csv(local_inf)
+        ini = pd.read_csv(local_ini)
+        faasr_log(f"validate: influent {inf.shape}, initial {ini.shape}")
 
-    inf = pd.read_csv(local_inf)
-    ini = pd.read_csv(local_ini)
+        rows = []
 
-    rows = []
+        # ── Influent checks ─────────────────────────────────────────────────
 
-    def _row(check_name, file, status, column, n_violations, obs_min, obs_max, details):
-        return {
-            "check_name": check_name,
-            "file": file,
-            "status": status,
-            "column": column,
-            "n_violations": n_violations,
-            "observed_min": obs_min,
-            "observed_max": obs_max,
-            "details": details,
+        # 1. Required columns present
+        missing_inf = [c for c in _INFLUENT_REQUIRED if c not in inf.columns]
+        rows.append(_check(
+            "influent_required_columns",
+            len(missing_inf) == 0,
+            f"All {len(_INFLUENT_REQUIRED)} required columns present",
+            f"Missing columns: {missing_inf}",
+        ))
+
+        # 2. Numeric dtypes for all non-time columns
+        non_numeric_inf = [
+            c for c in inf.columns
+            if c != "time" and not pd.api.types.is_numeric_dtype(inf[c])
+        ]
+        rows.append(_check(
+            "influent_numeric_dtypes",
+            len(non_numeric_inf) == 0,
+            "All non-time columns are numeric",
+            f"Non-numeric columns: {non_numeric_inf}",
+        ))
+
+        # 3. No missing values in required columns
+        inf_key_cols = [c for c in _INFLUENT_REQUIRED if c in inf.columns]
+        nan_counts = inf[inf_key_cols].isna().sum()
+        nan_cols = nan_counts[nan_counts > 0].to_dict()
+        rows.append(_check(
+            "influent_no_missing_values",
+            len(nan_cols) == 0,
+            "No missing values in required columns",
+            f"Columns with NaN: {nan_cols}",
+        ))
+
+        # 4. Non-negative values in numeric columns
+        numeric_inf = inf.select_dtypes(include=[np.number])
+        neg_cols_inf = {
+            c: int((numeric_inf[c] < 0).sum())
+            for c in numeric_inf.columns
+            if (numeric_inf[c] < 0).any()
         }
-
-    # ── INFLUENT CHECKS ────────────────────────────────────────────────────────
-
-    # 1. Required columns present
-    missing_cols = [c for c in REQUIRED_INFLUENT_COLS if c not in inf.columns]
-    rows.append(_row(
-        "required_columns", input1,
-        "PASS" if not missing_cols else "FAIL",
-        "",
-        len(missing_cols),
-        "", "",
-        f"missing: {missing_cols}" if missing_cols else "all required columns present",
-    ))
-
-    # 2. NaN / missing values per column
-    for col in inf.columns:
-        n = int(inf[col].isna().sum())
-        rows.append(_row(
-            "no_missing_values", input1,
-            "PASS" if n == 0 else "FAIL",
-            col, n,
-            "", "",
-            f"{n} NaN(s)" if n else "no missing values",
+        rows.append(_check(
+            "influent_non_negative_values",
+            len(neg_cols_inf) == 0,
+            "All numeric columns are non-negative",
+            f"Columns with negative values (count): {neg_cols_inf}",
         ))
 
-    # 3. Physical plausibility — only check cols that are present
-    present = set(inf.columns)
-
-    # Q > 0
-    if "Q" in present:
-        col_vals = inf["Q"].dropna()
-        n_viol = int((col_vals <= 0).sum())
-        rows.append(_row(
-            "Q_positive", input1,
-            "PASS" if n_viol == 0 else "FAIL",
-            "Q", n_viol,
-            float(col_vals.min()), float(col_vals.max()),
-            f"{n_viol} rows with Q <= 0" if n_viol else "all Q > 0",
+        # 5. Row count sanity (must have at least one row)
+        rows.append(_check(
+            "influent_row_count",
+            len(inf) > 0,
+            f"{len(inf)} rows present",
+            "Influent file is empty",
         ))
 
-    # T in 0–60 °C  (column still named "T (F)" but values are in Celsius after convert_units)
-    if "T (F)" in present:
-        col_vals = inf["T (F)"].dropna()
-        n_viol = int(((col_vals < 0) | (col_vals > 60)).sum())
-        rows.append(_row(
-            "T_range_0_60C", input1,
-            "PASS" if n_viol == 0 else "FAIL",
-            "T (F)", n_viol,
-            float(col_vals.min()), float(col_vals.max()),
-            f"{n_viol} rows outside 0–60 °C" if n_viol else "all T in 0–60 °C",
+        # 6. Time column present and monotonically increasing
+        if "time" in inf.columns:
+            mono = bool(inf["time"].is_monotonic_increasing)
+            rows.append(_check(
+                "influent_time_monotonic",
+                mono,
+                "time column is monotonically increasing",
+                "time column is NOT monotonically increasing",
+            ))
+        else:
+            rows.append({"check": "influent_time_monotonic", "status": "FAIL",
+                         "details": "time column absent"})
+
+        # 7. Time step consistency (15-min = 1/96 day, allow 1% tolerance)
+        if "time" in inf.columns and len(inf) > 1:
+            diffs = inf["time"].diff().dropna()
+            expected_step = 1.0 / 96.0
+            step_ok = bool((diffs - expected_step).abs().max() <= expected_step * 0.01)
+            rows.append(_check(
+                "influent_15min_timestep",
+                step_ok,
+                f"Uniform 15-min timestep (step={expected_step:.6f} days)",
+                f"Irregular timestep detected; min={diffs.min():.6f} max={diffs.max():.6f}",
+            ))
+
+        # ── Initial-state checks ─────────────────────────────────────────────
+
+        # 8. Required columns present
+        missing_ini = [c for c in _INITIAL_REQUIRED if c not in ini.columns]
+        rows.append(_check(
+            "initial_required_columns",
+            len(missing_ini) == 0,
+            f"All {len(_INITIAL_REQUIRED)} required columns present",
+            f"Missing columns: {missing_ini}",
         ))
 
-    # Concentrations >= 0
-    for col in CONC_COLS:
-        if col not in present:
-            continue
-        col_vals = inf[col].dropna()
-        n_viol = int((col_vals < 0).sum())
-        rows.append(_row(
-            "concentration_nonnegative", input1,
-            "PASS" if n_viol == 0 else "FAIL",
-            col, n_viol,
-            float(col_vals.min()), float(col_vals.max()),
-            f"{n_viol} negative values" if n_viol else "all values >= 0",
+        # 9. Exactly one data row
+        rows.append(_check(
+            "initial_single_row",
+            len(ini) == 1,
+            "Initial-state file contains exactly 1 data row",
+            f"Expected 1 row, found {len(ini)}",
         ))
 
-    # ── INITIAL-STATE CHECKS ───────────────────────────────────────────────────
-
-    # 1. Structure: expect exactly 1 data row and the known ADM1 state columns
-    EXPECTED_INITIAL_COLS = [
-        "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
-        "S_IC", "S_IN", "S_I",
-        "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa",
-        "X_c4", "X_pro", "X_ac", "X_h2", "X_I",
-        "S_cation", "S_anion",
-        "S_H_ion", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion",
-        "S_hco3_ion", "S_co2", "S_nh3", "S_nh4_ion",
-        "S_gas_h2", "S_gas_ch4", "S_gas_co2",
-    ]
-    missing_ini = [c for c in EXPECTED_INITIAL_COLS if c not in ini.columns]
-    n_rows_ini = len(ini)
-    struct_ok = (not missing_ini) and (n_rows_ini == 1)
-    rows.append(_row(
-        "initial_structure", input2,
-        "PASS" if struct_ok else "FAIL",
-        "",
-        len(missing_ini),
-        "", "",
-        (f"rows={n_rows_ini}, missing cols={missing_ini}"
-         if not struct_ok else f"1 row, {len(ini.columns)} columns"),
-    ))
-
-    # 2. No missing values
-    n_nan_ini = int(ini.isna().sum().sum())
-    rows.append(_row(
-        "initial_no_missing", input2,
-        "PASS" if n_nan_ini == 0 else "FAIL",
-        "", n_nan_ini, "", "",
-        f"{n_nan_ini} NaN(s)" if n_nan_ini else "no missing values",
-    ))
-
-    # 3. All numeric values non-negative
-    num_ini = ini.select_dtypes(include=[np.number])
-    n_neg_ini = int((num_ini < 0).sum().sum())
-    if len(num_ini.columns):
-        rows.append(_row(
-            "initial_nonnegative", input2,
-            "PASS" if n_neg_ini == 0 else "FAIL",
-            "", n_neg_ini,
-            float(num_ini.min().min()), float(num_ini.max().max()),
-            f"{n_neg_ini} negative value(s)" if n_neg_ini else "all values >= 0",
+        # 10. Numeric dtypes
+        non_numeric_ini = [
+            c for c in ini.columns
+            if not pd.api.types.is_numeric_dtype(ini[c])
+        ]
+        rows.append(_check(
+            "initial_numeric_dtypes",
+            len(non_numeric_ini) == 0,
+            "All columns are numeric",
+            f"Non-numeric columns: {non_numeric_ini}",
         ))
 
-    # ── WRITE REPORT ──────────────────────────────────────────────────────────
+        # 11. No missing values
+        nan_ini = ini.isna().sum()
+        nan_ini_cols = nan_ini[nan_ini > 0].to_dict()
+        rows.append(_check(
+            "initial_no_missing_values",
+            len(nan_ini_cols) == 0,
+            "No missing values",
+            f"Columns with NaN: {nan_ini_cols}",
+        ))
 
-    report = pd.DataFrame(rows)
-    report.to_csv(local_out, index=False)
+        # 12. Non-negative values
+        numeric_ini = ini.select_dtypes(include=[np.number])
+        neg_cols_ini = {
+            c: int((numeric_ini[c] < 0).sum())
+            for c in numeric_ini.columns
+            if (numeric_ini[c] < 0).any()
+        }
+        rows.append(_check(
+            "initial_non_negative_values",
+            len(neg_cols_ini) == 0,
+            "All numeric columns are non-negative",
+            f"Columns with negative values (count): {neg_cols_ini}",
+        ))
 
-    n_fail = int((report["status"] == "FAIL").sum())
-    faasr_log(f"validate: {len(report)} checks, {n_fail} FAIL(s)")
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+        # ── Write report ─────────────────────────────────────────────────────
+        report = pd.DataFrame(rows, columns=["check", "status", "details"])
+        n_pass = (report["status"] == "PASS").sum()
+        n_fail = (report["status"] == "FAIL").sum()
+        faasr_log(f"validate: {n_pass} PASS, {n_fail} FAIL")
 
-    os.remove(local_inf)
-    os.remove(local_ini)
-    os.remove(local_out)
-    faasr_log("validate: done")
+        report.to_csv(local_out, index=False)
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+        faasr_log("validate: done")
