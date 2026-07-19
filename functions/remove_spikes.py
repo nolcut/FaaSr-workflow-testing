@@ -1,58 +1,62 @@
+import pandas as pd
+import numpy as np
+import tempfile
+import os
+
+# Rolling-window MAD spike detection parameters
+_WINDOW = 49        # ~12 hours at 15-min resolution (must be odd for centered median)
+_MAD_THRESH = 5.0   # flag if |x - rolling_median| > threshold * rolling_MAD
+_MAX_RUN = 3        # runs longer than this are NOT replaced (true step change)
+
+def _remove_spikes_column(series: pd.Series, window: int, mad_thresh: float, max_run: int) -> pd.Series:
+    s = series.copy()
+    roll = s.rolling(window, center=True, min_periods=window // 2)
+    med = roll.median()
+    mad = roll.apply(lambda x: np.median(np.abs(x - np.median(x))), raw=True)
+    # avoid division by zero: if MAD==0, no spike can be detected
+    mad_safe = mad.replace(0, np.nan)
+    flagged = (s - med).abs() > mad_thresh * mad_safe
+
+    # Only replace *isolated* spikes: runs of flagged points <= max_run
+    result = s.copy()
+    i = 0
+    arr = flagged.to_numpy()
+    med_arr = med.to_numpy()
+    n = len(arr)
+    while i < n:
+        if arr[i]:
+            run_start = i
+            while i < n and arr[i]:
+                i += 1
+            run_len = i - run_start
+            if run_len <= max_run:
+                for j in range(run_start, run_start + run_len):
+                    if not np.isnan(med_arr[j]):
+                        result.iloc[j] = med_arr[j]
+        else:
+            i += 1
+    return result
+
+
 def remove_spikes(folder: str, input1: str, output1: str) -> None:
-    import pandas as pd
-    import numpy as np
-    import tempfile, os
+    faasr_log("remove_spikes: starting spike removal")
 
-    WINDOW = 11        # rolling window size for Q (must be odd for symmetric centering)
-    MAD_THRESH = 3.0   # spike threshold for Q
-    T_WINDOW = 21      # wider window for T to catch subtler spikes
-    T_MAD_THRESH = 2.5 # tighter threshold for T
+    with tempfile.TemporaryDirectory() as tmp:
+        local_in = os.path.join(tmp, "in.csv")
+        local_out = os.path.join(tmp, "out.csv")
 
-    local_in = tempfile.mktemp(suffix=".csv")
-    local_out = tempfile.mktemp(suffix=".csv")
+        faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
+        df = pd.read_csv(local_in)
+        faasr_log(f"remove_spikes: loaded {len(df)} rows")
 
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
-    faasr_log(f"remove_spikes: read {input1} from {folder}")
+        for col in ("Q", "T_ad"):
+            if col not in df.columns:
+                raise ValueError(f"Expected column '{col}' not found in input")
+            original = df[col].copy()
+            df[col] = _remove_spikes_column(df[col], _WINDOW, _MAD_THRESH, _MAX_RUN)
+            replaced = (df[col] != original).sum()
+            faasr_log(f"remove_spikes: {col} — {replaced} spike values replaced")
 
-    df = pd.read_csv(local_in)
-
-    def despike(series, window, thresh):
-        s = series.copy()
-        half = window // 2
-        vals = s.values.astype(float)
-        n = len(vals)
-        for i in range(n):
-            lo = max(0, i - half)
-            hi = min(n, i + half + 1)
-            window_vals = vals[lo:hi]
-            med = np.median(window_vals)
-            mad = np.median(np.abs(window_vals - med))
-            # avoid replacing genuine step changes: only replace isolated single-point spikes
-            # (neighbours must NOT also be spikes — check them at a looser threshold)
-            if mad == 0:
-                continue
-            if abs(vals[i] - med) > thresh * mad:
-                # verify it is isolated: at least one immediate neighbour is not a spike
-                prev_ok = (i == 0) or (abs(vals[i - 1] - med) <= thresh * mad)
-                next_ok = (i == n - 1) or (abs(vals[i + 1] - med) <= thresh * mad)
-                if prev_ok or next_ok:
-                    s.iat[i] = med
-        return s
-
-    q_orig = df["Q"].copy()
-    t_orig = df["T (C)"].copy()
-
-    df["Q"] = despike(df["Q"], WINDOW, MAD_THRESH)
-    df["T (C)"] = despike(df["T (C)"], T_WINDOW, T_MAD_THRESH)
-
-    n_q = int((df["Q"] != q_orig).sum())
-    n_t = int((df["T (C)"] != t_orig).sum())
-    faasr_log(f"remove_spikes: Q spikes replaced={n_q}, T (C) spikes replaced={n_t}")
-
-    df.to_csv(local_out, index=False)
-    faasr_log(f"remove_spikes: writing {output1} to {folder}")
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-
-    os.remove(local_in)
-    os.remove(local_out)
-    faasr_log("remove_spikes: done")
+        df.to_csv(local_out, index=False)
+        faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+        faasr_log("remove_spikes: done")
