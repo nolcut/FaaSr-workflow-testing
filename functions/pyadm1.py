@@ -4,151 +4,195 @@ import copy
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import integrate
+import tempfile
+import os
 
-## unit for each parameter is commented after it is declared (inline)
-## if the suggested value for the parameter is different -
-## The original default value from the original ADM1 report by Batstone et al (2002), is commented after each unit (inline)
-
-##constant definition from the Rosen et al (2006) BSM2 report
-R =  0.083145 #bar.M^-1.K^-1
-T_base =  298.15 #K
-p_atm =  1.013 #bar
-T_op =  308.15 #k ##T_ad #=35 C
-
-##parameter definition from the Rosen et al (2006) BSM2 report bmadm1_report
-# Stoichiometric parameter
-f_sI_xc =  0.1
-f_xI_xc =  0.2
-f_ch_xc =  0.2
-f_pr_xc =  0.2
-f_li_xc =  0.3
-N_xc =  0.0376 / 14
-N_I =  0.06 / 14 #kmole N.kg^-1COD
-N_aa =  0.007 #kmole N.kg^-1COD
-C_xc =  0.02786 #kmole C.kg^-1COD
-C_sI =  0.03 #kmole C.kg^-1COD
-C_ch =  0.0313 #kmole C.kg^-1COD
-C_pr =  0.03 #kmole C.kg^-1COD
-C_li =  0.022 #kmole C.kg^-1COD
-C_xI =  0.03 #kmole C.kg^-1COD
-C_su =  0.0313 #kmole C.kg^-1COD
-C_aa =  0.03 #kmole C.kg^-1COD
-f_fa_li =  0.95
-C_fa =  0.0217 #kmole C.kg^-1COD
-f_h2_su =  0.19
-f_bu_su =  0.13
-f_pro_su =  0.27
-f_ac_su =  0.41
-N_bac =  0.08 / 14 #kmole N.kg^-1COD
-C_bu =  0.025 #kmole C.kg^-1COD
-C_pro =  0.0268 #kmole C.kg^-1COD
-C_ac =  0.0313 #kmole C.kg^-1COD
-C_bac =  0.0313 #kmole C.kg^-1COD
-Y_su =  0.1
-f_h2_aa =  0.06
-f_va_aa =  0.23
-f_bu_aa =  0.26
-f_pro_aa =  0.05
-f_ac_aa =  0.40
-C_va =  0.024 #kmole C.kg^-1COD
-Y_aa =  0.08
-Y_fa =  0.06
-Y_c4 =  0.06
-Y_pro =  0.04
-C_ch4 =  0.0156 #kmole C.kg^-1COD
-Y_ac =  0.05
-Y_h2 =  0.06
+# ──────────────────────────────────────────────────────────────────────────────
+# Compatibility shim: DataFrame.append was removed in pandas 2.0.
+# Patch it back so the unmodified model body can call it.
+# ──────────────────────────────────────────────────────────────────────────────
+if not hasattr(pd.DataFrame, 'append'):
+    def _df_append(self, other, ignore_index=False, verify_integrity=False, sort=False):
+        if isinstance(other, dict):
+            other = pd.DataFrame([other])
+        return pd.concat([self, other], ignore_index=ignore_index, sort=sort)
+    pd.DataFrame.append = _df_append
 
 
-# Biochemical parameter values from the Rosen et al (2006) BSM2 report
-k_dis =  0.5 #d^-1
-k_hyd_ch =  10 #d^-1
-k_hyd_pr =  10 #d^-1
-k_hyd_li =  10 #d^-1
-K_S_IN =  10 ** -4 #M
-k_m_su =  30 #d^-1
-K_S_su =  0.5 #kgCOD.m^-3
-pH_UL_aa =  5.5
-pH_LL_aa =  4
-k_m_aa =  50 #d^-1
-K_S_aa =  0.3 ##kgCOD.m^-3
-k_m_fa =  6 #d^-1
-K_S_fa =  0.4 #kgCOD.m^-3
-K_I_h2_fa =  5 * 10 ** -6 #kgCOD.m^-3
-k_m_c4 =  20 #d^-1
-K_S_c4 =  0.2 #kgCOD.m^-3
-K_I_h2_c4 =  10 ** -5 #kgCOD.m^-3
-k_m_pro =  13 #d^-1
-K_S_pro =  0.1 #kgCOD.m^-3
-K_I_h2_pro =  3.5 * 10 ** -6 #kgCOD.m^-3
-k_m_ac =  8 #kgCOD.m^-3
-K_S_ac =  0.15 #kgCOD.m^-3
-K_I_nh3 =  0.0018 #M
-pH_UL_ac =  7
-pH_LL_ac =  6
-k_m_h2 =  35 #d^-1
-K_S_h2 =  7 * 10 ** -6 #kgCOD.m^-3
-pH_UL_h2 =  6
-pH_LL_h2 =  5
-k_dec_X_su =  0.02 #d^-1
-k_dec_X_aa =  0.02 #d^-1
-k_dec_X_fa =  0.02 #d^-1
-k_dec_X_c4 =  0.02 #d^-1
-k_dec_X_pro =  0.02 #d^-1
-k_dec_X_ac =  0.02 #d^-1
-k_dec_X_h2 =  0.02 #d^-1
-## M is kmole m^-3
+# ──────────────────────────────────────────────────────────────────────────────
+# MODEL — verbatim copy of original_pyadm1.py, enclosed in a callable function
+# so the FaaSr entry point can invoke it with different working directories.
+# No algorithm, constant, or output-format changes.
+# ──────────────────────────────────────────────────────────────────────────────
+def _run_adm1_model():
+    global influent_state, initial_state
+    global R, T_base, p_atm, T_op
+    global f_sI_xc, f_xI_xc, f_ch_xc, f_pr_xc, f_li_xc, N_xc, N_I, N_aa
+    global C_xc, C_sI, C_ch, C_pr, C_li, C_xI, C_su, C_aa, f_fa_li, C_fa
+    global f_h2_su, f_bu_su, f_pro_su, f_ac_su, N_bac, C_bu, C_pro, C_ac, C_bac
+    global Y_su, f_h2_aa, f_va_aa, f_bu_aa, f_pro_aa, f_ac_aa, C_va
+    global Y_aa, Y_fa, Y_c4, Y_pro, C_ch4, Y_ac, Y_h2
+    global k_dis, k_hyd_ch, k_hyd_pr, k_hyd_li, K_S_IN, k_m_su, K_S_su
+    global pH_UL_aa, pH_LL_aa, k_m_aa, K_S_aa, k_m_fa, K_S_fa, K_I_h2_fa
+    global k_m_c4, K_S_c4, K_I_h2_c4, k_m_pro, K_S_pro, K_I_h2_pro
+    global k_m_ac, K_S_ac, K_I_nh3, pH_UL_ac, pH_LL_ac, k_m_h2, K_S_h2
+    global pH_UL_h2, pH_LL_h2
+    global k_dec_X_su, k_dec_X_aa, k_dec_X_fa, k_dec_X_c4, k_dec_X_pro, k_dec_X_ac, k_dec_X_h2
+    global T_ad, K_w, K_a_va, K_a_bu, K_a_pro, K_a_ac, K_a_co2, K_a_IN
+    global k_A_B_va, k_A_B_bu, k_A_B_pro, k_A_B_ac, k_A_B_co2, k_A_B_IN
+    global p_gas_h2o, k_p, k_L_a, K_H_co2, K_H_ch4, K_H_h2
+    global V_liq, V_gas, V_ad
+    global S_su_in, S_aa_in, S_fa_in, S_va_in, S_bu_in, S_pro_in, S_ac_in
+    global S_h2_in, S_ch4_in, S_IC_in, S_IN_in, S_I_in
+    global X_xc_in, X_ch_in, X_pr_in, X_li_in, X_su_in, X_aa_in, X_fa_in
+    global X_c4_in, X_pro_in, X_ac_in, X_h2_in, X_I_in, S_cation_in, S_anion_in
+    global S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4
+    global S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa
+    global X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion
+    global pH, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion
+    global S_hco3_ion, S_nh3, S_nh4_ion, S_co2, S_gas_h2, S_gas_ch4, S_gas_co2
+    global K_pH_aa, nn_aa, K_pH_ac, n_ac, K_pH_h2, n_h2
+    global q_ad, state_zero, state_input
+    global p_gas, q_gas, q_ch4
+    global simulate_results, gasflow, feedflow, total_ch4
 
-# Physico-chemical parameter values from the Rosen et al (2006) BSM2 report
-T_ad =  308.15 #K
+    ## unit for each parameter is commented after it is declared (inline)
+    ## if the suggested value for the parameter is different -
+    ## The original default value from the original ADM1 report by Batstone et al (2002), is commented after each unit (inline)
+
+    ##constant definition from the Rosen et al (2006) BSM2 report
+    R =  0.083145 #bar.M^-1.K^-1
+    T_base =  298.15 #K
+    p_atm =  1.013 #bar
+    T_op =  308.15 #k ##T_ad #=35 C
+
+    ##parameter definition from the Rosen et al (2006) BSM2 report bmadm1_report
+    # Stoichiometric parameter
+    f_sI_xc =  0.1
+    f_xI_xc =  0.2
+    f_ch_xc =  0.2
+    f_pr_xc =  0.2
+    f_li_xc =  0.3
+    N_xc =  0.0376 / 14
+    N_I =  0.06 / 14 #kmole N.kg^-1COD
+    N_aa =  0.007 #kmole N.kg^-1COD
+    C_xc =  0.02786 #kmole C.kg^-1COD
+    C_sI =  0.03 #kmole C.kg^-1COD
+    C_ch =  0.0313 #kmole C.kg^-1COD
+    C_pr =  0.03 #kmole C.kg^-1COD
+    C_li =  0.022 #kmole C.kg^-1COD
+    C_xI =  0.03 #kmole C.kg^-1COD
+    C_su =  0.0313 #kmole C.kg^-1COD
+    C_aa =  0.03 #kmole C.kg^-1COD
+    f_fa_li =  0.95
+    C_fa =  0.0217 #kmole C.kg^-1COD
+    f_h2_su =  0.19
+    f_bu_su =  0.13
+    f_pro_su =  0.27
+    f_ac_su =  0.41
+    N_bac =  0.08 / 14 #kmole N.kg^-1COD
+    C_bu =  0.025 #kmole C.kg^-1COD
+    C_pro =  0.0268 #kmole C.kg^-1COD
+    C_ac =  0.0313 #kmole C.kg^-1COD
+    C_bac =  0.0313 #kmole C.kg^-1COD
+    Y_su =  0.1
+    f_h2_aa =  0.06
+    f_va_aa =  0.23
+    f_bu_aa =  0.26
+    f_pro_aa =  0.05
+    f_ac_aa =  0.40
+    C_va =  0.024 #kmole C.kg^-1COD
+    Y_aa =  0.08
+    Y_fa =  0.06
+    Y_c4 =  0.06
+    Y_pro =  0.04
+    C_ch4 =  0.0156 #kmole C.kg^-1COD
+    Y_ac =  0.05
+    Y_h2 =  0.06
 
 
-K_w =  10 ** -14.0 * np.exp((55900 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #2.08 * 10 ^ -14
+    # Biochemical parameter values from the Rosen et al (2006) BSM2 report
+    k_dis =  0.5 #d^-1
+    k_hyd_ch =  10 #d^-1
+    k_hyd_pr =  10 #d^-1
+    k_hyd_li =  10 #d^-1
+    K_S_IN =  10 ** -4 #M
+    k_m_su =  30 #d^-1
+    K_S_su =  0.5 #kgCOD.m^-3
+    pH_UL_aa =  5.5
+    pH_LL_aa =  4
+    k_m_aa =  50 #d^-1
+    K_S_aa =  0.3 ##kgCOD.m^-3
+    k_m_fa =  6 #d^-1
+    K_S_fa =  0.4 #kgCOD.m^-3
+    K_I_h2_fa =  5 * 10 ** -6 #kgCOD.m^-3
+    k_m_c4 =  20 #d^-1
+    K_S_c4 =  0.2 #kgCOD.m^-3
+    K_I_h2_c4 =  10 ** -5 #kgCOD.m^-3
+    k_m_pro =  13 #d^-1
+    K_S_pro =  0.1 #kgCOD.m^-3
+    K_I_h2_pro =  3.5 * 10 ** -6 #kgCOD.m^-3
+    k_m_ac =  8 #kgCOD.m^-3
+    K_S_ac =  0.15 #kgCOD.m^-3
+    K_I_nh3 =  0.0018 #M
+    pH_UL_ac =  7
+    pH_LL_ac =  6
+    k_m_h2 =  35 #d^-1
+    K_S_h2 =  7 * 10 ** -6 #kgCOD.m^-3
+    pH_UL_h2 =  6
+    pH_LL_h2 =  5
+    k_dec_X_su =  0.02 #d^-1
+    k_dec_X_aa =  0.02 #d^-1
+    k_dec_X_fa =  0.02 #d^-1
+    k_dec_X_c4 =  0.02 #d^-1
+    k_dec_X_pro =  0.02 #d^-1
+    k_dec_X_ac =  0.02 #d^-1
+    k_dec_X_h2 =  0.02 #d^-1
+    ## M is kmole m^-3
 
-K_a_va =  10 ** -4.86 #M  ADM1 value = 1.38 * 10 ^ -5
-K_a_bu =  10 ** -4.82 #M #1.5 * 10 ^ -5
-K_a_pro =  10 ** -4.88 #M #1.32 * 10 ^ -5
-K_a_ac =  10 ** -4.76 #M #1.74 * 10 ^ -5
+    # Physico-chemical parameter values from the Rosen et al (2006) BSM2 report
+    T_ad =  308.15 #K
 
 
-K_a_co2 =  10 ** -6.35 * np.exp((7646 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #4.94 * 10 ^ -7
-K_a_IN =  10 ** -9.25 * np.exp((51965 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #1.11 * 10 ^ -9
+    K_w =  10 ** -14.0 * np.exp((55900 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #2.08 * 10 ^ -14
+
+    K_a_va =  10 ** -4.86 #M  ADM1 value = 1.38 * 10 ^ -5
+    K_a_bu =  10 ** -4.82 #M #1.5 * 10 ^ -5
+    K_a_pro =  10 ** -4.88 #M #1.32 * 10 ^ -5
+    K_a_ac =  10 ** -4.76 #M #1.74 * 10 ^ -5
 
 
-k_A_B_va =  10 ** 10 #M^-1 * d^-1
-k_A_B_bu =  10 ** 10 #M^-1 * d^-1
-k_A_B_pro =  10 ** 10 #M^-1 * d^-1
-k_A_B_ac =  10 ** 10 #M^-1 * d^-1
-k_A_B_co2 =  10 ** 10 #M^-1 * d^-1
-k_A_B_IN =  10 ** 10 #M^-1 * d^-1
+    K_a_co2 =  10 ** -6.35 * np.exp((7646 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #4.94 * 10 ^ -7
+    K_a_IN =  10 ** -9.25 * np.exp((51965 / (100 * R)) * (1 / T_base - 1 / T_ad)) #M #1.11 * 10 ^ -9
 
 
-p_gas_h2o =  0.0313 * np.exp(5290 * (1 / T_base - 1 / T_ad)) #bar #0.0557
-k_p = 5 * 10 ** 4 #m^3.d^-1.bar^-1 #only for BSM2 AD conditions, recalibrate for other AD cases #gas outlet friction
-k_L_a =  200.0 #d^-1
-K_H_co2 =  0.035 * np.exp((-19410 / (100 * R))* (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #0.0271
-K_H_ch4 =  0.0014 * np.exp((-14240 / (100 * R)) * (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #0.00116
-K_H_h2 =  7.8 * 10 ** -4 * np.exp(-4180 / (100 * R) * (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #7.38*10^-4
-
-# Physical parameter values used in BSM2 from the Rosen et al (2006) BSM2 report
-V_liq =  3400 #m^3
-V_gas =  300 #m^3
-V_ad = V_liq + V_gas #m^-3
+    k_A_B_va =  10 ** 10 #M^-1 * d^-1
+    k_A_B_bu =  10 ** 10 #M^-1 * d^-1
+    k_A_B_pro =  10 ** 10 #M^-1 * d^-1
+    k_A_B_ac =  10 ** 10 #M^-1 * d^-1
+    k_A_B_co2 =  10 ** 10 #M^-1 * d^-1
+    k_A_B_IN =  10 ** 10 #M^-1 * d^-1
 
 
-def _run_adm1_model(influent_state, initial_state):
-    """Execute the ADM1 simulation on the provided DataFrames and return simulate_results."""
+    p_gas_h2o =  0.0313 * np.exp(5290 * (1 / T_base - 1 / T_ad)) #bar #0.0557
+    k_p = 5 * 10 ** 4 #m^3.d^-1.bar^-1 #only for BSM2 AD conditions, recalibrate for other AD cases #gas outlet friction
+    k_L_a =  200.0 #d^-1
+    K_H_co2 =  0.035 * np.exp((-19410 / (100 * R))* (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #0.0271
+    K_H_ch4 =  0.0014 * np.exp((-14240 / (100 * R)) * (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #0.00116
+    K_H_h2 =  7.8 * 10 ** -4 * np.exp(-4180 / (100 * R) * (1 / T_base - 1 / T_ad)) #Mliq.bar^-1 #7.38*10^-4
 
-    # -- all globals used by ADM1_ODE, DAESolve, simulate are local to this scope --
-    S_su_in = S_aa_in = S_fa_in = S_va_in = S_bu_in = S_pro_in = S_ac_in = None
-    S_h2_in = S_ch4_in = S_IC_in = S_IN_in = S_I_in = None
-    X_xc_in = X_ch_in = X_pr_in = X_li_in = X_su_in = X_aa_in = X_fa_in = None
-    X_c4_in = X_pro_in = X_ac_in = X_h2_in = X_I_in = None
-    S_cation_in = S_anion_in = None
+    # Physical parameter values used in BSM2 from the Rosen et al (2006) BSM2 report
+    V_liq =  3400 #m^3
+    V_gas =  300 #m^3
+    V_ad = V_liq + V_gas #m^-3
+
+    # reading influent and initial condition data from csv files
+    influent_state = pd.read_csv("digester_influent.csv")
+    initial_state = pd.read_csv("digester_initial.csv")
 
     # Function to set influent values for influent state variables at each simulation step
     def setInfluent(i):
-        nonlocal S_su_in, S_aa_in, S_fa_in, S_va_in, S_bu_in, S_pro_in, S_ac_in, S_h2_in,S_ch4_in, S_IC_in, S_IN_in, S_I_in,X_xc_in, X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in
+        global S_su_in, S_aa_in, S_fa_in, S_va_in, S_bu_in, S_pro_in, S_ac_in, S_h2_in,S_ch4_in, S_IC_in, S_IN_in, S_I_in,X_xc_in, X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in
         ##variable definition
         # Input values (influent/feed)
         S_su_in = influent_state['S_su'][i] #kg COD.m^-3
@@ -179,6 +223,7 @@ def _run_adm1_model(influent_state, initial_state):
 
         S_cation_in = influent_state['S_cation'][i] #kmole.m^-3
         S_anion_in = influent_state['S_anion'][i] #kmole.m^-3
+
 
     # initiate variables (initial values for the reactor state at the initial time (t0)
     S_su = initial_state['S_su'][0] #kg COD.m^-3 monosaccharides
@@ -237,6 +282,7 @@ def _run_adm1_model(influent_state, initial_state):
 
     setInfluent(0) #setting the influent for the initial time (t0) to be ready for the start of the simulation
     q_ad =  178.4674 #m^3.d^-1 initial flow rate (can be modified during the simulation by the control algorithm)
+
 
     state_zero = [S_su,
                   S_aa,
@@ -307,7 +353,7 @@ def _run_adm1_model(influent_state, initial_state):
 
     # Function for calulating the derivatives related to ADM1 system of equations from the Rosen et al (2006) BSM2 report
     def ADM1_ODE(t, state_zero):
-      nonlocal S_nh4_ion, S_co2, p_gas, q_gas, q_ch4
+      global S_nh4_ion, S_co2, p_gas, q_gas, q_ch4
       S_su = state_zero[0]
       S_aa = state_zero[1]
       S_fa = state_zero[2]
@@ -560,7 +606,7 @@ def _run_adm1_model(influent_state, initial_state):
 
     # Function for DAE equations adopted from the Rosen et al (2006) BSM2 report bmadm1_report
     def DAESolve():
-      nonlocal S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3, S_H_ion, pH, p_gas_h2, S_h2, S_nh4_ion, S_co2, p_gas, q_gas
+      global S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_nh3, S_H_ion, pH, p_gas_h2, S_h2, S_nh4_ion, S_co2, P_gas, q_gas
 
       ##  DAE calculations
       eps = 0.0000001
@@ -631,6 +677,7 @@ def _run_adm1_model(influent_state, initial_state):
     ## time array definition
     t = influent_state['time']
 
+
     # Initiate the cache data frame for storing simulation results
     simulate_results = pd.DataFrame([state_zero])
     columns = ["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4", "S_IC", "S_IN", "S_I", "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I", "S_cation", "S_anion", "pH", "S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion", "S_co2", "S_nh3", "S_nh4_ion", "S_gas_h2", "S_gas_ch4", "S_gas_co2"]
@@ -650,21 +697,14 @@ def _run_adm1_model(influent_state, initial_state):
     initq = {'q_ad' : [170]}
     feedflow = pd.DataFrame(initq)
 
-    # shared mutable gas state for ADM1_ODE / DAESolve
-    p_gas = 0.0
-    q_gas = 0.0
-    q_ch4 = 0.0
-    p_gas_h2 = 0.0
 
     ## Dynamic simulation
     # Loop for simlating at each time step and feeding the results to the next time step
-    rows = []
-    gasflow_rows = [{'q_gas': 0, 'q_ch4': 0}]
     for u in t[1:]:
       n+=1
       setInfluent(n)
 
-      state_input[:] = [S_su_in,S_aa_in,S_fa_in,S_va_in,S_bu_in,S_pro_in,S_ac_in,S_h2_in,S_ch4_in,S_IC_in,S_IN_in,S_I_in,X_xc_in,X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in]
+      state_input = [S_su_in,S_aa_in,S_fa_in,S_va_in,S_bu_in,S_pro_in,S_ac_in,S_h2_in,S_ch4_in,S_IC_in,S_IN_in,S_I_in,X_xc_in,X_ch_in,X_pr_in,X_li_in,X_su_in,X_aa_in,X_fa_in,X_c4_in,X_pro_in,X_ac_in,X_h2_in,X_I_in,S_cation_in,S_anion_in]
 
       # Span for next time step
       tstep = [t0,u]
@@ -691,7 +731,8 @@ def _run_adm1_model(influent_state, initial_state):
       if q_ch4 < 0:
         q_ch4 = 0
 
-      gasflow_rows.append({'q_gas': q_gas, 'q_ch4': q_ch4})
+      flowtemp = {'q_gas' : q_gas, 'q_ch4' : q_ch4}
+      gasflow = gasflow.append(flowtemp, ignore_index=True)
 
       S_nh4_ion =  (S_IN - S_nh3)
       S_co2 =  (S_IC - S_hco3_ion)
@@ -699,42 +740,74 @@ def _run_adm1_model(influent_state, initial_state):
 
 
       #state transfer
-      state_zero[:] = [S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2]
+      state_zero = [S_su, S_aa, S_fa, S_va, S_bu, S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, S_H_ion, S_va_ion, S_bu_ion, S_pro_ion, S_ac_ion, S_hco3_ion, S_co2, S_nh3, S_nh4_ion, S_gas_h2, S_gas_ch4, S_gas_co2]
 
-      rows.append(dict(zip(columns, state_zero)))
+      dfstate_zero = pd.DataFrame([state_zero], columns = columns)
+      simulate_results = simulate_results.append(dfstate_zero)
       t0 = u
 
-    simulate_results = pd.concat([simulate_results, pd.DataFrame(rows)], ignore_index=True)
 
     # Write the dynamic simulation resutls to csv
     phlogarray = -1 * np.log10(simulate_results['pH'])
     simulate_results['pH'] = phlogarray
-    return simulate_results
+    simulate_results.to_csv("dynamic_out.csv", index = False)
+
+    ## ring test begin
+    # to compare the resutls with the dynamic simulation data from the BSM2 Matlab implementation
+    # pyOut = pd.read_csv("dynamic_out.csv")
+    # pyIn = pd.read_csv("digester_influent.csv")
+    # MatlabOut = pd.read_csv("Matlabout_dyn.csv")
+
+    # pyOut.time = pyIn.time
+    # pyOut.Q = pyIn.Q
+    # MatlabOut.Q = pyOut.Q
+    # mvalue = pvalue = 0
+    # ringtest = pd.DataFrame(columns=["state", "Matlab", "Python", "error"])
+
+    # n = 0
+    # for i in pyOut.columns:
+    #   Matlabinteg = integrate.trapz(MatlabOut[i] , MatlabOut.time)
+    #   pyinteg = integrate.trapz(pyOut[i] , pyOut.time)
+    #   results =pd.DataFrame([[MatlabOut[i].name, Matlabinteg/280, pyinteg/280, abs(pyinteg-Matlabinteg)/280]], columns=["state", "Matlab", "Python", "error"])
+    #   ringtest = ringtest.append(results)
+    #   print("Matlab " + MatlabOut[i].name + " average = " + str(Matlabinteg/280) + " Python " +  pyOut[i].name + " average = " + str(pyinteg/280) + " Error =" + str(abs(pyinteg-Matlabinteg)/280))
+
+    # ringtest.to_csv("ringtest.csv", index = False)
 
 
+    # for i in pyOut.columns:
+    #   plt.figure(figsize=(32, 8))
+    #   plt.plot(MatlabOut.time, MatlabOut[i], label = MatlabOut[i].name, linestyle="-", color = "red")
+    #   plt.plot(pyOut.time, pyOut[i], label = pyOut[i].name, linestyle="--", color = "blue")
+    #   plt.legend()
+    #   plt.show()
+
+    ## ring test end
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FaaSr entry point
+# ──────────────────────────────────────────────────────────────────────────────
 def pyadm1(folder: str, input1: str, input2: str, output1: str) -> None:
-    import tempfile, os
+    faasr_log("pyadm1: starting ADM1 simulation")
 
-    local_influent = tempfile.mktemp(suffix=".csv")
-    local_initial = tempfile.mktemp(suffix=".csv")
-    local_out = tempfile.mktemp(suffix=".csv")
+    with tempfile.TemporaryDirectory() as tmp:
+        # Download inputs with the exact names the model reads (hardcoded in model body)
+        faasr_get_file(local_file=os.path.join(tmp, "digester_influent.csv"),
+                       remote_folder=folder, remote_file=input1)
+        faasr_get_file(local_file=os.path.join(tmp, "digester_initial.csv"),
+                       remote_folder=folder, remote_file=input2)
 
-    faasr_get_file(local_file=local_influent, remote_folder=folder, remote_file=input1)
-    faasr_log(f"pyadm1: read {input1} from {folder}")
-    faasr_get_file(local_file=local_initial, remote_folder=folder, remote_file=input2)
-    faasr_log(f"pyadm1: read {input2} from {folder}")
+        prev_dir = os.getcwd()
+        os.chdir(tmp)
+        try:
+            faasr_log("pyadm1: invoking _run_adm1_model")
+            _run_adm1_model()
+            faasr_log("pyadm1: simulation complete, uploading output")
+        finally:
+            os.chdir(prev_dir)
 
-    influent_state = pd.read_csv(local_influent)
-    initial_state = pd.read_csv(local_initial)
-    faasr_log(f"pyadm1: influent rows={len(influent_state)}, initial rows={len(initial_state)}")
+        faasr_put_file(local_file=os.path.join(tmp, "dynamic_out.csv"),
+                       remote_folder=folder, remote_file=output1)
 
-    simulate_results = _run_adm1_model(influent_state, initial_state)
-
-    simulate_results.to_csv(local_out, index=False)
-    faasr_log(f"pyadm1: simulation complete, rows={len(simulate_results)}, writing {output1}")
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-
-    os.remove(local_influent)
-    os.remove(local_initial)
-    os.remove(local_out)
     faasr_log("pyadm1: done")
