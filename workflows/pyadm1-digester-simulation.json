@@ -14,12 +14,10 @@
         "folder": "PyADM1-orig",
         "input1": "digester_influent_raw.csv",
         "input2": "digester_initial.csv",
-        "output1": "influent_flow_converted.csv",
-        "output2": "digester_initial.csv"
+        "output1": "digester_influent.csv"
       },
       "InvokeNext": [
-        "convert-temp",
-        "pyadm1"
+        "convert-temp"
       ]
     },
     "convert-temp": {
@@ -28,8 +26,8 @@
       "FunctionName": "convert_temp",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "influent_flow_converted.csv",
-        "output1": "influent_temp_converted.csv"
+        "input1": "digester_influent.csv",
+        "output1": "digester_influent.csv"
       },
       "InvokeNext": [
         "convert-solubles"
@@ -41,8 +39,8 @@
       "FunctionName": "convert_solubles",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "influent_temp_converted.csv",
-        "output1": "influent_solubles_converted.csv"
+        "input1": "digester_influent.csv",
+        "output1": "digester_influent.csv"
       },
       "InvokeNext": [
         "fill-gaps"
@@ -54,8 +52,8 @@
       "FunctionName": "fill_gaps",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "influent_solubles_converted.csv",
-        "output1": "influent_gaps_filled.csv"
+        "input1": "digester_influent.csv",
+        "output1": "digester_influent.csv"
       },
       "InvokeNext": [
         "remove-outliers"
@@ -67,7 +65,7 @@
       "FunctionName": "remove_outliers",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "influent_gaps_filled.csv",
+        "input1": "digester_influent.csv",
         "output1": "digester_influent.csv"
       },
       "InvokeNext": [
@@ -155,10 +153,10 @@
       "numpy"
     ],
     "pyadm1": [
-      "pandas<2.0.0",
-      "numpy<2.0.0",
-      "scipy<1.11.0",
-      "matplotlib<3.8.0"
+      "numpy",
+      "scipy",
+      "pandas",
+      "matplotlib"
     ],
     "visualize_outputs": [
       "pandas",
