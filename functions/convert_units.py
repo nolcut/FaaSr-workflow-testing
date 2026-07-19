@@ -13,13 +13,18 @@ def convert_units(folder: str, input1: str, output1: str) -> None:
     # Q: MGD -> m3/d
     df["Q"] = df["Q"] * 3785.41
 
-    # T: Fahrenheit -> Celsius
+    # T: Fahrenheit -> Celsius, then rename column
     df["T (F)"] = (df["T (F)"] - 32) * 5 / 9
+    df = df.rename(columns={"T (F)": "T (C)"})
 
     # S_* columns (except excluded): mg/L -> kg COD/m3 (divide by 1000)
     exclude = {"S_IC", "S_IN", "S_cation", "S_anion"}
     s_cols = [c for c in df.columns if c.startswith("S_") and c not in exclude]
     df[s_cols] = df[s_cols] / 1000
+
+    # X_* columns: mg/L -> kg COD/m3 (divide by 1000)
+    x_cols = [c for c in df.columns if c.startswith("X_")]
+    df[x_cols] = df[x_cols] / 1000
 
     df.to_csv(local_out, index=False)
     faasr_log(f"convert_units: writing {output1} to {folder}")
