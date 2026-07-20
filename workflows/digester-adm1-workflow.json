@@ -13,7 +13,7 @@
       "Arguments": {
         "folder": "PyADM1-orig",
         "input1": "digester_influent_raw.csv",
-        "output1": "digester_influent_units_converted.csv"
+        "output1": "digester_influent_converted.csv"
       },
       "InvokeNext": [
         "fill-gaps"
@@ -25,8 +25,8 @@
       "FunctionName": "fill_gaps",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "digester_influent_units_converted.csv",
-        "output1": "digester_influent_gap_filled.csv"
+        "input1": "digester_influent_converted.csv",
+        "output1": "digester_influent_filled.csv"
       },
       "InvokeNext": [
         "remove-spikes"
@@ -38,8 +38,8 @@
       "FunctionName": "remove_spikes",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "digester_influent_gap_filled.csv",
-        "output1": "digester_influent_spike_removed.csv"
+        "input1": "digester_influent_filled.csv",
+        "output1": "digester_influent_despiked.csv"
       },
       "InvokeNext": [
         "interpolate"
@@ -51,8 +51,8 @@
       "FunctionName": "interpolate",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "digester_influent_spike_removed.csv",
-        "output1": "digester_influent.csv"
+        "input1": "digester_influent_despiked.csv",
+        "output1": "digester_influent_interpolated.csv"
       },
       "InvokeNext": [
         "validate"
@@ -64,9 +64,10 @@
       "FunctionName": "validate",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input1": "digester_influent.csv",
+        "input1": "digester_influent_interpolated.csv",
         "input2": "digester_initial.csv",
-        "output1": "validation_report.csv"
+        "output1": "validation_report.csv",
+        "output2": "digester_influent.csv"
       },
       "InvokeNext": [
         "pyadm1"
