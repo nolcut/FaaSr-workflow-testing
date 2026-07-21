@@ -1,60 +1,105 @@
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-# Panels to plot: (title, [columns])
-PANELS = [
-    ("Soluble COD fractions (kgCOD/m³)",
-     ["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac"]),
-    ("Dissolved gases & inorganic (kgCOD or kmol/m³)",
-     ["S_h2", "S_ch4", "S_IC", "S_IN"]),
-    ("Particulate COD fractions (kgCOD/m³)",
-     ["X_xc", "X_ch", "X_pr", "X_li"]),
-    ("Particulate biomass (kgCOD/m³)",
-     ["X_su", "X_aa", "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I"]),
-    ("Ion species (kmol/m³)",
-     ["S_va_ion", "S_bu_ion", "S_pro_ion", "S_ac_ion", "S_hco3_ion", "S_nh3", "S_nh4_ion"]),
-    ("Gas-phase concentrations (kgCOD or kmol/m³)",
-     ["S_gas_h2", "S_gas_ch4", "S_gas_co2"]),
-    ("pH", ["pH"]),
-]
-
-
 def visualize(folder: str, input1: str, output1: str) -> None:
-    local_in = "dynamic_out.csv"
-    local_out = "simulation_plots.png"
+    """Plot the PyADM1 dynamic simulation outputs as a multi-panel PNG figure.
 
+    Reads the dynamic-output time series, detects the time/index column and the
+    available variable columns at runtime, and groups them into panels (soluble
+    COD, particulate COD, inorganic carbon/nitrogen & ions, gas-phase biogas, and
+    pH). Only columns actually present are plotted. Rendered headlessly with the
+    Agg backend and written as a PNG.
+    """
+    import matplotlib
+    matplotlib.use("Agg")            # non-interactive, headless backend
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
+    faasr_log(f"visualize: downloading simulation output '{input1}' from folder '{folder}'")
+    local_in = "dynamic_out.csv"
     faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
-    faasr_log(f"visualize: read {input1}")
 
     df = pd.read_csv(local_in)
+    faasr_log(f"visualize: read {len(df)} rows, {len(df.columns)} columns")
+    if len(df.columns) == 0 or len(df) == 0:
+        msg = "visualize: simulation output CSV is empty"
+        faasr_log(msg)
+        raise ValueError(msg)
 
-    # Use row index as time axis (step number); label x-axis accordingly
-    time = np.arange(len(df))
+    # --- detect a time/index column at runtime; fall back to the row index ---
+    time_candidates = ("time", "Time", "t", "TIME", "index", "Index")
+    time_col = next((c for c in time_candidates if c in df.columns), None)
+    if time_col is not None:
+        x = df[time_col].astype(float).to_numpy()
+        x_label = f"{time_col}"
+        value_cols = [c for c in df.columns if c != time_col]
+    else:
+        x = df.index.to_numpy()
+        x_label = "time step (row index)"
+        value_cols = list(df.columns)
+    faasr_log(f"visualize: x-axis = '{x_label}', {len(value_cols)} variable column(s)")
 
-    n_panels = len(PANELS)
-    fig, axes = plt.subplots(n_panels, 1, figsize=(14, 3.5 * n_panels), sharex=False)
-    fig.suptitle("PyADM1 Simulation Results", fontsize=14, fontweight="bold", y=1.002)
+    present = set(value_cols)
 
-    for ax, (title, cols) in zip(axes, PANELS):
-        present = [c for c in cols if c in df.columns]
-        if not present:
-            ax.set_visible(False)
-            continue
-        for col in present:
-            ax.plot(time, df[col], label=col, linewidth=0.9)
-        ax.set_title(title, fontsize=10)
-        ax.set_xlabel("Time step", fontsize=8)
-        ax.legend(fontsize=7, ncol=min(4, len(present)), loc="best")
-        ax.grid(True, linewidth=0.4, alpha=0.5)
-        ax.tick_params(labelsize=8)
+    def pick(names):
+        """Columns from an explicit ordered list that are present (numeric)."""
+        return [c for c in names if c in present and
+                pd.api.types.is_numeric_dtype(df[c])]
 
-    plt.tight_layout()
-    plt.savefig(local_out, dpi=120, bbox_inches="tight")
+    def pick_suffix_ion():
+        """Any acid/base ion species columns present (name ends with '_ion')."""
+        return [c for c in value_cols if c.endswith("_ion") and c in present
+                and pd.api.types.is_numeric_dtype(df[c])]
+
+    # --- group available columns into panels (runtime-detected, no hardcoding of
+    #     which must exist; empty groups are dropped) ---
+    soluble = pick(["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro",
+                    "S_ac", "S_h2", "S_ch4", "S_I"])
+    particulate = [c for c in value_cols if c.startswith("X_") and c in present
+                   and pd.api.types.is_numeric_dtype(df[c])]
+    gas = [c for c in value_cols if c.startswith("S_gas_") and c in present
+           and pd.api.types.is_numeric_dtype(df[c])]
+    # Inorganic C/N, cation/anion, plus dissolved ion species (exclude gas cols).
+    inorganic = pick(["S_IC", "S_IN", "S_cation", "S_anion", "S_nh3", "S_co2",
+                      "S_nh4_ion"])
+    ion_species = [c for c in pick_suffix_ion()
+                   if c not in inorganic and not c.startswith("S_gas_")]
+    inorganic_ions = inorganic + [c for c in ion_species if c not in inorganic]
+    ph = pick(["pH"])
+
+    panels = [
+        ("Soluble COD components (S_*)", soluble, "concentration (kg COD·m$^{-3}$)"),
+        ("Particulate COD components (X_*)", particulate, "concentration (kg COD·m$^{-3}$)"),
+        ("Inorganic C/N, cations/anions & ion species", inorganic_ions, "concentration (M / kg COD·m$^{-3}$)"),
+        ("Gas-phase (biogas) components", gas, "gas-phase concentration"),
+        ("pH", ph, "pH"),
+    ]
+    panels = [(title, cols, ylab) for (title, cols, ylab) in panels if cols]
+    if not panels:
+        msg = "visualize: no recognizable ADM1 variable columns to plot"
+        faasr_log(msg)
+        raise ValueError(msg)
+    faasr_log("visualize: panels -> " +
+              ", ".join(f"{t.split(' (')[0]}[{len(c)}]" for t, c, _ in panels))
+
+    # --- render ---
+    n = len(panels)
+    fig, axes = plt.subplots(n, 1, figsize=(14, 3.4 * n), squeeze=False)
+    axes = axes[:, 0]
+    for ax, (title, cols, ylab) in zip(axes, panels):
+        for c in cols:
+            ax.plot(x, df[c].to_numpy(), label=c, linewidth=1.0)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.set_ylabel(ylab, fontsize=9)
+        ax.set_xlabel(x_label, fontsize=9)
+        ax.grid(True, linestyle=":", alpha=0.5)
+        # legend outside the axes to avoid covering data; many series possible.
+        ncol = 1 if len(cols) <= 8 else 2
+        ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5),
+                  fontsize=7, ncol=ncol, frameon=False)
+    fig.suptitle("PyADM1 dynamic simulation outputs", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.99))
+
+    local_out = "simulation_plots.png"
+    fig.savefig(local_out, dpi=120, bbox_inches="tight")
     plt.close(fig)
-    faasr_log(f"visualize: saved figure ({n_panels} panels)")
 
     faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"visualize: wrote {output1}")
+    faasr_log(f"visualize: wrote figure '{output1}' ({n} panel(s)) to folder '{folder}'")
