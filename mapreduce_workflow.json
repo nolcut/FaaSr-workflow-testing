@@ -1,18 +1,22 @@
 {
-  "WorkflowName": "MapReduceWordCount",
-  "FunctionInvoke": "generate",
+  "WorkflowName": "MapReduce-WordCount",
+  "FunctionInvoke": "split",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
   "InvocationID": "",
   "ActionList": {
-    "generate": {
-      "FunctionName": "generate_input",
+    "split": {
       "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "generate_and_split",
       "Arguments": {
-        "folder": "MapReduce",
-        "output_file": "input.txt",
+        "chunks_folder": "MapReduce/chunks",
+        "dataset_folder": "MapReduce/input",
+        "dataset_file": "dataset.txt",
+        "chunk_prefix": "chunk",
+        "num_maps": 3,
+        "total_words": 5000,
         "words": [
           "cat",
           "dog",
@@ -20,63 +24,65 @@
           "horse",
           "pig"
         ],
-        "total_words": 5000,
         "seed": 42
-      },
-      "InvokeNext": [
-        "split"
-      ]
-    },
-    "split": {
-      "FunctionName": "mr_split",
-      "FaaSServer": "GH",
-      "Type": "Python",
-      "Arguments": {
-        "folder": "MapReduce",
-        "input_file": "input.txt",
-        "n_splits": 3,
-        "batch_prefix": "batch_"
       },
       "InvokeNext": [
         "map(3)"
       ]
     },
     "map": {
-      "FunctionName": "mr_map",
       "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "map_count",
       "Arguments": {
-        "folder": "MapReduce",
-        "batch_prefix": "batch_",
-        "map_prefix": "map_"
+        "chunks_folder": "MapReduce/chunks",
+        "chunk_prefix": "chunk",
+        "map_folder": "MapReduce/map",
+        "map_prefix": "map"
       },
       "InvokeNext": [
         "shuffle"
       ]
     },
     "shuffle": {
-      "FunctionName": "mr_shuffle",
       "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "shuffle_flatten",
       "Arguments": {
-        "folder": "MapReduce",
-        "map_prefix": "map_",
-        "group_prefix": "group_"
+        "map_folder": "MapReduce/map",
+        "map_prefix": "map",
+        "group_folder": "MapReduce/shuffle",
+        "group_prefix": "group",
+        "manifest_file": "manifest.json"
       },
       "InvokeNext": [
         "reduce(5)"
       ]
     },
     "reduce": {
-      "FunctionName": "mr_reduce",
       "FaaSServer": "GH",
       "Type": "Python",
+      "FunctionName": "reduce_count",
       "Arguments": {
-        "folder": "MapReduce",
-        "group_prefix": "group_",
-        "result_prefix": "result_"
+        "group_folder": "MapReduce/shuffle",
+        "group_prefix": "group",
+        "reduce_folder": "MapReduce/reduce",
+        "reduce_prefix": "reduce"
       },
-      "InvokeNext": []
+      "InvokeNext": [
+        "collect"
+      ]
+    },
+    "collect": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "collect_results",
+      "Arguments": {
+        "reduce_folder": "MapReduce/reduce",
+        "reduce_prefix": "reduce",
+        "output_folder": "MapReduce/output",
+        "result_file": "result.json"
+      }
     }
   },
   "ComputeServers": {
@@ -99,24 +105,24 @@
     }
   },
   "ActionContainers": {
-    "generate": "ghcr.io/faasr/github-actions-python:latest",
     "split": "ghcr.io/faasr/github-actions-python:latest",
     "map": "ghcr.io/faasr/github-actions-python:latest",
     "shuffle": "ghcr.io/faasr/github-actions-python:latest",
-    "reduce": "ghcr.io/faasr/github-actions-python:latest"
+    "reduce": "ghcr.io/faasr/github-actions-python:latest",
+    "collect": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
-    "generate_input": "nolcut/FaaSr-workflow-testing/main/functions/generate_input.py",
-    "mr_split": "nolcut/FaaSr-workflow-testing/main/functions/mr_split.py",
-    "mr_map": "nolcut/FaaSr-workflow-testing/main/functions/mr_map.py",
-    "mr_shuffle": "nolcut/FaaSr-workflow-testing/main/functions/mr_shuffle.py",
-    "mr_reduce": "nolcut/FaaSr-workflow-testing/main/functions/mr_reduce.py"
+    "generate_and_split": "nolcut/FaaSr-workflow-testing/main/functions/generate_and_split.py",
+    "map_count": "nolcut/FaaSr-workflow-testing/main/functions/map_count.py",
+    "shuffle_flatten": "nolcut/FaaSr-workflow-testing/main/functions/shuffle_flatten.py",
+    "reduce_count": "nolcut/FaaSr-workflow-testing/main/functions/reduce_count.py",
+    "collect_results": "nolcut/FaaSr-workflow-testing/main/functions/collect_results.py"
   },
   "PyPIPackageDownloads": {
-    "generate_input": [],
-    "mr_split": [],
-    "mr_map": [],
-    "mr_shuffle": [],
-    "mr_reduce": []
+    "generate_and_split": [],
+    "map_count": [],
+    "shuffle_flatten": [],
+    "reduce_count": [],
+    "collect_results": []
   }
 }
