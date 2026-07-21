@@ -1,4 +1,4 @@
-name: VideoAnalysis-Accumulate
+name: VideoAnalysis-accumulate
 
 on:
     workflow_dispatch:
