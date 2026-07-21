@@ -1,67 +1,48 @@
-def remove_spikes(folder: str, input1: str, output1: str) -> None:
-    """Replace isolated sensor spikes in the Q and T columns with the local median.
+import pandas as pd
+import numpy as np
 
-    For each of Q and T a rolling median and a rolling median-absolute-deviation
-    (MAD) are computed over a small local window. Points that deviate from their
-    local median by more than a robust threshold (a multiple of the scaled MAD)
-    are flagged as isolated spikes and replaced by the local median value. All
-    other columns and every non-spike value are left untouched.
+# Columns cleaned for isolated sensor spikes. Q is the flow (m3/d after step 1),
+# T_C is the temperature in Celsius (renamed in step 1).
+SPIKE_COLUMNS = ["Q", "T_C"]
+
+WINDOW = 5      # rolling window (odd, centered) for the local median
+THRESHOLD = 5.0  # a point is a spike if its residual exceeds THRESHOLD * (1.4826*MAD)
+
+
+def remove_spikes(folder="PyADM1-orig",
+                  input_file="influent_step2_filled.csv",
+                  output_file="influent_step3_despiked.csv"):
+    """Step 3 - detect and replace isolated sensor spikes in BOTH Q and T_C
+    with the local (rolling) median.
+
+    A robust rolling-median / MAD filter flags points whose deviation from the
+    local median is large, then replaces only those isolated points with the
+    local median value (leaving the rest of the signal intact).
     """
-    import pandas as pd
-    import numpy as np
+    faasr_get_file(remote_folder=folder, remote_file=input_file, local_file="in.csv")
+    df = pd.read_csv("in.csv")
 
-    WINDOW = 5          # small local window (odd, centered)
-    THRESHOLD = 5.0     # deviation multiple of the robust scale to flag a spike
-    MAD_SCALE = 1.4826  # makes MAD a consistent estimator of sigma for normal data
+    for col in SPIKE_COLUMNS:
+        if col not in df.columns:
+            faasr_log(f"remove_spikes WARNING: column '{col}' not found; skipping")
+            continue
 
-    faasr_log(f"remove_spikes: downloading gap-filled influent '{input1}' from folder '{folder}'")
-    local_in = "influent_gapfilled.csv"
-    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
-
-    df = pd.read_csv(local_in)
-    faasr_log(f"remove_spikes: read {len(df)} rows, {len(df.columns)} columns")
-
-    # Resolve the temperature column name (convert_units renamed 'T (F)' -> 'T (C)').
-    temp_col = None
-    for cand in ("T (C)", "T(C)", "T_C", "T (F)", "T"):
-        if cand in df.columns:
-            temp_col = cand
-            break
-    if temp_col is None:
-        msg = "remove_spikes: could not find a temperature column (expected 'T (C)')"
-        faasr_log(msg)
-        raise ValueError(msg)
-    if "Q" not in df.columns:
-        msg = "remove_spikes: required flow column 'Q' not found in input CSV"
-        faasr_log(msg)
-        raise ValueError(msg)
-
-    def despike(series):
-        s = series.astype(float)
-        # Detrend with a small centered rolling median (robust to isolated spikes).
+        s = df[col].astype(float)
         local_med = s.rolling(window=WINDOW, center=True, min_periods=1).median()
-        abs_dev = (s - local_med).abs()
-        # Robust noise scale = scaled median of the NON-ZERO residuals. On a nearly
-        # noiseless smooth signal most residuals are exactly zero, which collapses a
-        # plain MAD to zero; excluding the zeros yields a stable scale that reflects
-        # ordinary curvature, so only genuinely isolated spikes exceed the threshold.
-        # On a noisy signal most residuals are non-zero and this reduces to a MAD.
-        nonzero = abs_dev[abs_dev > 0]
-        if len(nonzero) == 0:
-            # Perfectly flat/linear column — nothing to despike.
-            return s, 0
-        scale = MAD_SCALE * float(np.median(nonzero))
-        if scale <= 0:
-            return s, 0
-        is_spike = abs_dev > (THRESHOLD * scale)
-        out = s.mask(is_spike, local_med)
-        return out, int(is_spike.sum())
+        residual = (s - local_med).abs()
 
-    for col in ("Q", temp_col):
-        df[col], n_spikes = despike(df[col])
-        faasr_log(f"remove_spikes: {col} — replaced {n_spikes} isolated spike(s) with local median")
+        # Robust global scale via median absolute deviation.
+        mad = np.median(np.abs(residual - np.median(residual)))
+        scale = 1.4826 * mad if mad > 0 else residual.std(ddof=0)
+        if not scale or np.isnan(scale):
+            faasr_log(f"remove_spikes: '{col}' has no variability; nothing to do")
+            continue
 
-    local_out = "influent_despiked.csv"
-    df.to_csv(local_out, index=False)
-    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
-    faasr_log(f"remove_spikes: wrote despiked influent '{output1}' to folder '{folder}'")
+        spikes = residual > (THRESHOLD * scale)
+        n_spikes = int(spikes.sum())
+        df.loc[spikes, col] = local_med[spikes]
+        faasr_log(f"remove_spikes: replaced {n_spikes} spike(s) in '{col}' with local median")
+
+    df.to_csv("despiked.csv", index=False)
+    faasr_put_file(local_file="despiked.csv", remote_folder=folder, remote_file=output_file)
+    faasr_log(f"remove_spikes: wrote {folder}/{output_file}")
