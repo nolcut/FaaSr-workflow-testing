@@ -1,47 +1,62 @@
-def accumulate(folder="video_analysis"):
+import json
+
+from FaaSr_py.client.py_client_stubs import (
+    faasr_get_file,
+    faasr_log,
+    faasr_put_file,
+)
+
+
+def accumulate(
+    folder="video_analysis",
+    num_batches=2,
+    output_file="detections.json",
+):
     """
-    Reduce phase of the video-analysis benchmark.
+    Reduce (fan-in) phase.
 
-    FaaSr's rank barrier guarantees this function runs exactly once, after all N
-    parallel `detect` invocations have completed. It downloads every per-rank
-    result Yi = detections_<rank>.json, accumulates them into `acc`, and returns
-    (and persists) the final payload Y.
+    Runs after all N parallel ``detect`` invocations complete. Downloads each
+    per-rank result Yi (detections_1.json .. detections_N.json), accumulates
+    them into ``acc``, and uploads the final payload Y containing every
+    detection's {label, class, score} (score > 0.5).
     """
-    import os
-    import json
-
-    # Discover all per-rank detection files produced by the map phase
-    remote_folder = f"{folder}/detections"
-    contents = faasr_get_folder_list(prefix=remote_folder)
-
     acc = []
-    used = []
-    for entry in contents:
-        fname = os.path.basename(entry.rstrip("/"))
-        if fname.startswith("detections_") and fname.endswith(".json"):
+
+    for rank in range(1, num_batches + 1):
+        part_file = f"detections_{rank}.json"
+        try:
             faasr_get_file(
-                remote_folder=remote_folder,
-                remote_file=fname,
-                local_folder=".",
-                local_file=fname,
+                remote_folder=folder,
+                remote_file=part_file,
+                local_file=part_file,
             )
-            with open(fname) as f:
-                acc.extend(json.load(f))
-            used.append(fname)
+        except Exception as e:  # noqa: BLE001
+            faasr_log(f"accumulate: could not fetch {part_file}: {e}")
+            continue
 
-    # Final payload Y: all detections with score > 0.5, each {label, class, score}
-    Y = {"detections": acc, "count": len(acc)}
-    with open("Y.json", "w") as f:
+        with open(part_file) as f:
+            yi = json.load(f)
+
+        acc.extend(yi)
+        faasr_log(f"accumulate: gathered {len(yi)} detection(s) from {part_file}")
+
+    # Final payload Y: keep only the required fields per detection.
+    Y = [
+        {"label": d["label"], "class": d["class"], "score": d["score"]}
+        for d in acc
+    ]
+
+    with open(output_file, "w") as f:
         json.dump(Y, f, indent=2)
+
     faasr_put_file(
-        local_folder=".",
-        local_file="Y.json",
+        local_file=output_file,
         remote_folder=folder,
-        remote_file="Y.json",
+        remote_file=output_file,
+    )
+    faasr_log(
+        f"accumulate: wrote final payload Y with {len(Y)} detection(s) "
+        f"to {folder}/{output_file}"
     )
 
-    faasr_log(
-        f"accumulate: merged {len(used)} result file(s) ({sorted(used)}) into "
-        f"{len(acc)} total detection(s); final payload written to {folder}/Y.json"
-    )
     return Y
