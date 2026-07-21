@@ -1,10 +1,10 @@
 {
-  "WorkflowName": "PyADM1-DigesterWorkflow",
+  "WorkflowName": "PyADM1CleaningAndSimulation",
   "FunctionInvoke": "convert-units",
+  "InvocationID": "",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
-  "InvocationID": "",
   "ActionList": {
     "convert-units": {
       "FaaSServer": "GH",
@@ -13,7 +13,7 @@
       "Arguments": {
         "folder": "PyADM1-orig",
         "input_file": "digester_influent_raw.csv",
-        "output_file": "influent_step1_units.csv"
+        "output_file": "influent_units_converted.csv"
       },
       "InvokeNext": [
         "fill-gaps"
@@ -25,8 +25,8 @@
       "FunctionName": "fill_gaps",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input_file": "influent_step1_units.csv",
-        "output_file": "influent_step2_filled.csv"
+        "input_file": "influent_units_converted.csv",
+        "output_file": "influent_filled.csv"
       },
       "InvokeNext": [
         "remove-spikes"
@@ -38,8 +38,10 @@
       "FunctionName": "remove_spikes",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input_file": "influent_step2_filled.csv",
-        "output_file": "influent_step3_despiked.csv"
+        "input_file": "influent_filled.csv",
+        "output_file": "influent_despiked.csv",
+        "window": 7,
+        "n_sigmas": 3.0
       },
       "InvokeNext": [
         "interpolate"
@@ -48,10 +50,10 @@
     "interpolate": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "interpolate_lab",
+      "FunctionName": "interpolate",
       "Arguments": {
         "folder": "PyADM1-orig",
-        "input_file": "influent_step3_despiked.csv",
+        "input_file": "influent_despiked.csv",
         "output_file": "digester_influent.csv"
       },
       "InvokeNext": [
@@ -61,7 +63,7 @@
     "validate": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "validate_data",
+      "FunctionName": "validate",
       "Arguments": {
         "folder": "PyADM1-orig",
         "influent_file": "digester_influent.csv",
@@ -80,7 +82,6 @@
         "folder": "PyADM1-orig",
         "influent_file": "digester_influent.csv",
         "initial_file": "digester_initial.csv",
-        "script_file": "PyADM1.py",
         "output_file": "dynamic_out.csv"
       },
       "InvokeNext": [
@@ -90,7 +91,7 @@
     "visualize": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "visualize_results",
+      "FunctionName": "visualize",
       "Arguments": {
         "folder": "PyADM1-orig",
         "input_file": "dynamic_out.csv",
@@ -131,35 +132,34 @@
     "convert_units": "nolcut/FaaSr-workflow-testing/main/functions/convert_units.py",
     "fill_gaps": "nolcut/FaaSr-workflow-testing/main/functions/fill_gaps.py",
     "remove_spikes": "nolcut/FaaSr-workflow-testing/main/functions/remove_spikes.py",
-    "interpolate_lab": "nolcut/FaaSr-workflow-testing/main/functions/interpolate_lab.py",
-    "validate_data": "nolcut/FaaSr-workflow-testing/main/functions/validate_data.py",
+    "interpolate": "nolcut/FaaSr-workflow-testing/main/functions/interpolate.py",
+    "validate": "nolcut/FaaSr-workflow-testing/main/functions/validate.py",
     "run_pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/run_pyadm1.py",
-    "visualize_results": "nolcut/FaaSr-workflow-testing/main/functions/visualize_results.py"
+    "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
-    "convert-units": [
-      "pandas",
-      "numpy"
-    ],
-    "fill-gaps": [
+    "convert_units": [
       "pandas"
     ],
-    "remove-spikes": [
+    "fill_gaps": [
+      "pandas"
+    ],
+    "remove_spikes": [
       "pandas",
       "numpy"
     ],
     "interpolate": [
-      "pandas",
-      "numpy"
+      "pandas"
     ],
     "validate": [
       "pandas",
       "numpy"
     ],
-    "pyadm1": [
+    "run_pyadm1": [
       "pandas",
       "numpy",
-      "scipy"
+      "scipy",
+      "matplotlib"
     ],
     "visualize": [
       "pandas",
