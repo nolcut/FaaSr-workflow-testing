@@ -1,40 +1,53 @@
-import csv
+import json
 from collections import Counter
 
 
-def map_words(folder="MapReduce", part_prefix="part", map_prefix="map_out"):
-    """MAP step (rank-based, runs concurrently N times).
-
-    Each rank r processes exactly one shard produced by split_dataset and emits
-    a per-shard word count.
-
-    Reads  : <folder>/<part_prefix>_<rank>.txt
-    Writes : <folder>/<map_prefix>_<rank>.csv   (columns: word,count)
+def map_words(folder="MapReduce"):
     """
-    # Determine this invocation's rank within the concurrent group.
+    Stage 3 of the MapReduce pipeline (the "map" phase).
+
+    This action is fanned out into N concurrent invocations via the
+    map_words(N) rank notation in the workflow JSON. Each invocation uses its
+    unique rank to read exactly one dataset shard (splits/part_<rank>.txt),
+    computes the local word-count for that shard, and writes the partial result
+    to `folder`/map/map_<rank>.json. The downstream reduce_words action merges
+    all of these partial counts.
+    """
+    # 1. Determine which shard this invocation is responsible for.
     rank_info = faasr_rank()
-    rank = rank_info["rank"]
+    my_rank = rank_info["rank"]
     max_rank = rank_info["max_rank"]
+    faasr_log(f"map_words: starting rank {my_rank} of {max_rank}")
 
-    part_file = f"{part_prefix}_{rank}.txt"
-    faasr_get_file(remote_folder=folder, remote_file=part_file,
-                   local_folder=".", local_file=part_file)
+    part_file = f"part_{my_rank}.txt"
 
-    with open(part_file, "r", encoding="utf-8") as f:
-        words = [w for w in f.read().splitlines() if w.strip()]
+    # 2. Download this rank's shard.
+    faasr_get_file(
+        remote_folder=f"{folder}/splits",
+        remote_file=part_file,
+        local_folder=".",
+        local_file=part_file,
+    )
 
-    # Local (per-shard) word count -- the "map" output.
+    with open(part_file) as fh:
+        words = fh.read().split()
+
+    # 3. Map: emit (word, count) pairs for this shard.
     counts = Counter(words)
+    faasr_log(
+        f"map_words: rank {my_rank} counted {len(words)} words, "
+        f"{len(counts)} unique"
+    )
 
-    map_file = f"{map_prefix}_{rank}.csv"
-    with open(map_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["word", "count"])
-        for word, count in counts.items():
-            writer.writerow([word, count])
+    # 4. Persist the partial count as JSON for the reduce phase.
+    out_local = f"map_{my_rank}.json"
+    with open(out_local, "w") as fh:
+        json.dump(dict(counts), fh)
 
-    faasr_put_file(local_folder=".", local_file=map_file,
-                   remote_folder=folder, remote_file=map_file)
-
-    faasr_log(f"map_words: rank {rank}/{max_rank} counted {len(words)} words "
-              f"({len(counts)} unique) -> {folder}/{map_file}")
+    faasr_put_file(
+        local_folder=".",
+        local_file=out_local,
+        remote_folder=f"{folder}/map",
+        remote_file=f"map_{my_rank}.json",
+    )
+    faasr_log(f"map_words: rank {my_rank} wrote {folder}/map/map_{my_rank}.json")
