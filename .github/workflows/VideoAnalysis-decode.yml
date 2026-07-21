@@ -1,4 +1,4 @@
-name: VideoAnalysis-Decode
+name: VideoAnalysis-decode
 
 on:
     workflow_dispatch:
