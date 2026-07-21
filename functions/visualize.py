@@ -1,51 +1,62 @@
+import csv
+
 import matplotlib
 
-matplotlib.use("Agg")  # headless backend for serverless runtime
-
+matplotlib.use("Agg")  # headless backend for the serverless runtime
 import matplotlib.pyplot as plt
-import pandas as pd
 
 
-def visualize(folder="MapReduce", input_file="word_counts.csv", top_n=20):
-    """
-    Stage 5 of the MapReduce pipeline (visualization).
+def visualize(reduce_folder="MapReduce/reduce_out", input_file="word_counts.csv",
+              output_folder="MapReduce", output_file="word_count_plot.png",
+              top_n=20):
+    """Visualize the MapReduce output as a horizontal bar chart of the most
+    frequent words.
 
-    Downloads the aggregated word-count table produced by reduce_words and
-    renders a horizontal bar chart of the `top_n` most frequent words, then
-    uploads the figure to `folder`/output/top_words.png.
+    Reads:  {reduce_folder}/{input_file}
+    Writes: {output_folder}/{output_file}
     """
     top_n = int(top_n)
 
-    # 1. Download the reduce output.
-    faasr_log(f"visualize: downloading {folder}/reduce/{input_file}")
+    # Download the aggregated word counts
     faasr_get_file(
-        remote_folder=f"{folder}/reduce",
+        remote_folder=reduce_folder,
         remote_file=input_file,
         local_folder=".",
         local_file="word_counts.csv",
     )
 
-    df = pd.read_csv("word_counts.csv")
-    df = df.sort_values("count", ascending=False).head(top_n)
-    faasr_log(f"visualize: plotting top {len(df)} words")
+    words, counts = [], []
+    with open("word_counts.csv", "r", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            words.append(row["word"])
+            counts.append(int(row["count"]))
 
-    # 2. Build a horizontal bar chart (most frequent at the top).
-    plt.figure(figsize=(10, 8))
-    plt.barh(df["word"][::-1], df["count"][::-1], color="steelblue")
-    plt.xlabel("Count")
-    plt.ylabel("Word")
-    plt.title(f"Top {len(df)} Most Frequent Words")
-    plt.tight_layout()
+    # Already sorted descending by the reducer; keep the top N
+    words = words[:top_n]
+    counts = counts[:top_n]
 
-    out_png = "top_words.png"
-    plt.savefig(out_png, dpi=150)
-    plt.close()
+    # Plot with the most frequent word at the top
+    fig, ax = plt.subplots(figsize=(10, max(4, 0.4 * len(words))))
+    y_pos = range(len(words))
+    ax.barh(list(y_pos), counts, color="#2b8cbe")
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(words)
+    ax.invert_yaxis()
+    ax.set_xlabel("Count")
+    ax.set_title(f"Top {len(words)} Most Frequent Words")
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=150)
+    plt.close(fig)
 
-    # 3. Persist the figure back to S3.
+    # Persist the figure back to S3
     faasr_put_file(
         local_folder=".",
-        local_file=out_png,
-        remote_folder=f"{folder}/output",
-        remote_file="top_words.png",
+        local_file=output_file,
+        remote_folder=output_folder,
+        remote_file=output_file,
     )
-    faasr_log(f"visualize: wrote {folder}/output/top_words.png")
+
+    faasr_log(
+        f"visualize: wrote top-{len(words)} bar chart -> {output_folder}/{output_file}"
+    )
