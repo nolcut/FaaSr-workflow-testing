@@ -7,35 +7,30 @@
   "InvocationID": "",
   "ActionList": {
     "gen": {
+      "FunctionName": "gen",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "gen",
       "Arguments": {
         "N": 500,
-        "M": 1024,
-        "folder": "ml"
+        "M": 1024
       },
       "InvokeNext": [
         "svm",
-        "rf"
+        "random-forest"
       ]
     },
     "svm": {
+      "FunctionName": "svm",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_svm",
-      "Arguments": {
-        "folder": "ml"
-      },
+      "Arguments": {},
       "InvokeNext": []
     },
-    "rf": {
+    "random-forest": {
+      "FunctionName": "random_forest",
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "train_rf",
-      "Arguments": {
-        "folder": "ml"
-      },
+      "Arguments": {},
       "InvokeNext": []
     }
   },
@@ -61,25 +56,25 @@
   "ActionContainers": {
     "gen": "ghcr.io/faasr/github-actions-python:latest",
     "svm": "ghcr.io/faasr/github-actions-python:latest",
-    "rf": "ghcr.io/faasr/github-actions-python:latest"
+    "random-forest": "ghcr.io/faasr/github-actions-python:latest"
   },
   "FunctionGitRepo": {
     "gen": "nolcut/FaaSr-workflow-testing/main/functions/gen.py",
-    "train_svm": "nolcut/FaaSr-workflow-testing/main/functions/train_svm.py",
-    "train_rf": "nolcut/FaaSr-workflow-testing/main/functions/train_rf.py"
+    "svm": "nolcut/FaaSr-workflow-testing/main/functions/svm.py",
+    "random_forest": "nolcut/FaaSr-workflow-testing/main/functions/random_forest.py"
   },
   "PyPIPackageDownloads": {
     "gen": [
-      "scikit-learn",
-      "numpy"
+      "numpy",
+      "scikit-learn"
     ],
-    "train_svm": [
-      "scikit-learn",
-      "numpy"
+    "svm": [
+      "numpy",
+      "scikit-learn"
     ],
-    "train_rf": [
-      "scikit-learn",
-      "numpy"
+    "random_forest": [
+      "numpy",
+      "scikit-learn"
     ]
   }
 }
