@@ -1,63 +1,64 @@
-"""FaaSr step 4: interpolate.
+def interpolate(folder: str, input1: str, output1: str) -> None:
+    """Turn the 26 weekly-held lab columns into smooth 15-minute trajectories.
 
-The 26 lab-measured composition columns are weekly grab samples that were
-recorded into the 15-minute time base by holding each value constant for the
-whole week (a zero-order hold / step signal). This step treats each held block
-as a single weekly sample located at the block's start, then linearly
-interpolates between consecutive weekly samples onto the native 15-minute grid.
+    Each of the 26 ADM1 influent composition columns holds a single lab value
+    (step-constant) across the 15-minute timestamps between weekly samples. The
+    actual weekly sample points are the timestamps where a column takes a new
+    (changed) value. Between successive sample points the held stretch is replaced
+    by a straight-line (time-linear) interpolation, so the step profile becomes a
+    continuous trajectory at the dataset's native 15-minute resolution. The time
+    index, Q, T and all derived (ion/gas) columns are left exactly unchanged.
+    """
+    import pandas as pd
+    import numpy as np
 
-The 26 lab columns = 10 soluble COD + 12 particulate COD + 4 untouched
-(S_IC, S_IN, S_cation, S_anion). Online sensor channels (time, Q, T) are left
-on their own 15-minute grid and are NOT interpolated here.
-"""
+    # The 26 weekly-sampled lab columns: the ADM1 influent state variables that
+    # PyADM1 reads from digester_influent.csv (12 soluble S_*, 12 particulate X_*,
+    # plus S_cation and S_anion). Q and T are continuous operational sensors and the
+    # S_*_ion / S_co2 / S_gas_* columns are derived algebraic states, so none of
+    # those are interpolated here.
+    lab_columns = [
+        "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2", "S_ch4",
+        "S_IC", "S_IN", "S_I",
+        "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4", "X_pro",
+        "X_ac", "X_h2", "X_I",
+        "S_cation", "S_anion",
+    ]
 
-try:
-    from FaaSr_py.client.py_client_stubs import faasr_get_file, faasr_put_file, faasr_log
-except Exception:  # pragma: no cover
-    pass
+    faasr_log(f"interpolate: downloading despiked influent '{input1}' from folder '{folder}'")
+    local_in = "influent_despiked.csv"
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
-import pandas as pd
+    df = pd.read_csv(local_in)
+    faasr_log(f"interpolate: read {len(df)} rows, {len(df.columns)} columns")
 
-COD_SOLUBLE = ["S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro",
-               "S_ac", "S_h2", "S_ch4", "S_I"]
-COD_PARTICULATE = ["X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa",
-                   "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I"]
-UNTOUCHED = ["S_IC", "S_IN", "S_cation", "S_anion"]
-# 26 weekly-held lab columns
-LAB_COLUMNS = COD_SOLUBLE + COD_PARTICULATE + UNTOUCHED
+    if "time" not in df.columns:
+        msg = "interpolate: required 'time' column not found in input CSV"
+        faasr_log(msg)
+        raise ValueError(msg)
+    missing = [c for c in lab_columns if c not in df.columns]
+    if missing:
+        msg = f"interpolate: expected lab columns missing from input CSV: {missing}"
+        faasr_log(msg)
+        raise ValueError(msg)
 
+    t = df["time"].astype(float).to_numpy()
 
-def interpolate(folder, input_file="influent_despiked.csv",
-                output_file="digester_influent.csv"):
-    faasr_log(f"interpolate: downloading {folder}/{input_file}")
-    faasr_get_file(remote_folder=folder, remote_file=input_file,
-                   local_folder=".", local_file="in.csv")
+    for col in lab_columns:
+        s = df[col].astype(float)
+        # Weekly sample points: the first row plus every row where the held value
+        # changes. s.ne(s.shift()) is True at index 0 (shift is NaN) and at each
+        # transition, so these mark the actual weekly measurements.
+        sample_mask = s.ne(s.shift()).to_numpy()
+        xp = t[sample_mask]
+        fp = s.to_numpy()[sample_mask]
+        # np.interp linearly interpolates between successive sample points and holds
+        # the first/last sample value outside the sampled range (so a trailing held
+        # stretch keeps its last measured value, and a single sample stays constant).
+        df[col] = np.interp(t, xp, fp)
+        faasr_log(f"interpolate: {col} — {len(xp)} weekly sample point(s) -> interpolated")
 
-    df = pd.read_csv("in.csv")
-    if "time" in df.columns:
-        df = df.sort_values("time").reset_index(drop=True)
-        time_index = df["time"].to_numpy()
-    else:
-        faasr_log("interpolate: WARNING - no 'time' column; using row order as time base")
-        time_index = df.index.to_numpy()
-
-    present = [c for c in LAB_COLUMNS if c in df.columns]
-    faasr_log(f"interpolate: interpolating {len(present)} lab columns "
-              f"(expected 26): {present}")
-
-    for col in present:
-        s = df[col]
-        # Anchor points = start of each weekly held block (value changes from
-        # the previous row); everything else is treated as an un-sampled hold.
-        changed = s.ne(s.shift())
-        changed.iloc[0] = True
-        anchored = s.where(changed)
-        # Interpolate against the real time base so spacing is respected.
-        tmp = pd.Series(anchored.to_numpy(), index=time_index)
-        tmp = tmp.interpolate(method="index").ffill().bfill()
-        df[col] = tmp.to_numpy()
-
-    df.to_csv(output_file, index=False)
-    faasr_put_file(local_folder=".", local_file=output_file,
-                   remote_folder=folder, remote_file=output_file)
-    faasr_log(f"interpolate: wrote cleaned influent {folder}/{output_file}")
+    local_out = "digester_influent.csv"
+    df.to_csv(local_out, index=False)
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+    faasr_log(f"interpolate: wrote cleaned influent '{output1}' to folder '{folder}'")
