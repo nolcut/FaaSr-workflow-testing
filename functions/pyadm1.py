@@ -568,7 +568,21 @@ def run_pyadm1_model():
     S_gas_co2 = initial_state['S_gas_co2'][0]#kmole C.m^-3 carbon dioxide concentration in gas phas
     pH = - np.log10(S_H_ion)
     setInfluent(0) #setting the influent for the initial time (t0) to be ready for the start of the simulation
-    q_ad =  178.4674 #m^3.d^-1 initial flow rate (can be modified during the simulation by the control algorithm)
+    # Per-rank feed/flow set so hydraulic (and solids) retention time equals the
+    # SRT carried in this rank's varied initial-state file: q_ad = V_liq / SRT.
+    # This replaces the original hardcoded q_ad = 178.4674 so the 20 ranked runs
+    # produce distinct steady states across the 10-60 day SRT sweep.
+    if "SRT" not in initial_state.columns:
+        msg = "pyadm1: required 'SRT' column not found in initial-state file digester_initial.csv"
+        faasr_log(msg)
+        raise ValueError(msg)
+    srt = float(initial_state["SRT"][0]) #d solids/hydraulic retention time for this rank
+    if not np.isfinite(srt) or srt <= 0:
+        msg = f"pyadm1: invalid SRT value '{srt}' in initial-state file; must be a positive number of days"
+        faasr_log(msg)
+        raise ValueError(msg)
+    q_ad = V_liq / srt #m^3.d^-1 feed flow rate giving hydraulic retention time = SRT
+    faasr_log(f"pyadm1: SRT={srt} d -> q_ad = V_liq/SRT = {q_ad} m^3.d^-1")
     state_zero = [S_su,
                   S_aa,
                   S_fa,
