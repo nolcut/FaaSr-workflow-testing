@@ -568,21 +568,7 @@ def run_pyadm1_model():
     S_gas_co2 = initial_state['S_gas_co2'][0]#kmole C.m^-3 carbon dioxide concentration in gas phas
     pH = - np.log10(S_H_ion)
     setInfluent(0) #setting the influent for the initial time (t0) to be ready for the start of the simulation
-    # Per-rank feed/flow set so hydraulic (and solids) retention time equals the
-    # SRT carried in this rank's varied initial-state file: q_ad = V_liq / SRT.
-    # This replaces the original hardcoded q_ad = 178.4674 so the 20 ranked runs
-    # produce distinct steady states across the 10-60 day SRT sweep.
-    if "SRT" not in initial_state.columns:
-        msg = "pyadm1: required 'SRT' column not found in initial-state file digester_initial.csv"
-        faasr_log(msg)
-        raise ValueError(msg)
-    srt = float(initial_state["SRT"][0]) #d solids/hydraulic retention time for this rank
-    if not np.isfinite(srt) or srt <= 0:
-        msg = f"pyadm1: invalid SRT value '{srt}' in initial-state file; must be a positive number of days"
-        faasr_log(msg)
-        raise ValueError(msg)
-    q_ad = V_liq / srt #m^3.d^-1 feed flow rate giving hydraulic retention time = SRT
-    faasr_log(f"pyadm1: SRT={srt} d -> q_ad = V_liq/SRT = {q_ad} m^3.d^-1")
+    q_ad =  178.4674 #m^3.d^-1 initial flow rate (can be modified during the simulation by the control algorithm)
     state_zero = [S_su,
                   S_aa,
                   S_fa,
@@ -730,32 +716,19 @@ def run_pyadm1_model():
 # FaaSr entry function: fetch inputs, run the preserved model, upload output.
 # ---------------------------------------------------------------------------
 def pyadm1(folder: str, input1: str, input2: str, output1: str) -> None:
-    """Run the PyADM1 simulation on the cleaned influent + rank-specific initial state.
+    """Run the PyADM1 simulation on the cleaned influent + initial state.
 
-    This function is one of 20 parallel ranked instances. It resolves its own
-    rank, downloads the shared cleaned influent plus its rank-specific varied
-    initial-state file to the exact filenames the preserved model reads
-    (digester_influent.csv, digester_initial.csv), invokes the model, and uploads
-    the dynamic_out.csv it writes under a rank-templated name. Results come solely
-    from calling the preserved model function; no simulation logic is reimplemented.
+    Downloads the two CSVs to the exact filenames the preserved model reads
+    (digester_influent.csv, digester_initial.csv), invokes the model, and
+    uploads the dynamic_out.csv it writes. Results come solely from calling the
+    preserved model function; no simulation logic is reimplemented here.
     """
-    r = faasr_rank()
-    rank = r["rank"]
+    faasr_log(f"pyadm1: downloading influent '{input1}' and initial state '{input2}' from '{folder}'")
+    faasr_get_file(local_file="digester_influent.csv", remote_folder=folder, remote_file=input1)
+    faasr_get_file(local_file="digester_initial.csv", remote_folder=folder, remote_file=input2)
 
-    # Shared influent (no {rank}) + this instance's varied initial-state shard.
-    influent_remote = input1.format(rank=rank)
-    initial_remote = input2.format(rank=rank)
-    output_remote = output1.format(rank=rank)
-
-    faasr_log(
-        f"pyadm1[rank={rank}/{r.get('max_rank')}]: downloading influent "
-        f"'{influent_remote}' and initial state '{initial_remote}' from '{folder}'"
-    )
-    faasr_get_file(local_file="digester_influent.csv", remote_folder=folder, remote_file=influent_remote)
-    faasr_get_file(local_file="digester_initial.csv", remote_folder=folder, remote_file=initial_remote)
-
-    faasr_log(f"pyadm1[rank={rank}]: running preserved PyADM1 model (ADM1 ODE/DAE integration)")
+    faasr_log("pyadm1: running preserved PyADM1 model (ADM1 ODE/DAE integration)")
     run_pyadm1_model()
 
-    faasr_put_file(local_file="dynamic_out.csv", remote_folder=folder, remote_file=output_remote)
-    faasr_log(f"pyadm1[rank={rank}]: wrote dynamic simulation results '{output_remote}' to folder '{folder}'")
+    faasr_put_file(local_file="dynamic_out.csv", remote_folder=folder, remote_file=output1)
+    faasr_log(f"pyadm1: wrote dynamic simulation results '{output1}' to folder '{folder}'")
