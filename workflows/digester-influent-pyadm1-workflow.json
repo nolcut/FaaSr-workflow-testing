@@ -1,0 +1,167 @@
+{
+  "FunctionInvoke": "convert-units",
+  "WorkflowName": "digester-influent-pyadm1-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "convert-units": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "convert_units",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "digester_influent_raw.csv",
+        "output1": "influent_converted.csv"
+      },
+      "InvokeNext": [
+        "fill-gaps"
+      ]
+    },
+    "fill-gaps": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "fill_gaps",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "influent_converted.csv",
+        "output1": "influent_gapfilled.csv"
+      },
+      "InvokeNext": [
+        "remove-spikes"
+      ]
+    },
+    "remove-spikes": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "remove_spikes",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "influent_gapfilled.csv",
+        "output1": "influent_despiked.csv"
+      },
+      "InvokeNext": [
+        "interpolate"
+      ]
+    },
+    "interpolate": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "interpolate",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "influent_despiked.csv",
+        "output1": "digester_influent.csv"
+      },
+      "InvokeNext": [
+        "vary-inputs"
+      ]
+    },
+    "vary-inputs": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "vary_inputs",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "digester_initial.csv",
+        "output1": "digester_initial_{rank}.csv"
+      },
+      "InvokeNext": [
+        "pyadm1(20)"
+      ]
+    },
+    "pyadm1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "pyadm1",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "digester_influent.csv",
+        "input2": "digester_initial_{rank}.csv",
+        "output1": "dynamic_out_{rank}.csv"
+      },
+      "InvokeNext": [
+        "visualize"
+      ]
+    },
+    "visualize": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize",
+      "Arguments": {
+        "folder": "PyADM1-orig",
+        "input1": "dynamic_out_{rank}.csv",
+        "output1": "simulation_plots.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "convert-units": "ghcr.io/faasr/github-actions-python:latest",
+    "fill-gaps": "ghcr.io/faasr/github-actions-python:latest",
+    "remove-spikes": "ghcr.io/faasr/github-actions-python:latest",
+    "interpolate": "ghcr.io/faasr/github-actions-python:latest",
+    "vary-inputs": "ghcr.io/faasr/github-actions-python:latest",
+    "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "convert_units": "nolcut/FaaSr-workflow-testing/main/functions/convert_units.py",
+    "fill_gaps": "nolcut/FaaSr-workflow-testing/main/functions/fill_gaps.py",
+    "remove_spikes": "nolcut/FaaSr-workflow-testing/main/functions/remove_spikes.py",
+    "interpolate": "nolcut/FaaSr-workflow-testing/main/functions/interpolate.py",
+    "vary_inputs": "nolcut/FaaSr-workflow-testing/main/functions/vary_inputs.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
+    "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
+  },
+  "PyPIPackageDownloads": {
+    "convert_units": [
+      "pandas"
+    ],
+    "fill_gaps": [
+      "pandas"
+    ],
+    "remove_spikes": [
+      "pandas",
+      "numpy"
+    ],
+    "interpolate": [
+      "pandas",
+      "numpy"
+    ],
+    "vary_inputs": [
+      "pandas",
+      "numpy"
+    ],
+    "pyadm1": [
+      "numpy",
+      "scipy",
+      "pandas",
+      "matplotlib"
+    ],
+    "visualize": [
+      "pandas",
+      "matplotlib"
+    ]
+  }
+}
