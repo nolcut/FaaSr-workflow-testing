@@ -2,93 +2,59 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
-
-# Step 7: visualize
-# Runs once, after all 20 ranked pyadm1 actions have completed (FaaSr fans
-# in automatically). Downloads every dynamic_out_<rank>.csv, overlays key
-# ADM1 effluent trajectories across the 20 SRT scenarios, and writes
-# simulation_plots.png.
-
-FOLDER = "PyADM1-orig"
-N_RANKS = 20
-
-# Representative outputs to visualise (name -> axis label).
-PLOT_VARS = [
-    ("pH", "pH"),
-    ("S_ac", "Acetate  S_ac  [kg COD/m3]"),
-    ("S_ch4", "Methane  S_ch4  [kg COD/m3]"),
-    ("S_IN", "Inorganic N  S_IN  [kmole N/m3]"),
-    ("S_gas_ch4", "Gas-phase CH4  S_gas_ch4"),
-    ("X_ac", "Acetogens  X_ac  [kg COD/m3]"),
-]
+import numpy as np
 
 
-def visualize():
-    faasr_log("visualize: collecting dynamic_out_*.csv from all ranks")
+def visualize(folder, input_prefix, count=20, output_file="simulation_plots.png"):
+    """Step 7 - overlay the PyADM1 outputs from all ranked SRT scenarios and
+    write simulation_plots.png.
 
-    runs = {}
-    for rank in range(1, N_RANKS + 1):
-        name = f"dynamic_out_{rank}.csv"
+    Runs once (after every ranked pyadm1 invocation has completed, thanks to
+    FaaSr's rank synchronization).  Downloads dynamic_out_1..count.csv and plots
+    a few representative state variables, one coloured line per SRT scenario.
+    """
+    runs = []
+    for i in range(1, int(count) + 1):
+        fname = "{}_{}.csv".format(input_prefix, i)
         try:
-            faasr_get_file(
-                server_name="S3",
-                remote_folder=FOLDER,
-                remote_file=name,
-                local_folder=".",
-                local_file=name,
-            )
-            runs[rank] = pd.read_csv(name)
+            faasr_get_file(server_name="S3", remote_folder=folder,
+                           remote_file=fname, local_file=fname)
+            runs.append((i, pd.read_csv(fname)))
         except Exception as exc:  # noqa: BLE001
-            faasr_log(f"visualize: could not load {name}: {exc}")
+            faasr_log("visualize: could not load {}: {}".format(fname, exc))
 
     if not runs:
         faasr_log("visualize: no simulation outputs found; nothing to plot")
         return
 
-    faasr_log(f"visualize: loaded {len(runs)} simulation output files")
-
-    ncols = 2
-    nrows = (len(PLOT_VARS) + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(16, 4 * nrows))
-    axes = axes.flatten()
-
+    # Representative digester outputs: acetate, methane, pH, inorganic nitrogen.
+    variables = ["S_ac", "S_ch4", "pH", "S_IN"]
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.ravel()
     cmap = plt.get_cmap("viridis")
-    ranks_sorted = sorted(runs.keys())
+    denom = max(1, len(runs) - 1)
 
-    for ax, (var, label) in zip(axes, PLOT_VARS):
-        for idx, rank in enumerate(ranks_sorted):
-            df = runs[rank]
-            if var not in df.columns:
-                continue
-            color = cmap(idx / max(1, len(ranks_sorted) - 1))
-            ax.plot(df.index, df[var], color=color, linewidth=0.9,
-                    label=f"rank {rank}")
-        ax.set_title(label)
+    for ax, var in zip(axes, variables):
+        plotted = False
+        for j, (i, df) in enumerate(runs):
+            if var in df.columns:
+                ax.plot(np.arange(len(df)), df[var],
+                        color=cmap(j / denom), linewidth=1.0)
+                plotted = True
+        ax.set_title(var)
         ax.set_xlabel("time step")
         ax.set_ylabel(var)
-        ax.grid(True, alpha=0.3)
+        if not plotted:
+            ax.text(0.5, 0.5, "column '{}' not found".format(var),
+                    ha="center", va="center", transform=ax.transAxes)
 
-    # Hide any unused subplots.
-    for ax in axes[len(PLOT_VARS):]:
-        ax.axis("off")
+    sm = plt.cm.ScalarMappable(cmap=cmap,
+                               norm=plt.Normalize(vmin=1, vmax=len(runs)))
+    fig.colorbar(sm, ax=axes.tolist(), label="SRT scenario (rank)")
+    fig.suptitle("PyADM1 dynamic outputs across {} SRT scenarios".format(len(runs)))
 
-    # Single shared legend (SRT sweep, low rank = short SRT).
-    handles, labels = axes[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="lower center", ncol=10,
-                   fontsize="small", title="SRT sweep (rank 1..20)")
-
-    fig.suptitle("PyADM1 dynamic simulation across 20 SRT scenarios",
-                 fontsize=14)
-    fig.tight_layout(rect=[0, 0.06, 1, 0.97])
-    fig.savefig("simulation_plots.png", dpi=120)
-    plt.close(fig)
-
-    faasr_put_file(
-        server_name="S3",
-        local_folder=".",
-        local_file="simulation_plots.png",
-        remote_folder=FOLDER,
-        remote_file="simulation_plots.png",
-    )
-    faasr_log("visualize: wrote simulation_plots.png")
+    fig.savefig(output_file, dpi=120, bbox_inches="tight")
+    faasr_put_file(server_name="S3", local_file=output_file,
+                   remote_folder=folder, remote_file=output_file)
+    faasr_log("visualize: plotted {} runs; wrote {}/{}".format(
+        len(runs), folder, output_file))
