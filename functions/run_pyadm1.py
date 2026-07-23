@@ -1,4 +1,19 @@
-import os
+# Step 6: pyadm1  (invoked 20x as a ranked action -> pyadm1(20))
+# Each rank runs the user-supplied PyADM1 simulation on the cleaned influent plus
+# its own SRT-varied initial state, then writes a rank-tagged dynamic_out file.
+#
+# PyADM1's model code is merged into this file (FaaSr fetches only the declared
+# function file into the container). Its data-dependent driver runs inside
+# run_pyadm1() so it executes after the inputs are downloaded, not at import.
+# Each rank:
+#   1. downloads the cleaned influent under the exact name PyADM1 reads
+#   2. downloads this rank's SRT-varied initial file, strips the SRT column,
+#      and writes it as "digester_initial.csv"
+#   3. sets the flow constant so that q_ad = V_liq / SRT  (how SRT enters
+#      the model)
+#   4. runs the simulation, then uploads dynamic_out_<rank>.csv
+
+V_LIQ = 3400.0  # m^3 liquid volume (matches PyADM1)
 
 
 import numpy as np
@@ -533,14 +548,9 @@ def DAESolve():
 ## ring test end
 
 
-def run_pyadm1(folder, influent_file, initial_prefix, output_prefix,
-               v_liq=3400.0):
-    """Step 6 - run the PyADM1 dynamic simulation once per rank (20 ranks).
-
-    Each rank loads the cleaned influent plus its own SRT-varied initial state,
-    sets PyADM1's influent flow (q_ad) to match the scenario SRT, executes the
-    simulation, and stores dynamic_out_<rank>.csv.
-    """
+def run_pyadm1(folder, influent_file="digester_influent.csv",
+               initial_prefix="digester_initial",
+               output_prefix="dynamic_out"):
     global influent_state, initial_state, S_su, S_aa, S_fa, S_va, S_bu, \
         S_pro, S_ac, S_h2, S_ch4, S_IC, S_IN, S_I, X_xc, X_ch, X_pr, X_li, \
         X_su, X_aa, X_fa, X_c4, X_pro, X_ac, X_h2, X_I, S_cation, S_anion, \
@@ -559,28 +569,28 @@ def run_pyadm1(folder, influent_file, initial_prefix, output_prefix,
         p_gas_h2, p_gas_ch4, p_gas_co2, p_gas, q_gas, q_ch4, flowtemp, \
         dfstate_zero
 
-    rank_info = faasr_rank()
-    rank = int(rank_info["rank"])
-    max_rank = int(rank_info["max_rank"])
+    import shutil
 
-    # Run matplotlib head-less (PyADM1 imports pyplot).
-    os.environ["MPLBACKEND"] = "Agg"
+    info = faasr_rank()
+    rank = int(info["rank"])
+    max_rank = int(info["max_rank"])
+    faasr_log(f"run_pyadm1: starting rank {rank}/{max_rank}")
 
-    # PyADM1 reads exactly these two filenames from the working directory.
-    faasr_get_file(server_name="S3", remote_folder=folder,
-                   remote_file=influent_file, local_file="digester_influent.csv")
-    init_remote = "{}_{}.csv".format(initial_prefix, rank)
-    faasr_get_file(server_name="S3", remote_folder=folder,
-                   remote_file=init_remote, local_file="digester_initial.csv")
+    # 1. cleaned influent under the name PyADM1 reads
+    faasr_get_file(remote_folder=folder, remote_file=influent_file,
+                   local_folder=".", local_file="digester_influent.csv")
 
-    init_df = pd.read_csv("digester_initial.csv")
-    if "q_ad" in init_df.columns:
-        q_ad_scenario = float(init_df["q_ad"].iloc[0])
-    elif "SRT" in init_df.columns:
-        q_ad_scenario = float(v_liq) / float(init_df["SRT"].iloc[0])
-    else:
-        q_ad_scenario = 178.4674  # PyADM1 default
-    srt = float(init_df["SRT"].iloc[0]) if "SRT" in init_df.columns else None
+    # 2. this rank's SRT-varied initial state
+    init_remote = f"{initial_prefix}_{rank}.csv"
+    faasr_get_file(remote_folder=folder, remote_file=init_remote,
+                   local_folder=".", local_file=init_remote)
+    init = pd.read_csv(init_remote)
+
+    srt = None
+    if "SRT" in init.columns:
+        srt = float(init["SRT"].iloc[0])
+        init = init.drop(columns=["SRT"])
+    init.to_csv("digester_initial.csv", index=False)
 
     # reading influent and initial condition data from csv files
     influent_state = pd.read_csv("digester_influent.csv")
@@ -711,8 +721,10 @@ def run_pyadm1(folder, influent_file, initial_prefix, output_prefix,
                   S_cation_in,
                   S_anion_in]
 
-    # Override the model's hard-coded initial flow with this rank's scenario.
-    q_ad = q_ad_scenario
+    # 3. the flow constant, so SRT takes effect
+    if srt is not None and srt > 0:
+        q_ad = V_LIQ / srt
+        faasr_log(f"run_pyadm1: rank {rank} SRT={srt:.3f} d -> q_ad={q_ad:.4f} m3/d")
 
 
     ## time array definition
@@ -793,9 +805,9 @@ def run_pyadm1(folder, influent_file, initial_prefix, output_prefix,
     simulate_results['pH'] = phlogarray
     simulate_results.to_csv("dynamic_out.csv", index = False)
 
-    out_file = "{}_{}.csv".format(output_prefix, rank)
-    os.replace("dynamic_out.csv", out_file)
-    faasr_put_file(server_name="S3", local_file=out_file,
-                   remote_folder=folder, remote_file=out_file)
-    faasr_log("run_pyadm1: rank {}/{} SRT={} q_ad={:.4f}; wrote {}/{}"
-              .format(rank, max_rank, srt, q_ad, folder, out_file))
+    # 4. tag the simulation output by rank
+    out = f"{output_prefix}_{rank}.csv"
+    shutil.move("dynamic_out.csv", out)
+    faasr_put_file(local_folder=".", local_file=out,
+                   remote_folder=folder, remote_file=out)
+    faasr_log(f"run_pyadm1: rank {rank} finished -> {folder}/{out}")
