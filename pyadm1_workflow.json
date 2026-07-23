@@ -1,5 +1,5 @@
 {
-  "WorkflowName": "PyADM1CleaningAndSimulation",
+  "WorkflowName": "PyADM1-digester-cleaning",
   "FunctionInvoke": "convert-units",
   "InvocationID": "",
   "DefaultDataStore": "S3",
@@ -10,11 +10,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "convert_units",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "digester_influent_raw.csv",
-        "output_file": "influent_units_converted.csv"
-      },
+      "Arguments": {},
       "InvokeNext": [
         "fill-gaps"
       ]
@@ -23,11 +19,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "fill_gaps",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_units_converted.csv",
-        "output_file": "influent_filled.csv"
-      },
+      "Arguments": {},
       "InvokeNext": [
         "remove-spikes"
       ]
@@ -36,13 +28,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "remove_spikes",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_filled.csv",
-        "output_file": "influent_despiked.csv",
-        "window": 7,
-        "n_sigmas": 3.0
-      },
+      "Arguments": {},
       "InvokeNext": [
         "interpolate"
       ]
@@ -51,39 +37,25 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "interpolate",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_despiked.csv",
-        "output_file": "digester_influent.csv"
-      },
+      "Arguments": {},
       "InvokeNext": [
-        "validate"
+        "vary-inputs"
       ]
     },
-    "validate": {
+    "vary-inputs": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "validate",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "influent_file": "digester_influent.csv",
-        "initial_file": "digester_initial.csv",
-        "report_file": "validation_report.csv"
-      },
+      "FunctionName": "vary_inputs",
+      "Arguments": {},
       "InvokeNext": [
-        "pyadm1"
+        "pyadm1(20)"
       ]
     },
     "pyadm1": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "run_pyadm1",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "influent_file": "digester_influent.csv",
-        "initial_file": "digester_initial.csv",
-        "output_file": "dynamic_out.csv"
-      },
+      "FunctionName": "pyadm1",
+      "Arguments": {},
       "InvokeNext": [
         "visualize"
       ]
@@ -92,11 +64,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "visualize",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "dynamic_out.csv",
-        "output_file": "simulation_plots.png"
-      },
+      "Arguments": {},
       "InvokeNext": []
     }
   },
@@ -124,7 +92,7 @@
     "fill-gaps": "ghcr.io/faasr/github-actions-python:latest",
     "remove-spikes": "ghcr.io/faasr/github-actions-python:latest",
     "interpolate": "ghcr.io/faasr/github-actions-python:latest",
-    "validate": "ghcr.io/faasr/github-actions-python:latest",
+    "vary-inputs": "ghcr.io/faasr/github-actions-python:latest",
     "pyadm1": "ghcr.io/faasr/github-actions-python:latest",
     "visualize": "ghcr.io/faasr/github-actions-python:latest"
   },
@@ -133,8 +101,8 @@
     "fill_gaps": "nolcut/FaaSr-workflow-testing/main/functions/fill_gaps.py",
     "remove_spikes": "nolcut/FaaSr-workflow-testing/main/functions/remove_spikes.py",
     "interpolate": "nolcut/FaaSr-workflow-testing/main/functions/interpolate.py",
-    "validate": "nolcut/FaaSr-workflow-testing/main/functions/validate.py",
-    "run_pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/run_pyadm1.py",
+    "vary_inputs": "nolcut/FaaSr-workflow-testing/main/functions/vary_inputs.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
     "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
@@ -145,21 +113,19 @@
       "pandas"
     ],
     "remove_spikes": [
-      "pandas",
-      "numpy"
+      "pandas"
     ],
     "interpolate": [
       "pandas"
     ],
-    "validate": [
+    "vary_inputs": [
       "pandas",
       "numpy"
     ],
-    "run_pyadm1": [
+    "pyadm1": [
       "pandas",
       "numpy",
-      "scipy",
-      "matplotlib"
+      "scipy"
     ],
     "visualize": [
       "pandas",

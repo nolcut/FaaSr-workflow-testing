@@ -1,40 +1,38 @@
-"""FaaSr step 2: fill-gaps.
-
-Forward-fill missing S_cation and S_anion values. These two ionic-strength
-columns come from an intermittent titration measurement, so gaps are carried
-forward from the last known reading. A trailing back-fill is applied only to
-cover any leading NaNs at the very start of the series (nothing to carry
-forward from yet).
-"""
-
-try:
-    from FaaSr_py.client.py_client_stubs import faasr_get_file, faasr_put_file, faasr_log
-except Exception:  # pragma: no cover
-    pass
-
 import pandas as pd
 
-FILL_COLUMNS = ["S_cation", "S_anion"]
+# Step 2: fill-gaps
+# The ionic strength surrogates S_cation and S_anion come from an
+# intermittent lab assay and frequently have missing entries. Forward-fill
+# them so every 15-min row carries the most recent measured value (a leading
+# gap is back-filled so the very first rows are also valid).
+
+FOLDER = "PyADM1-orig"
 
 
-def fill_gaps(folder, input_file="influent_units_converted.csv",
-              output_file="influent_filled.csv"):
-    faasr_log(f"fill_gaps: downloading {folder}/{input_file}")
-    faasr_get_file(remote_folder=folder, remote_file=input_file,
-                   local_folder=".", local_file="in.csv")
+def fill_gaps():
+    faasr_log("fill-gaps: downloading converted influent")
+    faasr_get_file(
+        server_name="S3",
+        remote_folder=FOLDER,
+        remote_file="influent_converted.csv",
+        local_folder=".",
+        local_file="influent_converted.csv",
+    )
 
-    df = pd.read_csv("in.csv")
+    df = pd.read_csv("influent_converted.csv")
 
-    for col in FILL_COLUMNS:
-        if col not in df.columns:
-            faasr_log(f"fill_gaps: WARNING - column '{col}' not found; skipping")
-            continue
-        n_missing = int(df[col].isna().sum())
-        # Forward-fill; back-fill only handles leading NaNs.
-        df[col] = df[col].ffill().bfill()
-        faasr_log(f"fill_gaps: forward-filled {n_missing} missing values in '{col}'")
+    for col in ("S_cation", "S_anion"):
+        if col in df.columns:
+            n_missing = int(df[col].isna().sum())
+            df[col] = df[col].ffill().bfill()
+            faasr_log(f"fill-gaps: forward-filled {n_missing} missing values in {col}")
 
-    df.to_csv(output_file, index=False)
-    faasr_put_file(local_folder=".", local_file=output_file,
-                   remote_folder=folder, remote_file=output_file)
-    faasr_log(f"fill_gaps: wrote {folder}/{output_file}")
+    df.to_csv("influent_filled.csv", index=False)
+    faasr_put_file(
+        server_name="S3",
+        local_folder=".",
+        local_file="influent_filled.csv",
+        remote_folder=FOLDER,
+        remote_file="influent_filled.csv",
+    )
+    faasr_log("fill-gaps: wrote influent_filled.csv")
