@@ -161,7 +161,8 @@
     "run_pyadm1": [
       "pandas",
       "numpy",
-      "scipy"
+      "scipy",
+      "matplotlib"
     ],
     "visualize_outputs": [
       "pandas",
