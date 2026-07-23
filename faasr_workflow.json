@@ -84,8 +84,7 @@
         "folder": "PyADM1-orig",
         "influent_file": "digester_influent.csv",
         "initial_prefix": "digester_initial",
-        "output_prefix": "dynamic_out",
-        "pyadm1_script": "PyADM1.py"
+        "output_prefix": "dynamic_out"
       },
       "InvokeNext": [
         "visualize"
