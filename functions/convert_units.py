@@ -1,72 +1,61 @@
-import pandas as pd
-
 # Step 1: convert-units
-# Reverse field/plant sensor units back into the ADM1 (BSM2) units that
-# PyADM1 expects.
-#   - Q:  US MGD -> m3/d
-#   - T:  degrees Fahrenheit -> degrees Celsius (convert AND rename column)
-#   - all 22 COD-based state columns (soluble S_* + particulate X_*) are
-#     reported in field units of g COD/m3 (= mg/L) and must be divided by
-#     1000 to become kg COD/m3.
-# S_IC, S_IN (kmole/m3) and S_cation, S_anion (kmole/m3) are NOT COD based
-# and are left untouched.
+# Reverse field/engineering units back to ADM1 units on the RAW digester influent.
+#   - Q:  MGD  -> m3/d
+#   - T:  degF -> degC   (convert the values AND rename the column to "T")
+#   - divide ALL 22 COD columns by 1000 (10 solubles S_* + 12 particulates X_*)
+#   - leave S_IC, S_IN, S_cation, S_anion untouched
 
-FOLDER = "PyADM1-orig"
+# 10 soluble COD state variables (all in kg COD / m^3 after /1000)
+COD_SOLUBLE = ["S_su", "S_aa", "S_fa", "S_va", "S_bu",
+               "S_pro", "S_ac", "S_h2", "S_ch4", "S_I"]
+# 12 particulate COD state variables
+COD_PARTICULATE = ["X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa",
+                   "X_fa", "X_c4", "X_pro", "X_ac", "X_h2", "X_I"]
+COD_COLUMNS = COD_SOLUBLE + COD_PARTICULATE            # 22 columns
+UNTOUCHED = ["S_IC", "S_IN", "S_cation", "S_anion"]    # left as-is
 
-# 1 US million gallons per day -> cubic metres per day
-MGD_TO_M3D = 3785.411784
+MGD_TO_M3D = 3785.411784   # 1 US million gallons/day -> m^3/day
 
-# The 22 COD columns: 10 solubles + 12 particulates.
-COD_COLUMNS = [
-    # soluble COD (kg COD/m3)
-    "S_su", "S_aa", "S_fa", "S_va", "S_bu", "S_pro", "S_ac", "S_h2",
-    "S_ch4", "S_I",
-    # particulate COD (kg COD/m3)
-    "X_xc", "X_ch", "X_pr", "X_li", "X_su", "X_aa", "X_fa", "X_c4",
-    "X_pro", "X_ac", "X_h2", "X_I",
-]
+# candidate raw column names for the online sensors
+Q_CANDIDATES = ["Q", "Q_MGD", "Q(MGD)", "Flow_MGD", "flow", "Flow"]
+T_CANDIDATES = ["T_F", "T(F)", "T (F)", "TF", "Temp_F", "T_degF", "T_fahrenheit"]
 
 
-def convert_units():
-    faasr_log("convert-units: downloading raw digester influent")
-    faasr_get_file(
-        server_name="S3",
-        remote_folder=FOLDER,
-        remote_file="digester_influent_raw.csv",
-        local_folder=".",
-        local_file="digester_influent_raw.csv",
-    )
+def convert_units(folder, input_file="digester_influent_raw.csv",
+                  output_file="influent_converted.csv"):
+    import pandas as pd
 
-    df = pd.read_csv("digester_influent_raw.csv")
+    faasr_get_file(remote_folder=folder, remote_file=input_file,
+                   local_folder=".", local_file=input_file)
+    df = pd.read_csv(input_file)
 
     # --- Flow: MGD -> m3/d ---
-    if "Q" in df.columns:
-        df["Q"] = df["Q"].astype(float) * MGD_TO_M3D
-        faasr_log("convert-units: converted Q from MGD to m3/d")
-
-    # --- Temperature: F -> C, convert AND rename the column ---
-    temp_src = None
-    for candidate in ("T_F", "T", "Temp", "T_op"):
-        if candidate in df.columns:
-            temp_src = candidate
+    for c in Q_CANDIDATES:
+        if c in df.columns:
+            df[c] = df[c].astype(float) * MGD_TO_M3D
+            if c != "Q":
+                df = df.rename(columns={c: "Q"})
+            faasr_log(f"convert_units: converted flow column '{c}' MGD -> m3/d")
             break
-    if temp_src is not None:
-        df["T_C"] = (df[temp_src].astype(float) - 32.0) * 5.0 / 9.0
-        if temp_src != "T_C":
-            df = df.drop(columns=[temp_src])
-        faasr_log(f"convert-units: converted temperature '{temp_src}' (F) -> 'T_C' (C)")
 
-    # --- COD columns: divide by 1000 (leave S_IC, S_IN, S_cation, S_anion) ---
-    present = [c for c in COD_COLUMNS if c in df.columns]
-    df[present] = df[present].astype(float) / 1000.0
-    faasr_log(f"convert-units: divided {len(present)} COD columns by 1000")
+    # --- Temperature: degF -> degC, convert AND rename to "T" ---
+    for c in T_CANDIDATES:
+        if c in df.columns:
+            df[c] = (df[c].astype(float) - 32.0) * 5.0 / 9.0
+            df = df.rename(columns={c: "T"})
+            faasr_log(f"convert_units: converted+renamed temperature '{c}' degF -> degC as 'T'")
+            break
 
-    df.to_csv("influent_converted.csv", index=False)
-    faasr_put_file(
-        server_name="S3",
-        local_folder=".",
-        local_file="influent_converted.csv",
-        remote_folder=FOLDER,
-        remote_file="influent_converted.csv",
-    )
-    faasr_log("convert-units: wrote influent_converted.csv")
+    # --- Divide the 22 COD columns by 1000 ---
+    converted = []
+    for c in COD_COLUMNS:
+        if c in df.columns:
+            df[c] = df[c].astype(float) / 1000.0
+            converted.append(c)
+    faasr_log(f"convert_units: divided {len(converted)} COD columns by 1000 "
+              f"(left {UNTOUCHED} untouched)")
+
+    df.to_csv(output_file, index=False)
+    faasr_put_file(local_folder=".", local_file=output_file,
+                   remote_folder=folder, remote_file=output_file)
+    faasr_log(f"convert_units: wrote {folder}/{output_file}")

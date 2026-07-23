@@ -1,38 +1,22 @@
-import pandas as pd
-
 # Step 2: fill-gaps
-# The ionic strength surrogates S_cation and S_anion come from an
-# intermittent lab assay and frequently have missing entries. Forward-fill
-# them so every 15-min row carries the most recent measured value (a leading
-# gap is back-filled so the very first rows are also valid).
+# Forward-fill missing S_cation and S_anion values (titration/ion columns that
+# are only occasionally reported). A trailing back-fill covers any leading NaNs.
 
-FOLDER = "PyADM1-orig"
+def fill_gaps(folder, input_file="influent_converted.csv",
+              output_file="influent_filled.csv"):
+    import pandas as pd
 
+    faasr_get_file(remote_folder=folder, remote_file=input_file,
+                   local_folder=".", local_file=input_file)
+    df = pd.read_csv(input_file)
 
-def fill_gaps():
-    faasr_log("fill-gaps: downloading converted influent")
-    faasr_get_file(
-        server_name="S3",
-        remote_folder=FOLDER,
-        remote_file="influent_converted.csv",
-        local_folder=".",
-        local_file="influent_converted.csv",
-    )
+    for c in ["S_cation", "S_anion"]:
+        if c in df.columns:
+            n_missing = int(df[c].isna().sum())
+            df[c] = df[c].ffill().bfill()
+            faasr_log(f"fill_gaps: forward-filled {n_missing} missing values in '{c}'")
 
-    df = pd.read_csv("influent_converted.csv")
-
-    for col in ("S_cation", "S_anion"):
-        if col in df.columns:
-            n_missing = int(df[col].isna().sum())
-            df[col] = df[col].ffill().bfill()
-            faasr_log(f"fill-gaps: forward-filled {n_missing} missing values in {col}")
-
-    df.to_csv("influent_filled.csv", index=False)
-    faasr_put_file(
-        server_name="S3",
-        local_folder=".",
-        local_file="influent_filled.csv",
-        remote_folder=FOLDER,
-        remote_file="influent_filled.csv",
-    )
-    faasr_log("fill-gaps: wrote influent_filled.csv")
+    df.to_csv(output_file, index=False)
+    faasr_put_file(local_folder=".", local_file=output_file,
+                   remote_folder=folder, remote_file=output_file)
+    faasr_log(f"fill_gaps: wrote {folder}/{output_file}")
