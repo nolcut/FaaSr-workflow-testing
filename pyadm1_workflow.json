@@ -1,20 +1,16 @@
 {
-  "WorkflowName": "PyADM1CleanAndSimulate",
+  "WorkflowName": "PyADM1-digester-cleaning",
   "FunctionInvoke": "convert-units",
+  "InvocationID": "",
   "DefaultDataStore": "S3",
   "LoggingDataStore": "S3",
   "FaaSrLog": "FaaSrLog",
-  "InvocationID": "",
   "ActionList": {
     "convert-units": {
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "convert_units",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "digester_influent_raw.csv",
-        "output_file": "influent_units.csv"
-      },
+      "Arguments": {},
       "InvokeNext": [
         "fill-gaps"
       ]
@@ -23,11 +19,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "fill_gaps",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_units.csv",
-        "output_file": "influent_filled.csv"
-      },
+      "Arguments": {},
       "InvokeNext": [
         "remove-spikes"
       ]
@@ -36,12 +28,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "remove_spikes",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_filled.csv",
-        "output_file": "influent_despiked.csv",
-        "temp_col": "T_C"
-      },
+      "Arguments": {},
       "InvokeNext": [
         "interpolate"
       ]
@@ -49,12 +36,8 @@
     "interpolate": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "interpolate_weekly",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "influent_despiked.csv",
-        "output_file": "digester_influent_clean.csv"
-      },
+      "FunctionName": "interpolate",
+      "Arguments": {},
       "InvokeNext": [
         "vary-inputs"
       ]
@@ -63,15 +46,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "vary_inputs",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_file": "digester_initial.csv",
-        "output_prefix": "digester_initial",
-        "count": 20,
-        "srt_min": 10.0,
-        "srt_max": 30.0,
-        "v_liq": 3400.0
-      },
+      "Arguments": {},
       "InvokeNext": [
         "pyadm1(20)"
       ]
@@ -79,14 +54,8 @@
     "pyadm1": {
       "FaaSServer": "GH",
       "Type": "Python",
-      "FunctionName": "run_pyadm1",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "influent_file": "digester_influent_clean.csv",
-        "initial_prefix": "digester_initial",
-        "output_prefix": "dynamic_out",
-        "v_liq": 3400.0
-      },
+      "FunctionName": "pyadm1",
+      "Arguments": {},
       "InvokeNext": [
         "visualize"
       ]
@@ -95,12 +64,7 @@
       "FaaSServer": "GH",
       "Type": "Python",
       "FunctionName": "visualize",
-      "Arguments": {
-        "folder": "PyADM1-orig",
-        "input_prefix": "dynamic_out",
-        "count": 20,
-        "output_file": "simulation_plots.png"
-      },
+      "Arguments": {},
       "InvokeNext": []
     }
   },
@@ -136,40 +100,35 @@
     "convert_units": "nolcut/FaaSr-workflow-testing/main/functions/convert_units.py",
     "fill_gaps": "nolcut/FaaSr-workflow-testing/main/functions/fill_gaps.py",
     "remove_spikes": "nolcut/FaaSr-workflow-testing/main/functions/remove_spikes.py",
-    "interpolate_weekly": "nolcut/FaaSr-workflow-testing/main/functions/interpolate_weekly.py",
+    "interpolate": "nolcut/FaaSr-workflow-testing/main/functions/interpolate.py",
     "vary_inputs": "nolcut/FaaSr-workflow-testing/main/functions/vary_inputs.py",
-    "run_pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/run_pyadm1.py",
+    "pyadm1": "nolcut/FaaSr-workflow-testing/main/functions/pyadm1.py",
     "visualize": "nolcut/FaaSr-workflow-testing/main/functions/visualize.py"
   },
   "PyPIPackageDownloads": {
     "convert_units": [
-      "pandas",
-      "numpy"
+      "pandas"
     ],
     "fill_gaps": [
       "pandas"
     ],
     "remove_spikes": [
-      "pandas",
-      "numpy"
+      "pandas"
     ],
-    "interpolate_weekly": [
-      "pandas",
-      "numpy"
+    "interpolate": [
+      "pandas"
     ],
     "vary_inputs": [
       "pandas",
       "numpy"
     ],
-    "run_pyadm1": [
+    "pyadm1": [
       "pandas",
       "numpy",
-      "scipy",
-      "matplotlib"
+      "scipy"
     ],
     "visualize": [
       "pandas",
-      "numpy",
       "matplotlib"
     ]
   }

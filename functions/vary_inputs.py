@@ -1,34 +1,56 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
+# Step 5: vary-inputs
+# Produce 20 initial-state files derived from digester_initial.csv, each one
+# tagged with a different Solids/Hydraulic Retention Time (SRT). In this
+# single-tank BSM2 configuration SRT = V_liq / Q_feed, so a chosen SRT maps
+# directly to the digester feed flow rate q_ad used by the simulation:
+#       q_ad = V_liq / SRT           [m3/d]
+# The reactor initial concentrations are copied unchanged; only the SRT (and
+# the derived q_ad) differ between the 20 variants. Rank r of the downstream
+# pyadm1 action reads digester_initial_<r>.csv.
+
+FOLDER = "PyADM1-orig"
+
+N_VARIANTS = 20
+V_LIQ = 3400.0          # m3, liquid volume (BSM2)
+SRT_MIN_DAYS = 15.0     # sweep range for retention time
+SRT_MAX_DAYS = 40.0
 
 
-def vary_inputs(folder, input_file, output_prefix, count=20,
-                srt_min=10.0, srt_max=30.0, v_liq=3400.0):
-    """Step 5 - create `count` derived initial-condition files that vary the
-    solids retention time (SRT).
+def vary_inputs():
+    faasr_log("vary-inputs: downloading base digester_initial.csv")
+    faasr_get_file(
+        server_name="S3",
+        remote_folder=FOLDER,
+        remote_file="digester_initial.csv",
+        local_folder=".",
+        local_file="digester_initial.csv",
+    )
 
-    SRT controls the digester feed/dilution rate.  In ADM1 the influent flow is
-    q_ad = V_liq / SRT (V_liq = 3400 m^3 for the BSM2 reactor).  We sweep SRT
-    linearly from `srt_min` to `srt_max` days and write one initial-state file
-    per scenario, each an exact copy of the base initial state plus the SRT and
-    the corresponding q_ad it implies.  Files are named
-    <output_prefix>_<rank>.csv for rank = 1 .. count so the ranked pyadm1
-    action can pick its own scenario.
-    """
-    faasr_get_file(server_name="S3", remote_folder=folder,
-                   remote_file=input_file, local_file="init.csv")
-    base = pd.read_csv("init.csv")
+    base = pd.read_csv("digester_initial.csv")
 
-    srts = np.linspace(float(srt_min), float(srt_max), int(count))
-    for i, srt in enumerate(srts, start=1):
+    srt_values = np.linspace(SRT_MIN_DAYS, SRT_MAX_DAYS, N_VARIANTS)
+
+    for i, srt in enumerate(srt_values):
+        rank = i + 1  # FaaSr ranks are 1-based
         variant = base.copy()
+        q_ad = V_LIQ / float(srt)
         variant["SRT"] = float(srt)
-        variant["q_ad"] = float(v_liq) / float(srt)
-        fname = "{}_{}.csv".format(output_prefix, i)
-        variant.to_csv(fname, index=False)
-        faasr_put_file(server_name="S3", local_file=fname,
-                       remote_folder=folder, remote_file=fname)
+        variant["q_ad"] = q_ad
 
-    faasr_log("vary_inputs: wrote {} SRT-varied initial files ({}..{} d) as "
-              "{}/{}_1..{}.csv".format(int(count), srt_min, srt_max,
-                                       folder, output_prefix, int(count)))
+        local_name = f"digester_initial_{rank}.csv"
+        variant.to_csv(local_name, index=False)
+        faasr_put_file(
+            server_name="S3",
+            local_folder=".",
+            local_file=local_name,
+            remote_folder=FOLDER,
+            remote_file=local_name,
+        )
+        faasr_log(
+            f"vary-inputs: wrote {local_name} (SRT={srt:.2f} d, q_ad={q_ad:.3f} m3/d)"
+        )
+
+    faasr_log(f"vary-inputs: produced {N_VARIANTS} SRT-varied initial-state files")
