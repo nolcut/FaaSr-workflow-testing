@@ -1,0 +1,70 @@
+{
+  "FunctionInvoke": "nop-1",
+  "WorkflowName": "three-nops",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "nop-1": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "nop_1",
+      "Arguments": {
+        "folder": "workflow_data"
+      },
+      "InvokeNext": [
+        "nop-2"
+      ]
+    },
+    "nop-2": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "nop_2",
+      "Arguments": {
+        "folder": "workflow_data"
+      },
+      "InvokeNext": [
+        "nop-3"
+      ]
+    },
+    "nop-3": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "nop_3",
+      "Arguments": {
+        "folder": "workflow_data"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "nop-1": "ghcr.io/faasr/github-actions-python:latest",
+    "nop-2": "ghcr.io/faasr/github-actions-python:latest",
+    "nop-3": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "nop_1": "nolcut/FaaSr-workflow-testing/main/functions/nop_1.py",
+    "nop_2": "nolcut/FaaSr-workflow-testing/main/functions/nop_2.py",
+    "nop_3": "nolcut/FaaSr-workflow-testing/main/functions/nop_3.py"
+  }
+}
