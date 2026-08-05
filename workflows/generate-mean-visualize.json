@@ -1,0 +1,84 @@
+{
+  "FunctionInvoke": "generate-numbers",
+  "WorkflowName": "generate-mean-visualize",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "generate-numbers": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "generate_numbers",
+      "Arguments": {
+        "folder": "workflow_data",
+        "output1": "random_numbers.json"
+      },
+      "InvokeNext": [
+        "calculate-mean"
+      ]
+    },
+    "calculate-mean": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "calculate_mean",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "random_numbers.json",
+        "output1": "mean_value.json"
+      },
+      "InvokeNext": [
+        "visualize-plot"
+      ]
+    },
+    "visualize-plot": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_plot",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "random_numbers.json",
+        "input2": "mean_value.json",
+        "output1": "numbers_plot.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "generate-numbers": "ghcr.io/faasr/github-actions-python:latest",
+    "calculate-mean": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-plot": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "generate_numbers": "nolcut/FaaSr-workflow-testing/main/functions/generate_numbers.py",
+    "calculate_mean": "nolcut/FaaSr-workflow-testing/main/functions/calculate_mean.py",
+    "visualize_plot": "nolcut/FaaSr-workflow-testing/main/functions/visualize_plot.py"
+  },
+  "PyPIPackageDownloads": {
+    "generate_numbers": [
+      "numpy"
+    ],
+    "visualize_plot": [
+      "matplotlib"
+    ]
+  }
+}
