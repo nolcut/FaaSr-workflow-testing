@@ -1,22 +1,34 @@
-# Step 2: fill-gaps
-# Forward-fill missing S_cation and S_anion values (titration/ion columns that
-# are only occasionally reported). A trailing back-fill covers any leading NaNs.
+def fill_gaps(folder: str, input1: str, output1: str) -> None:
+    """Forward-fill missing values in the S_cation and S_anion columns only.
 
-def fill_gaps(folder, input_file="influent_converted.csv",
-              output_file="influent_filled.csv"):
+    Propagates the last valid observation forward within each of those two
+    columns; every other column and the row ordering is left untouched.
+    """
     import pandas as pd
 
-    faasr_get_file(remote_folder=folder, remote_file=input_file,
-                   local_folder=".", local_file=input_file)
-    df = pd.read_csv(input_file)
+    fill_columns = ["S_cation", "S_anion"]
 
-    for c in ["S_cation", "S_anion"]:
-        if c in df.columns:
-            n_missing = int(df[c].isna().sum())
-            df[c] = df[c].ffill().bfill()
-            faasr_log(f"fill_gaps: forward-filled {n_missing} missing values in '{c}'")
+    faasr_log(f"fill_gaps: downloading converted influent '{input1}' from folder '{folder}'")
+    local_in = "influent_converted.csv"
+    faasr_get_file(local_file=local_in, remote_folder=folder, remote_file=input1)
 
-    df.to_csv(output_file, index=False)
-    faasr_put_file(local_folder=".", local_file=output_file,
-                   remote_folder=folder, remote_file=output_file)
-    faasr_log(f"fill_gaps: wrote {folder}/{output_file}")
+    df = pd.read_csv(local_in)
+    faasr_log(f"fill_gaps: read {len(df)} rows, {len(df.columns)} columns")
+
+    missing = [c for c in fill_columns if c not in df.columns]
+    if missing:
+        msg = f"fill_gaps: required columns missing from input CSV: {missing}"
+        faasr_log(msg)
+        raise ValueError(msg)
+
+    for col in fill_columns:
+        n_before = int(df[col].isna().sum())
+        df[col] = df[col].ffill()
+        n_after = int(df[col].isna().sum())
+        faasr_log(f"fill_gaps: {col} forward-filled {n_before - n_after} missing values "
+                  f"({n_after} still missing at series start)")
+
+    local_out = "influent_gapfilled.csv"
+    df.to_csv(local_out, index=False)
+    faasr_put_file(local_file=local_out, remote_folder=folder, remote_file=output1)
+    faasr_log(f"fill_gaps: wrote gap-filled influent '{output1}' to folder '{folder}'")
