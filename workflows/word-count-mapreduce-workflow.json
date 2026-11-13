@@ -1,0 +1,132 @@
+{
+  "FunctionInvoke": "extract-words",
+  "WorkflowName": "word-count-mapreduce-workflow",
+  "DefaultDataStore": "S3",
+  "LoggingDataStore": "S3",
+  "FaaSrLog": "FaaSrLog",
+  "InvocationIDFromDate": "%Y-%m-%d-%H-%M-%S",
+  "ActionList": {
+    "extract-words": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "extract_words",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "words.pdf",
+        "output1": "input_text.txt"
+      },
+      "InvokeNext": [
+        "split-dataset"
+      ]
+    },
+    "split-dataset": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "split_dataset",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "input_text.txt",
+        "output1": "batch_{rank}.txt",
+        "output2": "manifest.json"
+      },
+      "InvokeNext": [
+        "map(4)"
+      ]
+    },
+    "map": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "map",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "batch_{rank}.txt",
+        "output1": "map_result_{rank}.json"
+      },
+      "InvokeNext": [
+        "shuffle"
+      ]
+    },
+    "shuffle": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "shuffle",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "map_result_{rank}.json",
+        "input2": "manifest.json",
+        "output1": "shuffle_shard_{rank}.json"
+      },
+      "InvokeNext": [
+        "reduce(5)"
+      ]
+    },
+    "reduce": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "reduce",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "shuffle_shard_{rank}.json",
+        "output1": "reduce_result_{rank}.json"
+      },
+      "InvokeNext": [
+        "visualize-results"
+      ]
+    },
+    "visualize-results": {
+      "FaaSServer": "GH",
+      "Type": "Python",
+      "FunctionName": "visualize_results",
+      "Arguments": {
+        "folder": "workflow_data",
+        "input1": "reduce_result_{rank}.json",
+        "input2": "manifest.json",
+        "output1": "word_count_chart.png"
+      },
+      "InvokeNext": []
+    }
+  },
+  "ActionContainers": {
+    "extract-words": "ghcr.io/faasr/github-actions-python:latest",
+    "split-dataset": "ghcr.io/faasr/github-actions-python:latest",
+    "map": "ghcr.io/faasr/github-actions-python:latest",
+    "shuffle": "ghcr.io/faasr/github-actions-python:latest",
+    "reduce": "ghcr.io/faasr/github-actions-python:latest",
+    "visualize-results": "ghcr.io/faasr/github-actions-python:latest"
+  },
+  "ComputeServers": {
+    "GH": {
+      "FaaSType": "GitHubActions",
+      "UserName": "nolcut",
+      "ActionRepoName": "FaaSr-workflow-testing",
+      "Branch": "main",
+      "UseSecretStore": true
+    }
+  },
+  "DataStores": {
+    "S3": {
+      "Endpoint": "https://s3.us-east-1.amazonaws.com",
+      "Bucket": "faasr-agent-new",
+      "Region": "us-east-1",
+      "AccessKey": "S3_AccessKey",
+      "SecretKey": "S3_SecretKey",
+      "Writable": "TRUE"
+    }
+  },
+  "FunctionGitRepo": {
+    "extract_words": "nolcut/FaaSr-workflow-testing/main/functions/extract_words.py",
+    "split_dataset": "nolcut/FaaSr-workflow-testing/main/functions/split_dataset.py",
+    "map": "nolcut/FaaSr-workflow-testing/main/functions/map.py",
+    "shuffle": "nolcut/FaaSr-workflow-testing/main/functions/shuffle.py",
+    "reduce": "nolcut/FaaSr-workflow-testing/main/functions/reduce.py",
+    "visualize_results": "nolcut/FaaSr-workflow-testing/main/functions/visualize_results.py"
+  },
+  "PyPIPackageDownloads": {
+    "extract_words": [
+      "pymupdf"
+    ],
+    "visualize_results": [
+      "matplotlib"
+    ]
+  }
+}
